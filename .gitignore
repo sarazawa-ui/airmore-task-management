@@ -1,0 +1,20 @@
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Local server
+start-server.bat
+start-server.ps1
+
+# Backups
+*.bak
+*~
+
+# Logs
+*.log
