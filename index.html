@@ -3157,8 +3157,10 @@ async function refreshGoogleAccessToken(silent){
 async function googleFetchEvents(silent){
   let token = _currentUser?.accessToken;
   const status = document.getElementById('syncStatus');
-  // トークン不在時は再取得を試みる
-  if(!token && _firebaseReady && firebase.auth().currentUser){
+  // トークン期限切れチェック
+  const expired = _currentUser?.expiry && Date.now() > _currentUser.expiry;
+  // トークン不在 or 期限切れ時は再取得を試みる
+  if((!token || expired) && _firebaseReady && firebase.auth().currentUser){
     if(!silent){
       if(!confirm("Googleカレンダー連携の権限を取得します。\n権限取得用のポップアップが表示されます。続けますか？")) return;
     }
@@ -3167,7 +3169,10 @@ async function googleFetchEvents(silent){
     if(!ok){ if(status) status.textContent = "権限取得失敗"; return; }
     token = _currentUser?.accessToken;
   }
-  if(!token){ if(!silent) alert("Googleログインが必要です。再ログインしてください。"); return; }
+  if(!token){
+    if(!silent) alert("Googleログインが必要です。再ログインしてください。");
+    return;
+  }
   if(_currentUser.expiry && Date.now() > _currentUser.expiry){
     if(status) status.textContent = "トークン期限切れ";
     if(!silent) alert("トークン期限切れ。再ログインしてください");
@@ -3182,7 +3187,16 @@ async function googleFetchEvents(silent){
   const tMax = new Date(center); tMax.setDate(center.getDate()+60);
   const url = `https://www.googleapis.com/calendar/v3/calendars/${calId}/events?timeMin=${tMin.toISOString()}&timeMax=${tMax.toISOString()}&singleEvents=true&orderBy=startTime&maxResults=500`;
   try{
-    const res = await fetch(url, { headers: { Authorization: 'Bearer '+token } });
+    let res = await fetch(url, { headers: { Authorization: 'Bearer '+token } });
+    // 401 = トークン期限切れ → 自動的に再認証して再試行
+    if(res.status === 401 && _firebaseReady && firebase.auth().currentUser){
+      console.log("Access token expired, attempting silent refresh...");
+      const ok = await refreshGoogleAccessToken(true);
+      if(ok){
+        token = _currentUser?.accessToken;
+        res = await fetch(url, { headers: { Authorization: 'Bearer '+token } });
+      }
+    }
     if(!res.ok){
       let errBody = '';
       try{ errBody = await res.text(); }catch(_){}
@@ -3275,10 +3289,36 @@ function initFirebase(){
     }
     _firebaseReady = true;
     updateSyncStatus('offline');
-    // Listen for auth state changes (refreshes token, etc)
+    // Firebase Auth 状態の変化を監視
     firebase.auth().onAuthStateChanged(user=>{
-      if(user && S.workspaceId && !_wsUnsubscribe){
-        subscribeWorkspace();
+      if(user){
+        // _currentUser が未設定なら Firebase Auth から復元
+        if(!_currentUser){
+          _currentUser = {
+            email: user.email,
+            name: user.displayName || user.email,
+            picture: user.photoURL || "",
+            accessToken: null,  // アクセストークンは別途取得
+            expiry: 0,
+            firebaseUid: user.uid
+          };
+          saveSession();
+          // アプリ画面を表示
+          if(document.getElementById('loginScreen')?.style.display !== 'none'){
+            showApp();
+            ensureDefaults();
+            renderAll();
+          }
+        }
+        // ワークスペース購読
+        if(S.workspaceId && !_wsUnsubscribe){
+          subscribeWorkspace();
+        }
+      } else {
+        // Firebase からサインアウトされた場合
+        if(_currentUser){
+          // ユーザー操作によるログアウトでない場合は何もしない（ローカル動作継続）
+        }
       }
     });
     return true;
@@ -3508,12 +3548,19 @@ let _currentUser = null; // {email, name, picture, accessToken, expiry}
 let _authTokenClient = null;
 
 function saveSession(){
-  if(_currentUser) sessionStorage.setItem(AUTH_KEY, JSON.stringify(_currentUser));
-  else sessionStorage.removeItem(AUTH_KEY);
+  if(_currentUser) localStorage.setItem(AUTH_KEY, JSON.stringify(_currentUser));
+  else localStorage.removeItem(AUTH_KEY);
+  // 旧 sessionStorage に残っているデータも掃除
+  try{ sessionStorage.removeItem(AUTH_KEY); }catch(e){}
 }
 function loadSession(){
   try{
-    const raw = sessionStorage.getItem(AUTH_KEY);
+    // 旧 sessionStorage → localStorage への移行も兼ねる
+    let raw = localStorage.getItem(AUTH_KEY);
+    if(!raw){
+      const old = sessionStorage.getItem(AUTH_KEY);
+      if(old){ localStorage.setItem(AUTH_KEY, old); raw = old; sessionStorage.removeItem(AUTH_KEY); }
+    }
     if(raw) _currentUser = JSON.parse(raw);
   }catch(e){}
 }
@@ -3697,8 +3744,9 @@ function registerCurrentMember(){
 }
 
 function appLogout(){
-  if(!confirm("ログアウトしますか？")) return;
+  if(!confirm("ログアウトしますか？\n（次回アクセス時に再ログインが必要になります）")) return;
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
+  // 明示的なログアウト時のみ Firebase からもサインアウト（永続セッション解除）
   if(_firebaseReady && firebase.auth().currentUser){
     firebase.auth().signOut().catch(e=>console.warn(e));
   }
@@ -3708,6 +3756,8 @@ function appLogout(){
   logHistory("logout", `${_currentUser?_currentUser.name:'ユーザー'} がログアウト`);
   _currentUser = null;
   saveSession();
+  // localStorage も明示的にクリア
+  try{ localStorage.removeItem(AUTH_KEY); }catch(e){}
   updateSyncStatus('offline');
   hideApp();
 }
@@ -4133,18 +4183,16 @@ function renderAll(){
 loadSession();
 ensureDefaults();
 applyProfileToHeader(); // populate login screen logo/title from saved profile
-if(_currentUser && _currentUser.expiry && Date.now() < _currentUser.expiry){
-  // Restore session
+if(_currentUser){
+  // ローカルにユーザー情報あり → 即座にアプリ表示（期限チェックなし）
   showApp();
   renderAll();
-  // Re-subscribe to Firebase workspace if applicable
+  // Firebase Auth セッションが生きていればワークスペース購読再開
   if(_firebaseReady && S.workspaceId){
-    // Wait a moment for Firebase auth state to propagate
     setTimeout(()=>{
       if(firebase.auth().currentUser){
         subscribeWorkspace();
       } else {
-        // Firebase auth lost; need re-login
         updateSyncStatus('offline');
       }
     }, 500);
