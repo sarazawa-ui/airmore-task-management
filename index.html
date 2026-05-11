@@ -1011,8 +1011,10 @@ const DEFAULT_STATE = {
     {id:"G-005",name:"社員1人あたり月次タスク完了率を90%以上に向上",area:"組織",owner:"佐沢 雄太",members:["佐沢 雄太"],start:"2026-05-01",due:"2026-08-31",progressManual:null,status:"未着手",defn:"週次レビューで完了率を可視化、3ヶ月連続90%超"},
   ],
   tasks: (()=>{
+    // ローカル時刻ベースのYYYY-MM-DDフォーマッタ（toISOStringはUTCになりJSTでは1日ズレる）
+    const _ymd = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
     const t = "2026-05-07";
-    const off = n => { const d=new Date(t+"T00:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
+    const off = n => { const d=new Date(t+"T00:00:00"); d.setDate(d.getDate()+n); return _ymd(d); };
     return [
       {id:"T-001",goal:"G-001",mid:"AirHubβテスト準備",act:"テスト顧客5社へ運用説明資料を送付",owner:"佐沢 雄太",startD:off(0),due:off(0),slot:"午前(9-12)",pri:"A:緊急かつ重要",mit:true,est:60,act_min:55,status:"着手中",defn:"5社全員に説明資料がメール送信され、開封確認まで完了",interrupt:"",note:"Cc:技術部"},
       {id:"T-002",goal:"G-001",mid:"AirHubβテスト準備",act:"問合せ対応用FAQドラフト作成",owner:"メンバーB",startD:off(0),due:off(2),slot:"午後(13-15)",pri:"B:重要だが緊急でない",mit:true,est:90,act_min:"",status:"未着手",defn:"Q&A20項目以上のFAQドキュメント完成（社内レビュー前）",interrupt:"",note:""},
@@ -1224,6 +1226,73 @@ function showKpiTasks(type){
   }
   document.getElementById('kpiTasksModal').classList.add('show');
 }
+// 任意のタスク配列をモーダルで表示する汎用ポップアップ
+function showKpiTasksPopup(title, tasks){
+  tasks.sort((a,b)=>{
+    const ad = a.due || '9999-12-31';
+    const bd = b.due || '9999-12-31';
+    if(ad !== bd) return ad.localeCompare(bd);
+    return (a.time||'99:99').localeCompare(b.time||'99:99');
+  });
+  document.getElementById('kpiModalTitle').textContent = `${title}（${tasks.length}件）`;
+  const content = document.getElementById('kpiModalContent');
+  if(tasks.length === 0){
+    content.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted)">該当するタスクはありません</div>';
+  } else {
+    let html = `<table style="width:100%;font-size:12px"><thead><tr>
+      <th style="width:80px">タスクID</th>
+      <th style="text-align:left">アクション</th>
+      <th style="width:110px">担当者</th>
+      <th style="width:100px">紐付プロジェクト</th>
+      <th style="width:110px">期日</th>
+      <th style="width:80px">所要(分)</th>
+      <th style="width:90px">ステータス</th>
+      <th style="width:60px">操作</th>
+    </tr></thead><tbody>`;
+    tasks.forEach(t=>{
+      const goalName = t.goal ? (S.goals.find(g=>g.id===t.goal)||{}).name||'' : '';
+      html += `<tr data-task-id="${escapeHtml(t.id)}">
+        <td class="center">${escapeHtml(t.id)}</td>
+        <td>${escapeHtml(t.act||t.mid||'(無題)')}</td>
+        <td class="center">${escapeHtml(t.owner||'-')}</td>
+        <td class="center" style="font-size:11px">${escapeHtml(t.goal||'')}${goalName?'<br><small style="color:#888">'+escapeHtml(goalName.slice(0,12))+'</small>':''}</td>
+        <td class="center" style="font-size:11px">${escapeHtml(t.due||'-')}</td>
+        <td class="center">${t.est||'-'}</td>
+        <td class="center">${escapeHtml(t.status||'-')}</td>
+        <td class="center" style="white-space:nowrap">
+          <button data-popup-edit="${escapeHtml(t.id)}" title="編集" style="background:none;border:none;color:var(--primary);cursor:pointer;font-size:14px;padding:2px 4px">✏️</button>
+          <button data-popup-del="${escapeHtml(t.id)}" title="削除" style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>
+        </td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+    content.innerHTML = html;
+    content.querySelectorAll('[data-popup-edit]').forEach(btn=>{
+      btn.addEventListener('click',(e)=>{
+        e.stopPropagation();
+        closeKpiModal();
+        openTaskEditModal(btn.dataset.popupEdit);
+      });
+    });
+    content.querySelectorAll('[data-popup-del]').forEach(btn=>{
+      btn.addEventListener('click',(e)=>{
+        e.stopPropagation();
+        const tid = btn.dataset.popupDel;
+        const t = S.tasks.find(x=>x.id===tid);
+        if(!t) return;
+        if(!confirm(`タスク「${t.id} ${t.act||''}」を削除しますか？`)) return;
+        S.tasks.splice(S.tasks.indexOf(t),1);
+        save(true,`タスク削除：${tid}`);
+        renderAll();
+        // Refresh popup with updated tasks
+        const refreshed = tasks.filter(x=>x.id!==tid);
+        showKpiTasksPopup(title, refreshed);
+      });
+    });
+  }
+  document.getElementById('kpiTasksModal').classList.add('show');
+}
+
 function closeKpiModal(){
   document.getElementById('kpiTasksModal').classList.remove('show');
 }
@@ -1267,8 +1336,23 @@ function renderDashboard(){
 
   const denom = counts.未着手+counts.着手中+counts.完了;
   document.getElementById('kpiRate').textContent = denom?((counts.完了/denom*100).toFixed(1)+"%"):"0.0%";
-  document.getElementById('kpiTodayStart').textContent = S.tasks.filter(t=>t.startD===todayStr()&&t.status!=="完了").length;
-  document.getElementById('kpiTodayDue').textContent = S.tasks.filter(t=>t.due===todayStr()&&t.status!=="完了").length;
+  const todayStartTasks = S.tasks.filter(t=>t.startD===todayStr()&&t.status!=="完了");
+  const todayDueTasks = S.tasks.filter(t=>t.due===todayStr()&&t.status!=="完了");
+  const kpiStartEl = document.getElementById('kpiTodayStart');
+  const kpiDueEl = document.getElementById('kpiTodayDue');
+  kpiStartEl.textContent = todayStartTasks.length;
+  kpiDueEl.textContent = todayDueTasks.length;
+  // クリックで該当タスクをポップアップ表示（編集・削除可能）
+  kpiStartEl.style.cursor = todayStartTasks.length ? 'pointer' : 'default';
+  kpiDueEl.style.cursor = todayDueTasks.length ? 'pointer' : 'default';
+  if(todayStartTasks.length){
+    kpiStartEl.title = 'クリックでタスク一覧を表示';
+    kpiStartEl.onclick = ()=>showKpiTasksPopup('本日着手予定', todayStartTasks);
+  } else { kpiStartEl.onclick = null; kpiStartEl.title = ''; }
+  if(todayDueTasks.length){
+    kpiDueEl.title = 'クリックでタスク一覧を表示';
+    kpiDueEl.onclick = ()=>showKpiTasksPopup('本日期日', todayDueTasks);
+  } else { kpiDueEl.onclick = null; kpiDueEl.title = ''; }
 
   // Member table (filtered by range)
   const tb = document.querySelector('#tblMember tbody'); tb.innerHTML="";
