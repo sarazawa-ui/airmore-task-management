@@ -593,9 +593,6 @@ header.app-header{padding:10px 22px}
 
 <!-- ============ DASHBOARD ============ -->
 <section class="view active" id="view-dashboard">
-  <h2>📊 ダッシュボード</h2>
-  <p class="subtitle">全社・個人別の進捗を一覧。毎朝最初に見るシート。</p>
-
   <div class="dash-period">
     <label>集計期間：</label>
     <select id="dashPeriod" onchange="onDashPeriodChange()">
@@ -644,8 +641,6 @@ header.app-header{padding:10px 22px}
 
 <!-- ============ PROJECTS ============ -->
 <section class="view" id="view-goals">
-  <h2>🎯 プロジェクト一覧（中長期）</h2>
-  <p class="subtitle">経営目的・部門のプロジェクトを明文化し、すべてのタスクの拠り所とする。</p>
   <div class="toolbar">
     <button class="btn" onclick="addGoal()">＋ プロジェクト追加</button>
     <span style="color:var(--muted);font-size:12px;margin-left:auto">期限切れの未完了プロジェクトは赤背景で表示</span>
@@ -666,7 +661,6 @@ header.app-header{padding:10px 22px}
       <tbody></tbody>
     </table>
   </div>
-  <p class="subtitle" style="margin-top:12px">💡 「タスク」ボタンでプロジェクト内のデイリータスクを表示・編集できます。下部の分解ツリーで階層的にタスク計画を立てられます。</p>
 </section>
 
 <!-- ============ CALENDAR ============ -->
