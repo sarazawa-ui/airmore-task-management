@@ -770,9 +770,9 @@ header.app-header{padding:10px 22px}
       <div class="label">ワークスペース</div>
       <button class="active" data-pane="profile">🏢 プロフィール</button>
       <div class="divider"></div>
-      <div class="label">設定・マスタ</div>
-      <button data-pane="master">📋 マスタ管理</button>
-      <button data-pane="display">🖥️ 表示設定</button>
+      <div class="label">設定</div>
+      <button data-pane="display">👤 個人設定</button>
+      <button data-pane="master">📋 マスタ管理（共通）</button>
       <div class="divider"></div>
       <div class="label">運用</div>
       <button data-pane="firebase">☁️ クラウド同期</button>
@@ -804,9 +804,13 @@ header.app-header{padding:10px 22px}
     </div>
   </div>
 
-  <!-- Display + work settings pane -->
+  <!-- Display + work settings pane (個人設定) -->
   <div class="settings-pane" id="pane-display">
-    <h3>🖥️ 表示・稼働設定</h3>
+    <h3>👤 個人設定（このアカウントのみ）</h3>
+    <div style="background:#EBF5FB;border:1px solid var(--primary-light);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--text-soft);margin-bottom:14px">
+      💡 ここで設定する内容は <strong style="color:var(--primary-dark)" id="prefsOwnerLabel">あなたのGoogleアカウント</strong> でログインしたときのみ反映されます。<br>
+      他のチームメンバーには影響しません。同じワークスペース内でも各自が独立した設定を持てます。
+    </div>
     <div class="profile-form">
       <div class="field">
         <label>カレンダーの週始まり</label>
@@ -814,12 +818,12 @@ header.app-header{padding:10px 22px}
           <option value="1">月曜日始まり</option>
           <option value="0">日曜日始まり</option>
         </select>
-        <div class="help">週間カレンダーの先頭の曜日を設定します。</div>
+        <div class="help">週間カレンダーの先頭の曜日（個人設定）。</div>
       </div>
       <div class="field">
         <label>1日の実働可能時間（分）</label>
         <input type="number" id="cfgWorkMin" min="0" step="15" placeholder="480">
-        <div class="help">1日に作業に充てられる最大時間。8時間 = 480分。</div>
+        <div class="help">あなたが1日に作業に充てられる最大時間。8時間 = 480分。</div>
       </div>
       <div class="field">
         <label>1日の予備時間／余剰時間（分）</label>
@@ -1023,8 +1027,18 @@ const DEFAULT_STATE = {
   seq:{goal:5, task:7, node:0},
   profile:{ companyName:"株式会社エアモア", companyLogo:"", companyMemo:"" },
   authMembers:[],
-  history:[]
+  history:[],
+  userPrefs:{} // 個人ごとの設定（key: email）
 };
+
+// 個人設定として扱うフィールド一覧
+const PER_USER_UI_FIELDS = new Set([
+  'workMin','bufferMin','enforceCap',
+  'notifyOnComplete','notifyReminder',
+  'calStartHour','calEndHour','weekStartDay',
+  'viewAsMember','targetDate',
+  'sideTab','taskCols'
+]);
 
 let S = load();
 
@@ -3920,12 +3934,18 @@ document.addEventListener('keydown', e=>{
 function renderDisplaySettings(){
   const sel = document.getElementById('weekStartDay');
   if(!sel) return;
+  // Proxy 経由で個人設定を取得
   sel.value = String(S.ui.weekStartDay ?? 1);
   document.getElementById('cfgWorkMin').value = S.ui.workMin ?? 480;
   document.getElementById('cfgBufferMin').value = S.ui.bufferMin ?? 90;
   document.getElementById('cfgEnforceCap').checked = !!S.ui.enforceCap;
   document.getElementById('cfgNotifyOnComplete').checked = !!S.ui.notifyOnComplete;
   document.getElementById('cfgNotifyReminder').checked = !!S.ui.notifyReminder;
+  // 現在ログイン中のユーザー名を表示
+  const lbl = document.getElementById('prefsOwnerLabel');
+  if(lbl && _currentUser){
+    lbl.textContent = `${_currentUser.name}（${_currentUser.email}）`;
+  }
 }
 function saveDisplaySettings(){
   S.ui.weekStartDay = Number(document.getElementById('weekStartDay').value);
@@ -3935,8 +3955,8 @@ function saveDisplaySettings(){
   S.ui.notifyOnComplete = !!document.getElementById('cfgNotifyOnComplete').checked;
   S.ui.notifyReminder = !!document.getElementById('cfgNotifyReminder').checked;
   S.ui.weekStart = weekStartOf(todayStr());
-  save(true,'表示・稼働設定を更新');
-  toast("保存しました");
+  save(true, `個人設定を更新（${_currentUser?.email||''}）`);
+  toast(`保存しました（${_currentUser?.name||'あなた'} の設定）`);
   renderCalendar();
 }
 
@@ -4139,6 +4159,74 @@ save = function(withLog, desc){
 };
 
 // ============ INIT ============
+function getUserEmail(){
+  return _currentUser?.email || '__local__';
+}
+function setupUIProxy(){
+  // 既にProxyなら何もしない
+  if(S.ui && S.ui.__isProxy) return;
+  const targetUI = S.ui || {};
+  const proxy = new Proxy(targetUI, {
+    get(target, prop){
+      if(prop === '__isProxy') return true;
+      if(typeof prop === 'string' && PER_USER_UI_FIELDS.has(prop)){
+        if(!S.userPrefs) S.userPrefs = {};
+        const email = getUserEmail();
+        if(!S.userPrefs[email]) S.userPrefs[email] = {};
+        if(S.userPrefs[email][prop] !== undefined) return S.userPrefs[email][prop];
+        return target[prop]; // 未設定時はワークスペース既定値があれば利用
+      }
+      return target[prop];
+    },
+    set(target, prop, value){
+      if(typeof prop === 'string' && PER_USER_UI_FIELDS.has(prop)){
+        if(!S.userPrefs) S.userPrefs = {};
+        const email = getUserEmail();
+        if(!S.userPrefs[email]) S.userPrefs[email] = {};
+        S.userPrefs[email][prop] = value;
+      } else {
+        target[prop] = value;
+      }
+      return true;
+    },
+    has(target, prop){
+      if(typeof prop === 'string' && PER_USER_UI_FIELDS.has(prop)){
+        const email = getUserEmail();
+        return S.userPrefs?.[email]?.[prop] !== undefined || prop in target;
+      }
+      return prop in target;
+    },
+    deleteProperty(target, prop){
+      if(typeof prop === 'string' && PER_USER_UI_FIELDS.has(prop)){
+        const email = getUserEmail();
+        if(S.userPrefs?.[email]) delete S.userPrefs[email][prop];
+      }
+      delete target[prop];
+      return true;
+    }
+  });
+  S.ui = proxy;
+}
+
+function migrateUIToUserPrefsIfNeeded(){
+  // ログイン済みかつ、まだ個人設定が未作成の場合のみ実行
+  if(!_currentUser?.email) return;
+  if(!S.userPrefs) S.userPrefs = {};
+  const email = _currentUser.email;
+  if(S.userPrefs[email] && Object.keys(S.userPrefs[email]).length > 0) return; // 既に移行済
+  if(!S.userPrefs[email]) S.userPrefs[email] = {};
+  // S.ui (Proxyの裏側のオリジナル)から個人フィールドをコピー
+  // ※Proxy経由ではなく、target に直接アクセスする必要があるため一旦Proxyを外す
+  // 代わりに、targetが既存値を持つかチェックして移行
+  const targetFields = ['workMin','bufferMin','enforceCap','notifyOnComplete','notifyReminder','calStartHour','calEndHour','weekStartDay','viewAsMember'];
+  // Proxyハンドラのget内で target[prop] にフォールバックしているため、
+  // 一度直接S.ui[prop]を読めば既存値が取れる（userPrefsに未設定であれば）
+  targetFields.forEach(f=>{
+    const v = S.ui[f];
+    if(v !== undefined) S.userPrefs[email][f] = v;
+  });
+}
+
 function ensureDefaults(){
   if(!S.ui) S.ui = {};
   const ud = DEFAULT_STATE.ui;
@@ -4158,6 +4246,10 @@ function ensureDefaults(){
   if(!S.profile) S.profile = {...DEFAULT_STATE.profile};
   if(!S.authMembers) S.authMembers = [];
   if(!S.history) S.history = [];
+  if(!S.userPrefs) S.userPrefs = {};
+  // 個人ごとのUI設定: Proxyで S.ui を経由してアクセス
+  migrateUIToUserPrefsIfNeeded();
+  setupUIProxy();
   S.goals.forEach(g=>{
     if(!g.breakdown) g.breakdown = [];
     if(!g.members) g.members = g.owner ? [g.owner] : [];
