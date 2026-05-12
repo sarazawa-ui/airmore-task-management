@@ -3231,6 +3231,12 @@ async function refreshGoogleAccessToken(silent){
   if(!_firebaseReady || typeof firebase==='undefined') return false;
   const user = firebase.auth().currentUser;
   if(!user) return false;
+  // サイレントモードではポップアップを開かない（バックグラウンド処理でユーザーを驚かせない）
+  // OAuthアクセストークンはポップアップ無しに更新できないため、明示的に再取得を促す
+  if(silent){
+    console.log("Silent token refresh skipped — popup not allowed in background.");
+    return false;
+  }
   try{
     const provider = new firebase.auth.GoogleAuthProvider();
     provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
@@ -3686,9 +3692,10 @@ async function appLogin(){
   if(_firebaseConfig){
     if(!_firebaseReady) initFirebase();
     if(!_firebaseReady){ alert("Firebase初期化に失敗しました。設定を確認してください。"); return; }
+    // 二重クリック防止
+    if(window._loginInProgress){ console.log("Login already in progress"); return; }
+    window._loginInProgress = true;
     try{
-      // 前回のセッションが残っているとaccessToken取得に失敗するのでサインアウトしてから
-      try{ await firebase.auth().signOut(); }catch(_){}
       const provider = new firebase.auth.GoogleAuthProvider();
       provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
       provider.addScope('https://www.googleapis.com/auth/gmail.send');
@@ -3728,7 +3735,15 @@ async function appLogin(){
       saveSession();
       await onLoggedIn();
     }catch(err){
-      alert("ログイン失敗：" + (err.message || err.code || err));
+      // ユーザーがポップアップを閉じた／競合は静かに処理
+      const code = err?.code || '';
+      if(code === 'auth/cancelled-popup-request' || code === 'auth/popup-closed-by-user'){
+        console.log("Login popup cancelled:", code);
+      } else {
+        alert("ログイン失敗：" + (err.message || code || err));
+      }
+    } finally {
+      window._loginInProgress = false;
     }
     return;
   }
