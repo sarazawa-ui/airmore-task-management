@@ -508,6 +508,8 @@ header.app-header{padding:10px 22px}
 .cal-block.task{cursor:grab}
 .cal-block.task:active{cursor:grabbing}
 .cal-block.task.highlight{outline:3px solid #ED7D31;outline-offset:1px;animation:pulse 1.4s ease-out 1}
+.cal-block.task.touch-dragging{opacity:.35}
+.touch-drag-ghost{position:fixed;z-index:9999;pointer-events:none;border-radius:6px;padding:6px 10px;font-size:11.5px;line-height:1.3;background:#FFE699;border:2px solid #9C5700;color:#5a4600;box-shadow:0 8px 24px rgba(0,0,0,.3);font-weight:700;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transform:translate(-50%,-50%) scale(1.05)}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(237,125,49,.7)}100%{box-shadow:0 0 0 16px rgba(237,125,49,0)}}
 .side-task.highlight{outline:3px solid #ED7D31;outline-offset:1px;animation:pulseSide 1.4s ease-out 1}
 @keyframes pulseSide{0%{box-shadow:0 0 0 0 rgba(237,125,49,.7)}100%{box-shadow:0 0 0 12px rgba(237,125,49,0)}}
@@ -2534,6 +2536,10 @@ function renderCalendar(){
   S.ui.weekStart = weekStartOf(S.ui.weekStart || todayStr());
   save();
   const HOUR_PX = 60;
+  // タッチドラッグハンドラ用にグローバル公開
+  window._calHourPx = HOUR_PX;
+  window._calStartH = startH;
+  window._calEndH = endH;
   const totalH = (endH-startH)*HOUR_PX;
   const days = [];
   for(let i=0;i<7;i++) days.push(addDays(S.ui.weekStart, i));
@@ -2661,7 +2667,7 @@ function makeTaskBlock(t, allDay){
   div.innerHTML = `<div class="t">${escapeHtml(t.act||t.mid||'(無題)')}</div>`+
     (allDay?'':`<div class="s">${tm} ・ ${escapeHtml(t.owner)}</div>`);
   div.title = `[タスク] ${t.id} ${t.act}\n担当：${t.owner}\n${tm}\n見積：${t.est||'-'}分 / ステータス：${t.status}${t.weight?'\nウェイト：'+t.weight:''}\n（ドラッグ：時刻変更／右クリック：詳細表示）`;
-  // Drag from calendar to reschedule
+  // Drag from calendar to reschedule (desktop)
   div.addEventListener('dragstart', e=>{
     e.stopPropagation();
     e.dataTransfer.setData('text/plain', t.id);
@@ -2673,9 +2679,133 @@ function makeTaskBlock(t, allDay){
   div.addEventListener('click', e=>{
     e.preventDefault();
     e.stopPropagation();
+    if(div._touchDragJustEnded){ div._touchDragJustEnded = false; return; }
     focusSideTaskDetail(t.id);
   });
+  // ==== Touch hold-to-drag (mobile) ====
+  attachTouchHoldDrag(div, t);
   return div;
+}
+
+// タッチデバイスでカレンダー上のタスクを長押し→ドラッグして移動できるようにする
+function attachTouchHoldDrag(div, t){
+  let holdTimer = null;
+  let isDragging = false;
+  let ghost = null;
+  let startX = 0, startY = 0;
+  let lastTouch = null;
+
+  function cleanup(){
+    if(holdTimer){ clearTimeout(holdTimer); holdTimer = null; }
+    if(ghost){ ghost.remove(); ghost = null; }
+    div.classList.remove('touch-dragging');
+    document.querySelectorAll('.drop-hover').forEach(el => el.classList.remove('drop-hover'));
+    isDragging = false;
+  }
+
+  div.addEventListener('touchstart', e=>{
+    if(e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    startX = touch.clientX;
+    startY = touch.clientY;
+    lastTouch = touch;
+    holdTimer = setTimeout(()=>{
+      // 長押し成立 → ドラッグモード開始
+      isDragging = true;
+      try{ navigator.vibrate?.(40); }catch(_){}
+      div.classList.add('touch-dragging');
+      // フィンガーに追従するゴースト
+      ghost = document.createElement('div');
+      ghost.className = 'touch-drag-ghost';
+      ghost.textContent = (t.act || t.mid || '(無題)').slice(0, 30);
+      ghost.style.left = lastTouch.clientX + 'px';
+      ghost.style.top = lastTouch.clientY + 'px';
+      document.body.appendChild(ghost);
+    }, 400);
+  }, { passive: true });
+
+  div.addEventListener('touchmove', e=>{
+    const touch = e.touches[0]; if(!touch) return;
+    lastTouch = touch;
+    if(!isDragging){
+      // ドラッグ開始前に大きく動いたら長押しキャンセル（スクロール扱い）
+      if(Math.abs(touch.clientX - startX) > 6 || Math.abs(touch.clientY - startY) > 6){
+        if(holdTimer){ clearTimeout(holdTimer); holdTimer = null; }
+      }
+      return;
+    }
+    // ドラッグ中 → ページスクロールを抑制
+    e.preventDefault();
+    if(ghost){
+      ghost.style.left = touch.clientX + 'px';
+      ghost.style.top = touch.clientY + 'px';
+    }
+    // ドロップ先のハイライト
+    document.querySelectorAll('.drop-hover').forEach(el => el.classList.remove('drop-hover'));
+    const elAt = document.elementFromPoint(touch.clientX, touch.clientY);
+    const col = elAt?.closest('.cal-day-col');
+    const alldayCell = elAt?.closest('.cal-allday-cell');
+    if(col) col.classList.add('drop-hover');
+    else if(alldayCell) alldayCell.classList.add('drop-hover');
+  }, { passive: false });
+
+  div.addEventListener('touchend', e=>{
+    if(!isDragging){
+      cleanup();
+      return;
+    }
+    // ドラッグ完了 → click イベントを抑制
+    e.preventDefault();
+    div._touchDragJustEnded = true;
+    setTimeout(()=>{ div._touchDragJustEnded = false; }, 500);
+    const touch = e.changedTouches[0] || lastTouch;
+    const elAt = touch ? document.elementFromPoint(touch.clientX, touch.clientY) : null;
+    const col = elAt?.closest('.cal-day-col');
+    const alldayCell = elAt?.closest('.cal-allday-cell');
+    if(col){
+      const HOUR_PX = window._calHourPx || 60;
+      const startH = window._calStartH ?? 7;
+      const rect = col.getBoundingClientRect();
+      const y = touch.clientY - rect.top;
+      const minutesFromStart = Math.max(0, Math.round(y / HOUR_PX * 60 / 15) * 15);
+      const totalMin = startH*60 + minutesFromStart;
+      const dur = Number(t.est) || 60;
+      const targetDate = col.dataset.date;
+      const cap = checkCapacityForDrop(targetDate, t.id, dur);
+      let proceed = true;
+      if(!cap.ok){
+        if(S.ui.enforceCap){
+          toast(`⛔ 配置不可：${targetDate} は稼働可能 ${cap.cap}分 を ${cap.over}分超過`);
+          proceed = false;
+        } else {
+          proceed = confirm(`⚠️ ${targetDate} の稼働可能時間（${cap.cap}分）を ${cap.over}分超過します。配置しますか？`);
+        }
+      }
+      if(proceed){
+        t.startD = targetDate;
+        t.time = pad2(Math.floor(totalMin/60)) + ':' + pad2(totalMin%60);
+        if(t.slot === '終日') t.slot = '';
+        if(!t.est) t.est = 60;
+        const statusChanged = (t.status === '未着手' || !t.status);
+        if(statusChanged) t.status = '着手中';
+        save(true, statusChanged ? `${t.id} 移動・着手中に変更` : `${t.id} 移動`);
+        toast(`${t.id} を ${t.startD} ${t.time} に移動`);
+        renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
+      }
+    } else if(alldayCell){
+      t.startD = alldayCell.dataset.alldayDate;
+      t.time = '';
+      t.slot = '終日';
+      const statusChanged = (t.status === '未着手' || !t.status);
+      if(statusChanged) t.status = '着手中';
+      save(true, statusChanged ? `${t.id} 終日へ移動・着手中に変更` : `${t.id} 終日へ移動`);
+      toast(`${t.id} を ${t.startD} 終日に移動`);
+      renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
+    }
+    cleanup();
+  }, { passive: false });
+
+  div.addEventListener('touchcancel', cleanup, { passive: true });
 }
 
 function goToView(viewId){
