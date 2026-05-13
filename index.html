@@ -190,6 +190,14 @@ tr.gd-red.done td,tr.gd-yellow.done td,tr.gd-green.done td{background:#EFEFEF !i
 .gd-tag.yellow{background:#FFD966;color:#5a4600}
 .gd-tag.green{background:#70AD47;color:#fff}
 
+/* プロジェクトフィルタ */
+.project-filter{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text-soft);flex-wrap:wrap;background:#fff;padding:6px 10px;border:1px solid var(--border);border-radius:7px;box-shadow:var(--shadow-sm)}
+.project-filter .project-filter-label{font-weight:600;color:var(--text)}
+.project-filter label{display:inline-flex;align-items:center;gap:4px;cursor:pointer;padding:3px 8px;background:var(--primary-soft);border:1px solid var(--primary-light);border-radius:14px;transition:all .12s}
+.project-filter label:has(input:checked){background:var(--primary);color:#fff;border-color:var(--primary)}
+.project-filter label input{margin:0;cursor:pointer;accent-color:var(--primary-dark)}
+.project-filter .project-filter-hint{color:var(--muted);font-size:11px}
+
 /* Overdue project row (期限切れ) */
 tr.row-overdue > td{background:#FADBD8 !important;color:#943126;font-weight:normal}
 tr.row-overdue > td input,tr.row-overdue > td select,tr.row-overdue > td textarea{background:#FADBD8 !important;color:#943126;font-weight:normal}
@@ -801,6 +809,13 @@ header.app-header{padding:10px 22px}
 <section class="view" id="view-goals">
   <div class="toolbar">
     <button class="btn" onclick="addGoal()">＋ プロジェクト追加</button>
+    <div class="project-filter">
+      <span class="project-filter-label">表示：</span>
+      <label><input type="checkbox" id="filterShowCompleted">完了</label>
+      <label><input type="checkbox" id="filterShowCanceled">中止</label>
+      <label><input type="checkbox" id="filterShowHeld">保留</label>
+      <span class="project-filter-hint" id="projectFilterHint"></span>
+    </div>
     <span style="color:var(--muted);font-size:12px;margin-left:auto">期限切れの未完了プロジェクトは赤背景で表示</span>
   </div>
   <div class="card scroll-x" style="padding:0">
@@ -1202,7 +1217,8 @@ const PER_USER_UI_FIELDS = new Set([
   'notifyOnComplete','notifyReminder',
   'calStartHour','calEndHour','weekStartDay',
   'viewAsMember','targetDate',
-  'sideTab','taskCols'
+  'sideTab','taskCols',
+  'showCompletedProjects','showCanceledProjects','showHeldProjects'
 ]);
 
 let S = load();
@@ -1637,8 +1653,34 @@ function renderDashboard(){
 
 // ============ GOALS ============
 function renderGoals(){
-  const tb = document.querySelector('#tblGoals tbody'); tb.innerHTML="";
+  const tb = document.querySelector('#tblGoals tbody'); if(!tb) return;
+  tb.innerHTML="";
+  // フィルタ状態（個人設定／既定: すべて表示）
+  const showCompleted = S.ui.showCompletedProjects !== false;
+  const showCanceled = S.ui.showCanceledProjects !== false;
+  const showHeld = S.ui.showHeldProjects !== false;
+  // チェックボックス状態を反映
+  const cbCompleted = document.getElementById('filterShowCompleted');
+  const cbCanceled = document.getElementById('filterShowCanceled');
+  const cbHeld = document.getElementById('filterShowHeld');
+  if(cbCompleted) cbCompleted.checked = showCompleted;
+  if(cbCanceled) cbCanceled.checked = showCanceled;
+  if(cbHeld) cbHeld.checked = showHeld;
+  // 非表示件数のヒント
+  const hidden = S.goals.filter(g=>{
+    if(g.status==='完了' && !showCompleted) return true;
+    if(g.status==='中止' && !showCanceled) return true;
+    if(g.status==='保留' && !showHeld) return true;
+    return false;
+  }).length;
+  const hint = document.getElementById('projectFilterHint');
+  if(hint) hint.textContent = hidden > 0 ? `（${hidden}件 非表示）` : '';
+
   S.goals.forEach((g,i)=>{
+    // ステータスフィルタ
+    if(g.status==='完了' && !showCompleted) return;
+    if(g.status==='中止' && !showCanceled) return;
+    if(g.status==='保留' && !showHeld) return;
     if(!g.breakdown) g.breakdown=[];
     if(!g.expanded) g.expanded=false;
     const tr = document.createElement('tr');
@@ -1976,6 +2018,12 @@ function addGoal(){
   S.goals.push({id,name:"",area:"",owner:"",members:[],start:"",due:"",progress:0,progressManual:null,status:"未着手",defn:"",breakdown:[],expanded:true});
   save(true,`プロジェクト追加：${id}`); renderAll();
 }
+// プロジェクトフィルタのチェックボックスイベント
+document.addEventListener('change', e=>{
+  if(e.target.id === 'filterShowCompleted'){ S.ui.showCompletedProjects = e.target.checked; save(); renderGoals(); }
+  else if(e.target.id === 'filterShowCanceled'){ S.ui.showCanceledProjects = e.target.checked; save(); renderGoals(); }
+  else if(e.target.id === 'filterShowHeld'){ S.ui.showHeldProjects = e.target.checked; save(); renderGoals(); }
+});
 
 // ============ TASKS ============
 const TASK_COLS = [
