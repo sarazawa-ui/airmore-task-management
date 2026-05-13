@@ -1377,6 +1377,87 @@ function showKpiTasks(type){
   }
   document.getElementById('kpiTasksModal').classList.add('show');
 }
+// カレンダー任意セルをタップしてタスクを配置するピッカー
+function openTaskPickerAt(dateStr, totalMin, allDay){
+  if(!dateStr) return;
+  // 配置可能タスクのリスト（完了/中止以外）
+  const available = S.tasks.filter(t => t.status !== '完了' && t.status !== '中止');
+  // ソート：未割当 → 当日 → 他
+  available.sort((a,b) => {
+    const aSched = a.startD ? 1 : 0;
+    const bSched = b.startD ? 1 : 0;
+    if(aSched !== bSched) return aSched - bSched;
+    return (a.startD||'9999').localeCompare(b.startD||'9999');
+  });
+  const timeStr = allDay ? '終日' : (pad2(Math.floor(totalMin/60)) + ':' + pad2(totalMin%60));
+  const title = `📍 ${dateStr} ${timeStr} に配置するタスクを選択`;
+  document.getElementById('kpiModalTitle').textContent = title;
+  const content = document.getElementById('kpiModalContent');
+  if(available.length === 0){
+    content.innerHTML = `<div style="padding:30px;text-align:center;color:var(--muted)">配置可能なタスクがありません。<br>サイドバーで「＋ タスク追加」してから配置してください。</div>`;
+  } else {
+    let html = `<div style="padding:10px 12px;background:var(--primary-soft);border-radius:6px;margin-bottom:10px;font-size:12px;color:var(--text-soft);border:1px solid var(--primary-light)">
+      タスクを選択するとこの日時に自動配置されます。
+    </div>`;
+    html += `<table style="width:100%;font-size:12px"><thead><tr>
+      <th style="width:80px">ID</th>
+      <th style="text-align:left">アクション</th>
+      <th style="width:90px">担当</th>
+      <th style="width:120px">現在の予定</th>
+      <th style="width:60px">所要</th>
+      <th style="width:80px">状態</th>
+    </tr></thead><tbody>`;
+    available.forEach(t => {
+      const scheduled = t.startD ? `${t.startD}${t.time?' '+t.time:''}` : '<em style="color:var(--muted)">未割当</em>';
+      html += `<tr style="cursor:pointer" data-pick-task="${escapeHtml(t.id)}">
+        <td class="center">${escapeHtml(t.id)}</td>
+        <td>${escapeHtml(t.act||t.mid||'(無題)')}</td>
+        <td class="center">${escapeHtml(t.owner||'-')}</td>
+        <td class="center" style="font-size:11px">${scheduled}</td>
+        <td class="center">${t.est||'-'}</td>
+        <td class="center" style="font-size:11px">${escapeHtml(t.status||'')}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+    content.innerHTML = html;
+    content.querySelectorAll('[data-pick-task]').forEach(tr => {
+      tr.addEventListener('click', () => {
+        const tid = tr.dataset.pickTask;
+        const t = S.tasks.find(x => x.id === tid);
+        if(!t) return;
+        if(allDay){
+          t.startD = dateStr;
+          t.time = '';
+          t.slot = '終日';
+        } else {
+          // 上限チェック
+          const dur = Number(t.est) || 60;
+          const cap = checkCapacityForDrop(dateStr, t.id, dur);
+          if(!cap.ok){
+            if(S.ui.enforceCap){
+              alert(`⛔ 配置不可：${dateStr} の稼働可能（${cap.cap}分）を ${cap.over}分超過します。`);
+              return;
+            } else {
+              if(!confirm(`⚠️ ${dateStr} の稼働可能時間（${cap.cap}分）を ${cap.over}分超過します。\n配置しますか？`)) return;
+            }
+          }
+          t.startD = dateStr;
+          t.time = pad2(Math.floor(totalMin/60)) + ':' + pad2(totalMin%60);
+          if(t.slot === '終日') t.slot = '';
+          if(!t.est) t.est = 60;
+        }
+        const statusChanged = (t.status === '未着手' || !t.status);
+        if(statusChanged) t.status = '着手中';
+        save(true, statusChanged ? `${t.id} 配置・着手中に変更` : `${t.id} 配置`);
+        closeKpiModal();
+        renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
+        toast(`${t.id} を ${dateStr} ${timeStr} に配置${statusChanged?'（着手中に変更）':''}`);
+      });
+    });
+  }
+  document.getElementById('kpiTasksModal').classList.add('show');
+}
+
 // 任意のタスク配列をモーダルで表示する汎用ポップアップ
 function showKpiTasksPopup(title, tasks){
   tasks.sort((a,b)=>{
@@ -3054,6 +3135,16 @@ let _dragGhost = null;
 function removeGhost(){ if(_dragGhost){ _dragGhost.remove(); _dragGhost = null; } }
 function attachDropTargets(HOUR_PX, startH, endH){
   document.querySelectorAll('.cal-day-col').forEach(col=>{
+    // 空きセルをタップ／クリックでタスクピッカーを開く（モバイル対応）
+    col.addEventListener('click', e=>{
+      // タスクブロックのクリックは無視（cal-block には stopPropagation がある）
+      if(e.target.closest('.cal-block')) return;
+      const rect = col.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const minutesFromStart = Math.max(0, Math.round(y / HOUR_PX * 60 / 15) * 15);
+      const totalMin = startH*60 + minutesFromStart;
+      openTaskPickerAt(col.dataset.date, totalMin, false);
+    });
     col.addEventListener('dragover',e=>{
       e.preventDefault(); e.dataTransfer.dropEffect='move';
       col.classList.add('drop-hover');
@@ -3122,6 +3213,11 @@ function attachDropTargets(HOUR_PX, startH, endH){
     });
   });
   document.querySelectorAll('.cal-allday-cell').forEach(cell=>{
+    // 終日セルをタップでタスクピッカー
+    cell.addEventListener('click', e=>{
+      if(e.target.closest('.cal-block')) return;
+      openTaskPickerAt(cell.dataset.alldayDate, 0, true);
+    });
     cell.addEventListener('dragover',e=>{ e.preventDefault(); cell.classList.add('drop-hover'); });
     cell.addEventListener('dragleave',()=>cell.classList.remove('drop-hover'));
     cell.addEventListener('drop',e=>{
@@ -3786,13 +3882,17 @@ function renderFirebaseSettings(){
   const cf = document.getElementById('cfgFirebase');
   if(!cf) return;
   cf.value = _firebaseConfig ? JSON.stringify(_firebaseConfig, null, 2) : '';
-  // localStorageにユーザー設定があるかどうかで「デフォルト」か「カスタム」かを表示
-  const hasCustom = !!localStorage.getItem(FB_CONFIG_KEY);
+  // 現在の設定がデフォルトと一致するかで判定（localStorageの存在は問わない）
+  const isDefault = _firebaseConfig && JSON.stringify(_firebaseConfig) === JSON.stringify(FB_DEFAULT_CONFIG);
+  // 整合性のため、デフォルトと一致しているのに localStorage が残っていれば掃除
+  if(isDefault && localStorage.getItem(FB_CONFIG_KEY)){
+    try{ localStorage.removeItem(FB_CONFIG_KEY); }catch(e){}
+  }
   const cfgLabel = document.getElementById('cfgFirebaseLabel');
   if(cfgLabel){
-    cfgLabel.innerHTML = hasCustom
-      ? 'Firebase 設定（JSON 形式） <span style="color:#7E5109;font-weight:normal;font-size:11px">[カスタム設定使用中]</span>'
-      : 'Firebase 設定（JSON 形式） <span style="color:#1E8449;font-weight:normal;font-size:11px">[デフォルト設定使用中]</span>';
+    cfgLabel.innerHTML = isDefault
+      ? 'Firebase 設定（JSON 形式） <span style="color:#1E8449;font-weight:normal;font-size:11px">[デフォルト設定使用中]</span>'
+      : 'Firebase 設定（JSON 形式） <span style="color:#7E5109;font-weight:normal;font-size:11px">[カスタム設定使用中]</span>';
   }
   document.getElementById('cfgWorkspaceId').value = S.workspaceId || '(未作成)';
   const inv = document.getElementById('cfgInviteUrl');
@@ -3835,7 +3935,12 @@ function saveFirebaseConfigUI(){
   catch(e){ alert("JSON形式が不正です：" + e.message); return; }
   if(!cfg.apiKey || !cfg.projectId){ alert("apiKey と projectId は必須です"); return; }
   _firebaseConfig = cfg;
-  localStorage.setItem(FB_CONFIG_KEY, JSON.stringify(cfg));
+  // デフォルト設定と同じならlocalStorageに書き込まない（クリーンに保つ）
+  if(JSON.stringify(cfg) === JSON.stringify(FB_DEFAULT_CONFIG)){
+    localStorage.removeItem(FB_CONFIG_KEY);
+  } else {
+    localStorage.setItem(FB_CONFIG_KEY, JSON.stringify(cfg));
+  }
   if(initFirebase()){
     toast("Firebase設定を保存しました。再ログインで同期が開始します。");
     if(confirm("Firebase設定を保存しました。再ログインしますか？\n（既存のローカルデータはワークスペース作成時にクラウドへ移行されます）")){
