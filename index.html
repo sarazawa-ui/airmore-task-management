@@ -3898,7 +3898,9 @@ function readWsFromUrl(){
 }
 
 function serializeWorkspace(){
-  const allowed = ['profile','members','statuses','priorities','slots','areas','goals','tasks','events','authMembers','kpt','weeklyReports','seq','ui','history'];
+  // events（カレンダー予定）はユーザー個別のため共有しない
+  // 各ユーザーのGoogleカレンダー予定はそのユーザーのlocalStorageにのみ保持
+  const allowed = ['profile','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
   return out;
@@ -3925,28 +3927,51 @@ async function joinOrCreateWorkspace(targetWsId){
     }
     if(snap.exists){
       const data = snap.data();
-      // Pull data into local state (overwrite)
+      // Pull data into local state (events はユーザー個別なので除外)
       _isRemoteUpdate = true;
       Object.keys(data).forEach(k=>{
-        if(k !== 'createdAt' && k !== 'memberEmails' && k !== 'ownerEmail') S[k] = data[k];
+        if(k === 'createdAt' || k === 'memberEmails' || k === 'ownerEmail' || k === 'events') return;
+        S[k] = data[k];
       });
       S.workspaceId = wsId;
       S.ownerEmail = data.ownerEmail;
       S.memberEmails = data.memberEmails || [];
       _isRemoteUpdate = false;
       ensureDefaults();
-      // Add self to memberEmails if needed
+      // 新規参加：自分を memberEmails / authMembers / members に追加（アトミック）
       if(_currentUser && !S.memberEmails.includes(_currentUser.email)){
+        const newAuthMember = {
+          email: _currentUser.email,
+          name: _currentUser.name,
+          picture: _currentUser.picture || '',
+          role: 'member',
+          joinedAt: new Date().toISOString()
+        };
+        const newDisplayMember = { name: _currentUser.name, dept: 'メンバー' };
         try{
           await ref.update({
-            memberEmails: firebase.firestore.FieldValue.arrayUnion(_currentUser.email)
+            memberEmails: firebase.firestore.FieldValue.arrayUnion(_currentUser.email),
+            authMembers: firebase.firestore.FieldValue.arrayUnion(newAuthMember),
+            members: firebase.firestore.FieldValue.arrayUnion(newDisplayMember)
           });
           S.memberEmails.push(_currentUser.email);
+          if(!(S.authMembers||[]).some(m=>m.email===_currentUser.email)){
+            S.authMembers = (S.authMembers||[]).concat([newAuthMember]);
+          }
+          if(!(S.members||[]).some(m=>m.name===_currentUser.name)){
+            S.members = (S.members||[]).concat([newDisplayMember]);
+          }
+          // 新規参加時：カレンダー予定をリセット（自分のGoogleカレンダーから再取得）
+          S.events = [];
+          toast(`ワークスペース「${wsId}」に参加しました（${_currentUser.name}）`);
         }catch(e){
-          console.warn("Failed to add self to memberEmails:", e);
+          console.error("Failed to join workspace:", e);
+          alert(`ワークスペースへの参加に失敗しました：\n${e.message || e.code}\n\n対処：Firebase Console で Firestore セキュリティルールを最新版に更新してください。\n（⚙設定 → クラウド同期 の「Firestore セキュリティルール」を確認）`);
+          return false;
         }
+      } else {
+        toast(`ワークスペース「${wsId}」に再接続しました`);
       }
-      toast(`ワークスペース「${wsId}」に参加しました`);
       return true;
     } else {
       if(!confirm(`ワークスペース ${wsId} が見つかりません。新規作成しますか？`)) return false;
@@ -3980,8 +4005,9 @@ function subscribeWorkspace(){
     if(!snap.exists) return;
     const data = snap.data();
     _isRemoteUpdate = true;
+    // events（カレンダー予定）は個人別なので Firestore のデータで上書きしない
     Object.keys(data).forEach(k=>{
-      if(k !== 'createdAt') S[k] = data[k];
+      if(k !== 'createdAt' && k !== 'events') S[k] = data[k];
     });
     S.workspaceId = snap.id;
     _isRemoteUpdate = false;
