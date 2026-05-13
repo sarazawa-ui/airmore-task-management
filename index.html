@@ -1922,7 +1922,7 @@ function renderTree(g){
   if(addLinked) addLinked.onclick = ()=>{
     S.seq.task = (S.seq.task||0)+1;
     const id = "T-"+String(S.seq.task).padStart(3,'0');
-    const t = {id,goal:g.id,mid:"",act:"新しいタスク",owner:g.owner||"",startD:todayStr(),due:g.due||"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:`プロジェクト「${g.name}」より追加`,time:""};
+    const t = {id,goal:g.id,mid:"",act:"新しいタスク",owner:g.owner||"",startD:"",due:g.due||"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:`プロジェクト「${g.name}」より追加`,time:""};
     S.tasks.push(t);
     save(true,`タスク追加：${id}（${g.id}）`);
     renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
@@ -1949,7 +1949,12 @@ function renderTree(g){
   const addBtn = document.createElement('div');
   addBtn.style.padding = '4px 16px 8px';
   addBtn.innerHTML = `<button style="font-size:11px;padding:4px 12px;background:var(--primary);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit">＋ 分解項目を追加</button>`;
-  addBtn.querySelector('button').onclick = ()=>{ g.breakdown.push(newNode("新しい項目")); save(); renderGoals(); };
+  addBtn.querySelector('button').onclick = ()=>{
+    if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    g.breakdown.push(newNode("新しい項目"));
+    save();
+    renderGoals();
+  };
   root.appendChild(addBtn);
 }
 function renderNode(goal, node, parentArr){
@@ -1978,8 +1983,17 @@ function renderNode(goal, node, parentArr){
     save(); renderTasks();
   });
   const [addBtn, taskBtn, delBtn] = li.querySelectorAll('.tree-actions button');
-  addBtn.onclick = ()=>{ node.children.push(newNode("新しいサブ項目")); save(); renderGoals(); };
-  taskBtn.onclick = ()=>{ promoteNodeToTask(goal, node); };
+  addBtn.onclick = ()=>{
+    // フォーカス中の入力があれば blur して change を確実に発火（typing 中の値を取りこぼさない）
+    if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    node.children.push(newNode("新しいサブ項目"));
+    save();
+    renderGoals();
+  };
+  taskBtn.onclick = ()=>{
+    if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    promoteNodeToTask(goal, node);
+  };
   delBtn.onclick = ()=>{
     if(!confirm(`項目「${node.name}」を削除しますか？${node.children.length?'（子要素も削除されます）':''}`)) return;
     const idx = parentArr.indexOf(node);
@@ -2003,7 +2017,7 @@ function promoteNodeToTask(goal, node){
   const mid = path.length>1 ? path[0].name : "";
   S.tasks.push({
     id, goal:goal.id, mid, act:node.name||"(無題)",
-    owner:goal.owner||"", startD:todayStr(), due:goal.due||"",
+    owner:goal.owner||"", startD:"", due:goal.due||"",
     slot:"", pri:"", mit:false, est:"", act_min:"", status:"未着手",
     defn:"", interrupt:"", note:`プロジェクト「${goal.name}」より自動生成`, time:""
   });
@@ -2222,10 +2236,11 @@ function addTask(){
   S.seq.task = (S.seq.task||0)+1;
   // 他の展開中タスクをすべて閉じる
   S.tasks.forEach(x => { x._expanded = false; });
-  const t = {id:"T-"+String(S.seq.task).padStart(3,'0'),goal:"",mid:"",act:"新しいタスク",owner:(_currentUser?_currentUser.name:S.ui.viewAsMember||""),startD:todayStr(),due:"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:"",time:"", _expanded:true};
+  // startD は空 → 「未割当」に分類される（カレンダーへドロップで日時設定）
+  const t = {id:"T-"+String(S.seq.task).padStart(3,'0'),goal:"",mid:"",act:"新しいタスク",owner:(_currentUser?_currentUser.name:S.ui.viewAsMember||""),startD:"",due:"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:"",time:"", _expanded:true};
   S.tasks.push(t);
   save(true, `タスク追加：${t.id}`); renderAll();
-  toast(`${t.id} を追加しました（サイドバーで詳細を編集）`);
+  toast(`${t.id} を追加しました（未割当・サイドバーで詳細編集→カレンダーにドロップで日時設定）`);
 }
 
 function duplicateTask(taskId){
@@ -3909,6 +3924,8 @@ let _firebaseReady = false;
 let _wsUnsubscribe = null;
 let _saveDebounce = null;
 let _isRemoteUpdate = false;
+let _pendingLocalChanges = false; // ローカルに未同期の変更があるか
+let _deferredSnapshot = null;       // 未同期中に届いたスナップショット
 
 try{
   const stored = localStorage.getItem(FB_CONFIG_KEY);
@@ -4106,30 +4123,40 @@ async function joinOrCreateWorkspace(targetWsId){
   }
 }
 
+// Firestoreから受信したスナップショットデータをローカル状態に適用
+function applySnapshotData(data, wsId){
+  if(!data) return;
+  _isRemoteUpdate = true;
+  // events（カレンダー予定）は個人別なので Firestore のデータで上書きしない
+  Object.keys(data).forEach(k=>{
+    if(k !== 'createdAt' && k !== 'events') S[k] = data[k];
+  });
+  // 受信した userPrefs 内の不正キー（__local__ 等）を掃除
+  if(S.userPrefs && typeof S.userPrefs === 'object'){
+    Object.keys(S.userPrefs).forEach(k=>{
+      if(/^__.*__$/.test(k)) delete S.userPrefs[k];
+    });
+  }
+  if(wsId) S.workspaceId = wsId;
+  _isRemoteUpdate = false;
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+  ensureDefaults();
+  if(_currentUser){ renderAll(); }
+  updateSyncStatus('synced');
+}
+
 function subscribeWorkspace(){
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
   if(!S.workspaceId || !_firebaseReady || !firebase.auth().currentUser) return;
   const ref = firebase.firestore().doc(`workspaces/${S.workspaceId}`);
   _wsUnsubscribe = ref.onSnapshot(snap=>{
     if(!snap.exists) return;
-    const data = snap.data();
-    _isRemoteUpdate = true;
-    // events（カレンダー予定）は個人別なので Firestore のデータで上書きしない
-    Object.keys(data).forEach(k=>{
-      if(k !== 'createdAt' && k !== 'events') S[k] = data[k];
-    });
-    // 受信した userPrefs 内の不正キー（__local__ 等）を掃除
-    if(S.userPrefs && typeof S.userPrefs === 'object'){
-      Object.keys(S.userPrefs).forEach(k=>{
-        if(/^__.*__$/.test(k)) delete S.userPrefs[k];
-      });
+    // ローカルに未同期変更がある場合は、上書きせず保留
+    if(_pendingLocalChanges){
+      _deferredSnapshot = snap.data();
+      return;
     }
-    S.workspaceId = snap.id;
-    _isRemoteUpdate = false;
-    localStorage.setItem(LS_KEY, JSON.stringify(S));
-    ensureDefaults();
-    if(_currentUser){ renderAll(); }
-    updateSyncStatus('synced');
+    applySnapshotData(snap.data(), snap.id);
   }, err=>{
     console.error("Firestore subscribe error:",err);
     updateSyncStatus('error');
@@ -4141,6 +4168,7 @@ function syncToFirestore(){
   if(_isRemoteUpdate) return;
   if(!S.workspaceId || !_firebaseReady) return;
   if(!firebase.auth().currentUser) return;
+  _pendingLocalChanges = true; // ローカルに未同期の変更あり
   clearTimeout(_saveDebounce);
   updateSyncStatus('syncing');
   _saveDebounce = setTimeout(async ()=>{
@@ -4149,15 +4177,23 @@ function syncToFirestore(){
       // (they're managed by joinOrCreateWorkspace via arrayUnion)
       const ws = serializeWorkspace();
       await firebase.firestore().doc(`workspaces/${S.workspaceId}`).set(ws, {merge:true});
+      _pendingLocalChanges = false;
       updateSyncStatus('synced');
+      // 同期完了。保留中のスナップショットがあれば適用
+      if(_deferredSnapshot){
+        const snapData = _deferredSnapshot;
+        _deferredSnapshot = null;
+        applySnapshotData(snapData);
+      }
     }catch(err){
+      _pendingLocalChanges = false;
       console.error("Firestore save failed:",err);
       updateSyncStatus('error');
       if(err.code === 'permission-denied'){
         console.warn("⚠️ 書き込み権限エラー: Firestoreルールを確認してください（設定→クラウド同期→「📋 ルールをコピー」）");
       }
     }
-  }, 1000);
+  }, 300); // 1000ms → 300ms（レース窓を縮小）
 }
 
 function leaveWorkspace(){
