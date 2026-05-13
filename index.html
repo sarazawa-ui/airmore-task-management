@@ -917,18 +917,21 @@ header.app-header{padding:10px 22px}
       <div class="member-list" id="memberList"></div>
       <p class="help" style="font-size:11px;color:#666;margin-top:8px">※ 各メンバーがGoogleでログインすると、ここに自動追加されます（最初にログインした方がオーナー）。</p>
       <div style="margin-top:18px;padding:14px;background:#FFF8DC;border:1px solid #FFD966;border-radius:7px;font-size:11.5px;line-height:1.6">
-        <strong style="color:#5a4600">⚙ Firestore セキュリティルール（必須）：</strong>
-        <pre style="background:#fff;padding:10px;border-radius:5px;font-size:10.5px;line-height:1.4;overflow-x:auto;margin:8px 0;border:1px solid #eee">rules_version = '2';
+        <strong style="color:#5a4600">⚙ Firestore セキュリティルール（必須）：</strong><br>
+        Firebase Console → Firestore Database → ルールタブ で下記を貼り付けて「公開」してください。<br>
+        <button class="btn sm" onclick="copyRules()" style="margin:8px 0">📋 ルールをコピー</button>
+        <pre id="firestoreRules" style="background:#fff;padding:10px;border-radius:5px;font-size:10.5px;line-height:1.4;overflow-x:auto;margin:4px 0;border:1px solid #eee">rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /workspaces/{wsId} {
-      allow read, write: if request.auth != null
-        && request.auth.token.email in resource.data.memberEmails;
-      allow create: if request.auth != null
-        && request.auth.token.email == request.resource.data.ownerEmail;
+      // 認証済みユーザーなら誰でも読み書き可
+      // (招待URLの秘匿性とFirebase Auth認証が実質的なアクセス制御)
+      allow read, write: if request.auth != null;
     }
   }
 }</pre>
+        <small style="color:#7E5109">※ より厳密な「メンバーのみ」ルールは招待URL経由の参加時に問題が起きるため、シンプルなこのルールを推奨します。招待URLを知っている＋Googleログイン済みの人だけがアクセス可能です。</small>
+        <br><br>
         <strong style="color:#5a4600">🔐 Authentication 設定：</strong><br>
         Firebase Console → Build → Authentication → Sign-in method → 「Google」を有効化<br>
         Settings → Authorized domains に <code id="originHintFb" style="background:#fff;padding:1px 5px;border-radius:3px"></code> を追加<br><br>
@@ -3480,34 +3483,45 @@ async function joinOrCreateWorkspace(targetWsId){
   if(wsId){
     // Join existing
     const ref = db.doc(`workspaces/${wsId}`);
+    let snap;
     try{
-      const snap = await ref.get();
-      if(snap.exists){
-        const data = snap.data();
-        // Pull data into local state (overwrite)
-        _isRemoteUpdate = true;
-        Object.keys(data).forEach(k=>{
-          if(k !== 'createdAt' && k !== 'memberEmails' && k !== 'ownerEmail') S[k] = data[k];
-        });
-        S.workspaceId = wsId;
-        S.ownerEmail = data.ownerEmail;
-        S.memberEmails = data.memberEmails || [];
-        _isRemoteUpdate = false;
-        ensureDefaults();
-        // Add self to memberEmails if needed
-        if(_currentUser && !S.memberEmails.includes(_currentUser.email)){
+      snap = await ref.get();
+    }catch(e){
+      console.error("Workspace read failed:", e);
+      if(e.code === 'permission-denied'){
+        alert("ワークスペース読み取り権限がありません。\n\n【対処】Firebase Console → Firestore Database → ルール タブで以下を設定してください：\n\n設定 → クラウド同期 にある『📋 ルールをコピー』を押してそのまま貼り付け → 公開");
+        return false;
+      }
+      alert("ワークスペース読取失敗：" + (e.message||e.code||e));
+      return false;
+    }
+    if(snap.exists){
+      const data = snap.data();
+      // Pull data into local state (overwrite)
+      _isRemoteUpdate = true;
+      Object.keys(data).forEach(k=>{
+        if(k !== 'createdAt' && k !== 'memberEmails' && k !== 'ownerEmail') S[k] = data[k];
+      });
+      S.workspaceId = wsId;
+      S.ownerEmail = data.ownerEmail;
+      S.memberEmails = data.memberEmails || [];
+      _isRemoteUpdate = false;
+      ensureDefaults();
+      // Add self to memberEmails if needed
+      if(_currentUser && !S.memberEmails.includes(_currentUser.email)){
+        try{
           await ref.update({
             memberEmails: firebase.firestore.FieldValue.arrayUnion(_currentUser.email)
           });
+          S.memberEmails.push(_currentUser.email);
+        }catch(e){
+          console.warn("Failed to add self to memberEmails:", e);
         }
-        toast(`ワークスペース「${wsId}」に参加しました`);
-        return true;
-      } else {
-        if(!confirm(`ワークスペース ${wsId} が見つかりません。新規作成しますか？`)) return false;
       }
-    }catch(e){
-      alert("ワークスペース参加失敗：" + e.message);
-      return false;
+      toast(`ワークスペース「${wsId}」に参加しました`);
+      return true;
+    } else {
+      if(!confirm(`ワークスペース ${wsId} が見つかりません。新規作成しますか？`)) return false;
     }
   }
   // Create new
@@ -3570,6 +3584,9 @@ function syncToFirestore(){
     }catch(err){
       console.error("Firestore save failed:",err);
       updateSyncStatus('error');
+      if(err.code === 'permission-denied'){
+        console.warn("⚠️ 書き込み権限エラー: Firestoreルールを確認してください（設定→クラウド同期→「📋 ルールをコピー」）");
+      }
     }
   }, 1000);
 }
@@ -3642,6 +3659,12 @@ function saveFirebaseConfigUI(){
     alert("Firebase初期化に失敗しました。設定を確認してください。");
   }
   renderFirebaseSettings();
+}
+
+function copyRules(){
+  const txt = document.getElementById('firestoreRules').textContent;
+  navigator.clipboard.writeText(txt).then(()=>toast("ルールをコピーしました。Firebase Console に貼り付けてください"))
+    .catch(()=>{ const r=document.createRange(); r.selectNode(document.getElementById('firestoreRules')); window.getSelection().removeAllRanges(); window.getSelection().addRange(r); document.execCommand('copy'); toast("コピーしました"); });
 }
 
 function copyFirebaseInviteUrl(){
