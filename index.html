@@ -3779,15 +3779,17 @@ window.addEventListener('DOMContentLoaded',()=>{
   // Show origin
   const og = document.getElementById('gOrigin');
   if(og) og.textContent = window.location.origin || window.location.href;
-  if(S.ui.googleClientId) document.getElementById('gClientId').value = S.ui.googleClientId;
-  if(S.ui.googleCalendarId) document.getElementById('gCalendarId').value = S.ui.googleCalendarId;
-  if(S.ui.icsUrl) document.getElementById('icsUrl').value = S.ui.icsUrl;
+  // 削除済み要素対応：getElementById が null を返す場合をすべて防御
+  const setVal = (id, v) => { const el = document.getElementById(id); if(el && v !== undefined && v !== null) el.value = v; };
+  setVal('gClientId', S.ui.googleClientId);
+  setVal('gCalendarId', S.ui.googleCalendarId);
+  setVal('icsUrl', S.ui.icsUrl);
   if(S.ui.icsProxy!==undefined){
     const sel = document.getElementById('icsProxy');
-    [...sel.options].forEach(o=>{ if(o.value===S.ui.icsProxy) o.selected=true; });
+    if(sel) [...sel.options].forEach(o=>{ if(o.value===S.ui.icsProxy) o.selected=true; });
   }
-  document.getElementById('calStartHour').value = S.ui.calStartHour;
-  document.getElementById('calEndHour').value = S.ui.calEndHour;
+  setVal('calStartHour', S.ui.calStartHour);
+  setVal('calEndHour', S.ui.calEndHour);
 });
 
 // ============ FIREBASE (Cloud Sync) ============
@@ -3903,6 +3905,17 @@ function serializeWorkspace(){
   const allowed = ['profile','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
+  // userPrefs のキーから Firestore で使えない名前（__xxx__ 形式）を除外
+  if(out.userPrefs && typeof out.userPrefs === 'object'){
+    const sanitized = {};
+    Object.keys(out.userPrefs).forEach(k=>{
+      if(/^__.*__$/.test(k)) return; // Skip __local__ などの予約名
+      // Firestoreフィールド名に使えない文字をサニタイズ
+      // ( . [ ] * / は使用不可 → 本来emailにはほぼ含まれないが念のため除外 )
+      sanitized[k] = out.userPrefs[k];
+    });
+    out.userPrefs = sanitized;
+  }
   return out;
 }
 
@@ -4009,6 +4022,12 @@ function subscribeWorkspace(){
     Object.keys(data).forEach(k=>{
       if(k !== 'createdAt' && k !== 'events') S[k] = data[k];
     });
+    // 受信した userPrefs 内の不正キー（__local__ 等）を掃除
+    if(S.userPrefs && typeof S.userPrefs === 'object'){
+      Object.keys(S.userPrefs).forEach(k=>{
+        if(/^__.*__$/.test(k)) delete S.userPrefs[k];
+      });
+    }
     S.workspaceId = snap.id;
     _isRemoteUpdate = false;
     localStorage.setItem(LS_KEY, JSON.stringify(S));
@@ -4771,7 +4790,8 @@ save = function(withLog, desc){
 
 // ============ INIT ============
 function getUserEmail(){
-  return _currentUser?.email || '__local__';
+  // Firestore のフィールド名規則上、__xxx__ 形式は不可なため _local_ を使用
+  return _currentUser?.email || '_local_';
 }
 function setupUIProxy(){
   // 既にProxyなら何もしない
@@ -4858,6 +4878,11 @@ function ensureDefaults(){
   if(!S.authMembers) S.authMembers = [];
   if(!S.history) S.history = [];
   if(!S.userPrefs) S.userPrefs = {};
+  // 旧 __local__ キーがあれば _local_ に移行（Firestoreフィールド名規則対応）
+  if(S.userPrefs.__local__){
+    S.userPrefs._local_ = Object.assign({}, S.userPrefs._local_||{}, S.userPrefs.__local__);
+    delete S.userPrefs.__local__;
+  }
   // 個人ごとのUI設定: Proxyで S.ui を経由してアクセス
   migrateUIToUserPrefsIfNeeded();
   setupUIProxy();
