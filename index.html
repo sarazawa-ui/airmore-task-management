@@ -540,16 +540,16 @@ header.app-header{padding:10px 22px}
       <span id="inviteFromText"></span>のワークスペースに参加します。Googleでログインしてください。
     </div>
     <button class="gbtn" onclick="appLogin()"><span class="gicon"></span>Googleでログイン</button>
-    <small id="loginNote">Firebase設定済の場合：チームメンバーとリアルタイム同期が有効になります。</small>
+    <small id="loginNote">Googleでログインすると、チームメンバー間でリアルタイム同期されます。</small>
     <div class="alt-options">
       <details>
-        <summary style="cursor:pointer;color:#666">⚙ 詳細設定（OAuth / Firebase）</summary>
+        <summary style="cursor:pointer;color:#666">⚙ 詳細設定（通常は不要）</summary>
         <div style="text-align:left;margin-top:8px">
-          <label style="font-size:11px;font-weight:700">Google OAuth Client ID（ローカルのみモード時のみ使用）</label>
+          <label style="font-size:11px;font-weight:700">Google OAuth Client ID（フォールバック用）</label>
           <input type="text" id="loginClientId" placeholder="xxxxx.apps.googleusercontent.com">
           <small style="text-align:left;display:block;margin-top:4px;line-height:1.6">
-            ローカルのみ（同期なし）で使う場合：<a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a> でOAuth Client ID を作成 → JavaScript生成元に <code id="originHint" style="background:#f0f0f0;padding:1px 4px;border-radius:2px"></code> を登録 → 上欄に貼付。<br>
-            <strong>チーム共有（リアルタイム同期）するには：</strong>ログイン後 ⚙ → クラウド同期 で <a href="https://console.firebase.google.com/" target="_blank">Firebase</a> 設定を保存してください。
+            通常は空欄でOK。Firebase Auth で自動処理されます。<br>
+            <code id="originHint" style="background:#f0f0f0;padding:1px 4px;border-radius:2px;font-size:10px"></code>
           </small>
           <button class="btn sm ghost" style="margin-top:8px" onclick="saveClientId()">保存</button>
         </div>
@@ -893,9 +893,10 @@ header.app-header{padding:10px 22px}
         <div id="firebaseStatus" style="font-size:13px;padding:8px 12px;background:var(--primary-soft);border-radius:7px;font-weight:600">○ 未設定</div>
       </div>
       <div class="field">
-        <label>Firebase 設定（JSON 形式）</label>
+        <label id="cfgFirebaseLabel">Firebase 設定（JSON 形式）</label>
         <textarea id="cfgFirebase" rows="8" placeholder='{"apiKey":"...","authDomain":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}' style="width:100%;font-family:Menlo,Consolas,monospace;font-size:11.5px;padding:10px;border:1px solid var(--border);border-radius:7px;background:#fff;resize:vertical"></textarea>
-        <div class="help">Firebase Console → プロジェクト設定 → 全般 → 「マイアプリ」 → ウェブアプリの設定 → SDK 設定と構成 → 「構成」をコピー</div>
+        <div class="help">通常はデフォルト設定のままで動作します。別のFirebaseプロジェクトに接続したい場合のみ上書きしてください。<br>Firebase Console → プロジェクト設定 → 全般 → 「マイアプリ」 → ウェブアプリの設定 → SDK 設定と構成 → 「構成」をコピー</div>
+        <button class="btn sm ghost" onclick="resetToDefaultFirebaseConfig()" style="margin-top:6px">🔄 デフォルト設定に戻す</button>
       </div>
       <div class="field">
         <label>ワークスペースID</label>
@@ -3388,13 +3389,37 @@ window.addEventListener('DOMContentLoaded',()=>{
 
 // ============ FIREBASE (Cloud Sync) ============
 const FB_CONFIG_KEY = "airmore_firebase_config_v1";
+
+// 既定の Firebase 設定（HTMLに埋め込み）
+// メンバーがアクセスしただけで自動接続できるよう、デフォルト値として設定。
+// localStorageに別の設定が保存されていればそちらが優先される。
+const FB_DEFAULT_CONFIG = {
+  "apiKey": "AIzaSyB8QE3JylXkXWmg_rF2ZuczixnRYJZlRnE",
+  "authDomain": "airmore-task-management-app.firebaseapp.com",
+  "projectId": "airmore-task-management-app",
+  "storageBucket": "airmore-task-management-app.firebasestorage.app",
+  "messagingSenderId": "674161520247",
+  "appId": "1:674161520247:web:fe0e0f9d0656008fbaa072",
+  "measurementId": "G-VFS9X3L72E"
+};
+
 let _firebaseConfig = null;
 let _firebaseReady = false;
 let _wsUnsubscribe = null;
 let _saveDebounce = null;
 let _isRemoteUpdate = false;
 
-try{ _firebaseConfig = JSON.parse(localStorage.getItem(FB_CONFIG_KEY) || 'null'); }catch(e){}
+try{
+  const stored = localStorage.getItem(FB_CONFIG_KEY);
+  if(stored){
+    _firebaseConfig = JSON.parse(stored);
+  } else {
+    // localStorage が空ならデフォルト設定を使用
+    _firebaseConfig = FB_DEFAULT_CONFIG;
+  }
+}catch(e){
+  _firebaseConfig = FB_DEFAULT_CONFIG;
+}
 
 function initFirebase(){
   if(_firebaseReady) return true;
@@ -3608,6 +3633,14 @@ function renderFirebaseSettings(){
   const cf = document.getElementById('cfgFirebase');
   if(!cf) return;
   cf.value = _firebaseConfig ? JSON.stringify(_firebaseConfig, null, 2) : '';
+  // localStorageにユーザー設定があるかどうかで「デフォルト」か「カスタム」かを表示
+  const hasCustom = !!localStorage.getItem(FB_CONFIG_KEY);
+  const cfgLabel = document.getElementById('cfgFirebaseLabel');
+  if(cfgLabel){
+    cfgLabel.innerHTML = hasCustom
+      ? 'Firebase 設定（JSON 形式） <span style="color:#7E5109;font-weight:normal;font-size:11px">[カスタム設定使用中]</span>'
+      : 'Firebase 設定（JSON 形式） <span style="color:#1E8449;font-weight:normal;font-size:11px">[デフォルト設定使用中]</span>';
+  }
   document.getElementById('cfgWorkspaceId').value = S.workspaceId || '(未作成)';
   const inv = document.getElementById('cfgInviteUrl');
   if(S.workspaceId){
@@ -3658,6 +3691,14 @@ function saveFirebaseConfigUI(){
   } else {
     alert("Firebase初期化に失敗しました。設定を確認してください。");
   }
+  renderFirebaseSettings();
+}
+
+function resetToDefaultFirebaseConfig(){
+  if(!confirm("Firebase設定をHTML埋め込みのデフォルト値に戻しますか？\n（カスタム設定が消去されます）")) return;
+  localStorage.removeItem(FB_CONFIG_KEY);
+  _firebaseConfig = FB_DEFAULT_CONFIG;
+  toast("デフォルト設定に戻しました。ページをリロードしてください。");
   renderFirebaseSettings();
 }
 
