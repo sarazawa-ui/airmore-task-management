@@ -863,7 +863,7 @@ header.app-header{padding:10px 22px}
       <div class="side-tab">
         <button class="active" data-side="today">本日<span class="tab-badge" data-c="today">0</span></button>
         <button data-side="week">今週<span class="tab-badge" data-c="week">0</span></button>
-        <button data-side="unscheduled">未割当<span class="tab-badge" data-c="unscheduled">0</span></button>
+        <button data-side="unscheduled">未割当</button>
         <button data-side="all">全て<span class="tab-badge" data-c="all">0</span></button>
       </div>
       <div class="side-filters">
@@ -3181,23 +3181,35 @@ function renderSideTasks(){
   document.querySelectorAll('.side-tab button').forEach(b=>{
     b.classList.toggle('active', b.dataset.side===tab);
   });
-  // ===== タブ別タスク数バッジ更新 =====
+  // ===== タブ別タスク数バッジ更新（担当者・ステータス・検索・完了非表示フィルタ連動）=====
   {
-    const hideDone = (document.getElementById('hideDone')||{}).checked;
+    const hideDoneCb = (document.getElementById('hideDone')||{}).checked;
+    const memValForBadge = (document.getElementById('taskMemberFilter')||{}).value||"";
+    const stValForBadge = (document.getElementById('taskStatusFilter')||{}).value||"";
+    const filterForBadge = ((document.getElementById('taskFilter')||{}).value||"").toLowerCase();
     const wkStart = S.ui.weekStart;
     const wkEnd = wkStart ? addDays(wkStart, 6) : '';
     const today = todayStr();
-    const filterDone = arr => hideDone ? arr.filter(t => t.status !== '完了') : arr;
-    const tabCounts = {
-      today: filterDone(S.tasks.filter(t => t.startD === today)).length,
-      week: wkStart ? filterDone(S.tasks.filter(t => t.startD && t.startD >= wkStart && t.startD <= wkEnd)).length : 0,
-      unscheduled: filterDone(S.tasks.filter(t => !t.startD || (!t.time && !t.slot))).length,
-      all: filterDone(S.tasks.slice()).length
+    const passesFilters = t => {
+      if(hideDoneCb && t.status === '完了') return false;
+      if(memValForBadge && t.owner !== memValForBadge) return false;
+      if(stValForBadge && t.status !== stValForBadge) return false;
+      if(filterForBadge){
+        const hay = [t.id,t.mid,t.act,t.owner,t.note,t.defn,t.goal].join(" ").toLowerCase();
+        if(!hay.includes(filterForBadge)) return false;
+      }
+      return true;
     };
-    document.querySelectorAll('.side-tab button[data-side]').forEach(b => {
-      const badge = b.querySelector('.tab-badge');
-      if(!badge) return;
-      const c = tabCounts[b.dataset.side] || 0;
+    const tabCounts = {
+      today: S.tasks.filter(t => t.startD === today && passesFilters(t)).length,
+      week: wkStart ? S.tasks.filter(t => t.startD && t.startD >= wkStart && t.startD <= wkEnd && passesFilters(t)).length : 0,
+      all: S.tasks.filter(passesFilters).length
+    };
+    document.querySelectorAll('.side-tab button[data-side] .tab-badge').forEach(badge => {
+      const btn = badge.closest('button[data-side]');
+      const key = btn?.dataset.side;
+      if(key === 'unscheduled') return; // 未割当はバッジなし
+      const c = tabCounts[key] || 0;
       badge.textContent = c;
       badge.classList.toggle('zero', c === 0);
     });
