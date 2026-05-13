@@ -1084,6 +1084,7 @@ header.app-header{padding:10px 22px}
       </div>
       <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap">
         <button class="btn" onclick="saveFirebaseConfigUI()">💾 設定を保存・接続</button>
+        <button class="btn ghost" onclick="manualRegisterMember()">🔄 メンバー登録を再実行</button>
         <button class="btn ghost" onclick="leaveWorkspace()">🚪 ワークスペース離脱</button>
       </div>
 
@@ -4199,6 +4200,20 @@ function saveFirebaseConfigUI(){
   renderFirebaseSettings();
 }
 
+async function manualRegisterMember(){
+  if(!_currentUser){ alert("ログインしてください"); return; }
+  if(!_firebaseReady || !firebase.auth().currentUser){ alert("Firebaseに接続されていません"); return; }
+  if(!S.workspaceId){ alert("ワークスペースに参加していません"); return; }
+  try{
+    await registerCurrentMember();
+    toast(`メンバー登録を実行しました（${_currentUser.name}）`);
+    renderMemberPane();
+    renderFirebaseSettings();
+  }catch(e){
+    alert("メンバー登録失敗：" + (e.message||e));
+  }
+}
+
 function resetToDefaultFirebaseConfig(){
   if(!confirm("Firebase設定をHTML埋め込みのデフォルト値に戻しますか？\n（カスタム設定が消去されます）")) return;
   localStorage.removeItem(FB_CONFIG_KEY);
@@ -4393,8 +4408,8 @@ async function onLoggedIn(){
       history.replaceState(null,"",window.location.pathname+window.location.search);
     }
   }
-  // Register member
-  registerCurrentMember();
+  // Register member (atomic Firestore update for Firebase mode)
+  await registerCurrentMember();
   logHistory("login", `${_currentUser.name} がログイン`);
   showApp();
   renderAll();
@@ -4406,8 +4421,91 @@ async function onLoggedIn(){
   setTimeout(()=>{ try { googleFetchEvents(true); } catch(e){} }, 600);
 }
 
-function registerCurrentMember(){
+async function registerCurrentMember(){
   if(!_currentUser) return;
+
+  // Firebase モード：Firestoreへのアトミック更新（競合回避）
+  if(_firebaseReady && typeof firebase !== 'undefined' && firebase.auth().currentUser && S.workspaceId){
+    try{
+      const ref = firebase.firestore().doc(`workspaces/${S.workspaceId}`);
+      const snap = await ref.get();
+      if(!snap.exists){
+        console.warn("registerCurrentMember: workspace doc not found");
+        return;
+      }
+      const data = snap.data();
+      const isOwner = data.ownerEmail === _currentUser.email;
+      const memberEmails = data.memberEmails || [];
+      const authMembers = data.authMembers || [];
+      const members = data.members || [];
+
+      const updates = {};
+      let added = false;
+      let nameOrPicChanged = false;
+
+      // memberEmails に追加
+      if(!memberEmails.includes(_currentUser.email)){
+        updates.memberEmails = firebase.firestore.FieldValue.arrayUnion(_currentUser.email);
+        added = true;
+      }
+
+      // authMembers に追加（emailで重複チェック）
+      const existingAuth = authMembers.find(m => m.email === _currentUser.email);
+      if(!existingAuth){
+        const newAm = {
+          email: _currentUser.email,
+          name: _currentUser.name,
+          picture: _currentUser.picture || '',
+          role: isOwner ? 'owner' : 'member',
+          joinedAt: new Date().toISOString()
+        };
+        updates.authMembers = firebase.firestore.FieldValue.arrayUnion(newAm);
+        added = true;
+      } else if(existingAuth.name !== _currentUser.name || existingAuth.picture !== (_currentUser.picture||'')){
+        // 名前/画像が変わったら丸ごと配列更新
+        const updated = authMembers.map(m => m.email === _currentUser.email
+          ? { ...m, name: _currentUser.name, picture: _currentUser.picture || '' }
+          : m);
+        updates.authMembers = updated;
+        nameOrPicChanged = true;
+      }
+
+      // members（表示用）に追加
+      if(!members.some(m => m.name === _currentUser.name)){
+        updates.members = firebase.firestore.FieldValue.arrayUnion({ name: _currentUser.name, dept: 'メンバー' });
+      }
+
+      if(Object.keys(updates).length > 0){
+        await ref.update(updates);
+        // ローカル状態も即時更新（subscribe の上書きから守るため _isRemoteUpdate=trueで包む必要なし。Firestoreに既に永続化済み）
+        if(updates.memberEmails && !(S.memberEmails||[]).includes(_currentUser.email)){
+          S.memberEmails = (S.memberEmails||[]).concat([_currentUser.email]);
+        }
+        if(added && !((S.authMembers||[]).some(m=>m.email===_currentUser.email))){
+          S.authMembers = (S.authMembers||[]).concat([{
+            email:_currentUser.email,
+            name:_currentUser.name,
+            picture:_currentUser.picture||'',
+            role: isOwner ? 'owner' : 'member',
+            joinedAt: new Date().toISOString()
+          }]);
+        }
+        if(updates.members && !((S.members||[]).some(m=>m.name===_currentUser.name))){
+          S.members = (S.members||[]).concat([{name:_currentUser.name, dept:'メンバー'}]);
+        }
+        if(added){
+          logHistory("workspace", isOwner
+            ? `オーナー登録：${_currentUser.name}`
+            : `メンバー参加：${_currentUser.name}`);
+        }
+      }
+    }catch(e){
+      console.error("registerCurrentMember (firebase) failed:", e);
+    }
+    return;
+  }
+
+  // ローカルのみモード
   const list = S.authMembers || [];
   const existing = list.find(m=>m.email===_currentUser.email);
   if(!existing){
@@ -4420,7 +4518,6 @@ function registerCurrentMember(){
       joinedAt: new Date().toISOString()
     });
     S.authMembers = list;
-    // Also add to S.members (display) if not present
     if(!S.members.some(m=>m.name===_currentUser.name)){
       S.members.push({name:_currentUser.name, dept:'メンバー'});
     }
@@ -4428,7 +4525,6 @@ function registerCurrentMember(){
     if(isOwner){ logHistory("workspace", `ワークスペースのオーナーとして ${_currentUser.name} を登録`); }
     else { logHistory("workspace", `${_currentUser.name} がワークスペースに参加`); }
   } else {
-    // Update name/picture if changed
     existing.name = _currentUser.name;
     existing.picture = _currentUser.picture;
     save(false);
