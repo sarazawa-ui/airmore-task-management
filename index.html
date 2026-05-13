@@ -863,7 +863,7 @@ header.app-header{padding:10px 22px}
       <div class="side-tab">
         <button class="active" data-side="today">本日<span class="tab-badge" data-c="today">0</span></button>
         <button data-side="week">今週<span class="tab-badge" data-c="week">0</span></button>
-        <button data-side="unscheduled">未割当</button>
+        <button data-side="unscheduled">未割当<span class="tab-badge" data-c="unscheduled">0</span></button>
         <button data-side="all">全て<span class="tab-badge" data-c="all">0</span></button>
       </div>
       <div class="side-filters">
@@ -1551,9 +1551,10 @@ function closeKpiModal(){
   document.getElementById('kpiTasksModal').classList.remove('show');
 }
 // Close on backdrop click
-document.addEventListener('click', e=>{
-  if(e.target.id === 'kpiTasksModal'){ closeKpiModal(); }
-});
+// 枠外クリックでの自動クローズは無効化（明示的な閉じる操作のみ）
+// document.addEventListener('click', e=>{
+//   if(e.target.id === 'kpiTasksModal'){ closeKpiModal(); }
+// });
 
 function onDashPeriodChange(){
   const sel = document.getElementById('dashPeriod');
@@ -3218,12 +3219,12 @@ function renderSideTasks(){
     const tabCounts = {
       today: S.tasks.filter(t => t.startD === today && passesFilters(t)).length,
       week: wkStart ? S.tasks.filter(t => t.startD && t.startD >= wkStart && t.startD <= wkEnd && passesFilters(t)).length : 0,
+      unscheduled: S.tasks.filter(t => (!t.startD || (!t.time && !t.slot)) && passesFilters(t)).length,
       all: S.tasks.filter(passesFilters).length
     };
     document.querySelectorAll('.side-tab button[data-side] .tab-badge').forEach(badge => {
       const btn = badge.closest('button[data-side]');
       const key = btn?.dataset.side;
-      if(key === 'unscheduled') return; // 未割当はバッジなし
       const c = tabCounts[key] || 0;
       badge.textContent = c;
       badge.classList.toggle('zero', c === 0);
@@ -4749,8 +4750,8 @@ function deleteEditingTask(){
   renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
   closeTaskEditModal();
 }
-// Close modal on backdrop click
-document.addEventListener('click',e=>{ if(e.target.id==='taskEditModal') closeTaskEditModal(); });
+// 枠外クリックでの自動クローズは無効化（明示的な閉じる操作のみ）
+// document.addEventListener('click',e=>{ if(e.target.id==='taskEditModal') closeTaskEditModal(); });
 
 // ============ Settings modal ============
 function openSettingsModal(pane){
@@ -4780,11 +4781,17 @@ document.addEventListener('click', e=>{
     switchSettingsPane(e.target.dataset.pane);
   }
 });
-document.addEventListener('click', e=>{
-  if(e.target.id === 'settingsModal'){ closeSettingsModal(); }
-});
+// 枠外クリックでの自動クローズは無効化（明示的な閉じる操作のみ）
+// document.addEventListener('click', e=>{
+//   if(e.target.id === 'settingsModal'){ closeSettingsModal(); }
+// });
+// Esc キーで閉じる機能は維持（キーボード操作の利便性のため）
 document.addEventListener('keydown', e=>{
-  if(e.key === 'Escape'){ closeSettingsModal(); }
+  if(e.key === 'Escape'){
+    closeSettingsModal();
+    if(typeof closeTaskEditModal === 'function') closeTaskEditModal();
+    if(typeof closeKpiModal === 'function') closeKpiModal();
+  }
 });
 
 // Display / week start / work-capacity settings
