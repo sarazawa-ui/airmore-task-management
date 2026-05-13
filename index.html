@@ -1831,7 +1831,7 @@ function renderTree(g){
       <th style="width:120px">期日</th>
       <th style="width:90px">所要(分)</th>
       <th style="width:90px">状態</th>
-      <th style="width:60px">操作</th>
+      <th style="width:90px">操作</th>
     </tr></thead><tbody>`;
     linked.forEach(t=>{
       const done = t.status==='完了';
@@ -1844,6 +1844,7 @@ function renderTree(g){
         <td class="input"><select data-tf="status" style="border:none;background:transparent;width:100%;font:inherit;outline:none">${statusOptions(t.status)}</select></td>
         <td class="center" style="white-space:nowrap">
           <button data-task-edit="${escapeHtml(t.id)}" title="詳細編集" style="background:none;border:none;color:var(--primary);cursor:pointer;font-size:14px;padding:2px 4px">✏️</button>
+          <button data-task-dup="${escapeHtml(t.id)}" title="複製" style="background:none;border:none;color:#16A085;cursor:pointer;font-size:14px;padding:2px 4px">📋</button>
           <button data-task-del="${escapeHtml(t.id)}" title="削除" style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>
         </td>
       </tr>`;
@@ -1896,6 +1897,13 @@ function renderTree(g){
     btn.addEventListener('click',(e)=>{
       e.stopPropagation();
       openTaskEditModal(btn.dataset.taskEdit);
+    });
+  });
+  // Duplicate buttons
+  linkedSection.querySelectorAll('[data-task-dup]').forEach(btn=>{
+    btn.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      duplicateTask(btn.dataset.taskDup);
     });
   });
   linkedSection.querySelectorAll('[data-task-detail]').forEach(el=>{
@@ -2218,6 +2226,33 @@ function addTask(){
   S.tasks.push(t);
   save(true, `タスク追加：${t.id}`); renderAll();
   toast(`${t.id} を追加しました（サイドバーで詳細を編集）`);
+}
+
+function duplicateTask(taskId){
+  const src = S.tasks.find(t=>t.id===taskId);
+  if(!src){ alert('タスクが見つかりません'); return; }
+  S.seq.task = (S.seq.task||0)+1;
+  const newId = "T-"+String(S.seq.task).padStart(3,'0');
+  // ソースを浅くコピーして新ID・初期状態にリセット
+  const dup = {
+    ...src,
+    id: newId,
+    act: (src.act||src.mid||'') + '（複製）',
+    status: '未着手',
+    act_min: '',
+    time: '',
+    interrupt: '',
+    _expanded: false,
+    _prevStatus: undefined,
+    _reminded10: undefined
+  };
+  // 元のオブジェクトの内部状態を引き継がないよう明示的に削除
+  delete dup._prevStatus;
+  delete dup._reminded10;
+  S.tasks.push(dup);
+  save(true, `タスク複製：${src.id} → ${newId}`);
+  renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
+  toast(`${src.id} を ${newId} として複製しました`);
 }
 
 // Summary input handlers
