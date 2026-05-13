@@ -466,7 +466,7 @@ header.app-header{padding:10px 22px}
 .settings-nav button.active{background:#fff;color:var(--primary);box-shadow:var(--shadow-sm);font-weight:700}
 .settings-nav .divider{height:1px;background:var(--border);margin:8px 6px}
 .settings-nav .label{font-size:10.5px;color:var(--muted);padding:8px 14px 4px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
-.settings-content{padding:20px 24px;overflow-y:auto;max-height:calc(90vh - 60px)}
+.settings-content{padding:20px 24px}
 .settings-pane{display:none}
 .settings-pane.active{display:block}
 .settings-pane h3{font-size:15px;color:var(--text);margin:0 0 12px;font-weight:700}
@@ -524,6 +524,159 @@ header.app-header{padding:10px 22px}
   .kpi-grid{grid-template-columns:repeat(2,1fr)}
   .summary-bar{grid-template-columns:1fr 1fr}
   .kpt-area,.master-grid{grid-template-columns:1fr}
+}
+
+/* ===== Mobile (タブレット縦・スマホ) ===== */
+@media (max-width:768px){
+  /* Header compact */
+  header.app-header{padding:8px 12px;gap:6px;flex-wrap:wrap}
+  .app-header .logo-area{gap:8px;flex-wrap:wrap;flex:1 1 auto;min-width:0}
+  .app-header .hittatsu-brand{height:24px}
+  .app-header .brand-sep{display:none}
+  .app-header .company-logo{width:28px;height:28px;border-radius:7px;font-size:12px;flex:0 0 28px}
+  .app-header h1{font-size:12px;line-height:1.15}
+  .app-header h1 small{font-size:9.5px}
+  .app-header .hdr-clock{margin-left:auto;padding:3px 8px;border-radius:6px}
+  .app-header .hdr-clock .lbl{font-size:8.5px}
+  .app-header .hdr-clock .val{font-size:13px;letter-spacing:.3px}
+  .app-header .user-area{gap:5px;flex-wrap:wrap}
+  .sync-indicator{padding:3px 8px;font-size:10px;margin-left:0}
+  .sync-indicator .lbl{display:none}
+  .app-header .user-info{padding:3px 7px;font-size:10.5px;border-radius:14px}
+  .app-header .user-info span{display:none}
+  .app-header .user-info img,.app-header .user-info .ph{width:22px;height:22px}
+  .settings-btn{padding:6px 9px;font-size:12px}
+
+  /* Nav: horizontal scroll if needed */
+  nav{padding:0 4px;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;flex-wrap:nowrap}
+  nav::-webkit-scrollbar{height:3px}
+  nav button{padding:10px 12px;font-size:12px;white-space:nowrap;flex:0 0 auto}
+
+  /* Main padding compact */
+  main{padding:12px 10px}
+
+  /* Headings */
+  h2{font-size:15px}
+  .subtitle{font-size:11px}
+  .section{font-size:13px;padding:10px 0 6px}
+
+  /* Dashboard */
+  .dash-period{padding:8px 10px;gap:6px;font-size:11.5px}
+  .dash-period select,.dash-period input[type=date]{padding:5px 8px;font-size:12px}
+  .kpi-grid{grid-template-columns:repeat(2,1fr);gap:8px;margin:10px 0}
+  .kpi{border-radius:8px}
+  .kpi .val{font-size:24px;padding:14px 6px}
+  .kpi .lbl{font-size:11.5px;padding:6px}
+  .kpi-mini{padding:10px 12px;gap:12px;border-radius:8px}
+  .kpi-mini .v{font-size:15px}
+  .kpi-mini .l{font-size:11px}
+
+  /* Tables - ensure horizontal scroll */
+  .card.scroll-x,.scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{font-size:11.5px}
+  th,td{padding:6px}
+
+  /* Calendar */
+  .cal-toolbar{padding:8px 10px;gap:6px;border-radius:8px}
+  .cal-toolbar .week-label{min-width:0;font-size:13px;flex:1 1 100%;text-align:center;order:2}
+  .cal-toolbar .btn{padding:5px 10px;font-size:11.5px}
+  .cal-split{gap:8px}
+  .cal-table{min-width:680px}
+  #view-calendar.active{height:auto}
+  #view-calendar .cal-split{flex:initial;min-height:300px}
+  #view-calendar .cal-wrap{max-height:60vh;overflow:auto}
+  #view-calendar .cal-side{max-height:none}
+  body{overflow:auto}
+  body>main:has(#view-calendar.active){overflow:auto}
+
+  /* Sidebar */
+  .cal-side{padding:10px;border-radius:8px}
+  .side-task{padding:8px;border-radius:6px}
+  .side-task .ttl{font-size:11.5px}
+  .side-task .meta{font-size:10px}
+
+  /* Summary bar */
+  .summary-bar{grid-template-columns:1fr 1fr;gap:8px;padding:10px}
+  .summary-bar label{font-size:10px}
+  .summary-bar input,.summary-bar .calc,.summary-bar .judge{padding:5px 7px;font-size:12px}
+
+  /* Buttons */
+  .btn{padding:7px 12px;font-size:12px}
+  .btn.sm{padding:4px 9px;font-size:11px}
+
+  /* Toolbar */
+  .toolbar,.tasks-toolbar{gap:5px}
+  .toolbar input,.toolbar select{padding:5px 8px;font-size:12px}
+
+  /* Modal: full-screen on mobile */
+  .modal-backdrop{padding:0;align-items:flex-start}
+  .modal{max-height:100vh;height:100vh;border-radius:0;max-width:100%;width:100%}
+  .modal-header{padding:12px 14px}
+  .modal-header h2{font-size:14px}
+  .modal-close{width:30px;height:30px;font-size:16px}
+  .modal-body{padding:0}
+
+  /* Settings inner layout - stack vertically on mobile */
+  .settings-layout{grid-template-columns:1fr;min-height:auto}
+  .settings-nav{border-right:none;border-bottom:1px solid var(--border);padding:8px;display:flex;flex-wrap:wrap;gap:4px;background:#fff;position:sticky;top:0;z-index:5}
+  .settings-nav button{flex:1 1 auto;text-align:center;padding:7px 10px;font-size:11.5px;border-radius:6px}
+  .settings-nav button.active{background:var(--primary);color:#fff;box-shadow:none}
+  .settings-nav .divider,.settings-nav .label{display:none}
+  .settings-content{padding:14px}
+  .settings-pane h3{font-size:14px}
+  .profile-form{max-width:none}
+  .profile-form input[type=text],.profile-form select,.profile-form textarea{font-size:13px;padding:8px 10px}
+  .profile-form .logo-preview{width:100px;height:100px}
+
+  /* Member list, history table */
+  .member-row{padding:10px;gap:8px;font-size:11.5px}
+  .member-row img,.member-row .ph{width:30px;height:30px;flex:0 0 30px}
+  .history-table{font-size:11px}
+  .history-table th,.history-table td{padding:7px 8px}
+
+  /* Login screen */
+  .login-screen{padding:14px}
+  .login-card{padding:22px 16px;border-radius:10px}
+  .login-card .lg-logo{width:64px;height:64px;font-size:32px}
+  .login-card h1{font-size:18px}
+
+  /* Report (週報) */
+  .report-toolbar{padding:10px;gap:8px;font-size:11.5px}
+  .report-paper{padding:16px;border-radius:8px}
+  .report-paper .rp-header{gap:10px;padding-bottom:10px;margin-bottom:14px}
+  .report-paper .rp-header img,.report-paper .rp-header .ph{width:38px;height:38px;flex:0 0 38px}
+  .report-paper .rp-header h3{font-size:14px}
+  .report-stats{grid-template-columns:repeat(2,1fr);gap:6px}
+  .report-stat{padding:8px}
+  .report-stat .val{font-size:18px}
+  .report-stat .lbl{font-size:10px}
+  .report-tasks{font-size:10.5px}
+  .report-tasks th,.report-tasks td{padding:5px 6px}
+  .report-kpt{grid-template-columns:1fr}
+
+  /* Task edit modal */
+  #taskEditFields .row{grid-template-columns:1fr !important}
+
+  /* KPI tasks modal table */
+  #kpiTasksModal table{font-size:11px}
+  #kpiTasksModal th,#kpiTasksModal td{padding:5px 6px}
+
+  /* Sync panel - stack vertical */
+  .sync-panel{grid-template-columns:1fr;gap:10px}
+}
+
+@media (max-width:480px){
+  /* Very small screens */
+  header.app-header{padding:6px 10px}
+  .app-header .hdr-clock{display:none}
+  .app-header h1{font-size:11px}
+  nav button{padding:9px 10px;font-size:11px}
+  main{padding:10px 8px}
+  .kpi .val{font-size:20px;padding:12px 4px}
+  .kpi-mini{flex-direction:column;gap:6px;align-items:flex-start}
+  .kpi-mini > div{width:100%}
+  .summary-bar{grid-template-columns:1fr 1fr;gap:6px}
+  .report-stats{grid-template-columns:1fr 1fr}
 }
 </style>
 </head>
