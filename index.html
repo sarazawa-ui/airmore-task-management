@@ -1010,6 +1010,7 @@ header.app-header{padding:10px 22px}
   <!-- Profile pane -->
   <div class="settings-pane active" id="pane-profile">
     <h3>🏢 ワークスペース・プロフィール</h3>
+    <div id="wsInfoBanner" style="background:#EBF5FB;border:1px solid var(--primary-light);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--text-soft);margin-bottom:14px"></div>
     <div class="profile-form">
       <div class="field">
         <label>会社ロゴ</label>
@@ -1019,14 +1020,22 @@ header.app-header{padding:10px 22px}
         <div class="help">推奨：正方形 256×256px 以上 / PNG・JPG・SVG（5MB以下）</div>
       </div>
       <div class="field">
-        <label>会社名（プロファイル名）</label>
+        <label>ワークスペース名（会社名／プロジェクト名）</label>
         <input type="text" id="companyName" placeholder="株式会社エアモア">
+        <div class="help">この名前は参加メンバー全員に表示され、ヘッダーのワークスペース切替メニューにも反映されます。</div>
       </div>
       <div class="field">
         <label>業種・領域メモ（任意）</label>
         <input type="text" id="companyMemo" placeholder="例：圧縮空気の総合エンジニアリング">
       </div>
       <button class="btn" onclick="saveProfile()">💾 保存</button>
+      <div id="wsDangerZone" style="display:none;margin-top:24px;padding-top:18px;border-top:2px solid #FADBD8">
+        <h4 style="color:#C0392B;margin:0 0 8px">⚠ 危険な操作（オーナー専用）</h4>
+        <div style="color:var(--text-soft);font-size:12px;margin-bottom:10px">
+          ワークスペースを削除すると、クラウド上のすべてのデータ（プロジェクト・タスク・履歴）が失われ、参加メンバー全員がアクセスできなくなります。<strong>この操作は取り消せません。</strong>
+        </div>
+        <button class="btn" style="background:#C0392B;border-color:#C0392B" onclick="deleteWorkspace()">🗑 ワークスペースを完全削除</button>
+      </div>
     </div>
   </div>
 
@@ -5310,13 +5319,94 @@ function renderProfileForm(){
   const prev = document.getElementById('logoPreview');
   if(p.companyLogo) prev.innerHTML = `<img src="${p.companyLogo}" alt="">`;
   else prev.textContent = 'ロゴなし';
+  // Workspace info banner
+  const banner = document.getElementById('wsInfoBanner');
+  const dz = document.getElementById('wsDangerZone');
+  const me = _currentUser ? _currentUser.email : '';
+  const isOwner = !!(S.ownerEmail && me && S.ownerEmail === me);
+  if(banner){
+    if(S.workspaceId){
+      const memCount = (S.memberEmails||[]).length;
+      banner.innerHTML = `🆔 ワークスペースID：<code style="background:#fff;padding:2px 6px;border-radius:4px;border:1px solid var(--border)">${escapeHtml(S.workspaceId)}</code>
+        👤 オーナー：<strong>${escapeHtml(S.ownerEmail||'不明')}</strong>
+        👥 メンバー：<strong>${memCount}</strong>名
+        ${isOwner ? '<span style="color:#1E8449;font-weight:600">（あなたはオーナーです）</span>' : '<span style="color:var(--muted)">（あなたはメンバーです）</span>'}`;
+    } else {
+      banner.innerHTML = '<span style="color:var(--muted)">ワークスペース未参加（ローカルモード）</span>';
+    }
+  }
+  if(dz) dz.style.display = isOwner ? '' : 'none';
 }
 function saveProfile(){
-  S.profile.companyName = document.getElementById('companyName').value.trim();
+  const newName = document.getElementById('companyName').value.trim();
+  const oldName = (S.profile && S.profile.companyName) || '';
+  S.profile.companyName = newName;
   S.profile.companyMemo = document.getElementById('companyMemo').value.trim();
-  save(true,'プロフィールを更新');
+  save(true, oldName !== newName ? `ワークスペース名を「${newName}」に変更` : 'プロフィールを更新');
   applyProfileToHeader();
+  if(typeof refreshWorkspaceSwitcher === 'function') refreshWorkspaceSwitcher();
   toast("保存しました");
+}
+
+async function deleteWorkspace(){
+  if(!S.workspaceId){ alert('ワークスペース未参加です'); return; }
+  if(!_firebaseReady || !firebase.auth().currentUser){ alert('Firebase未接続です'); return; }
+  const me = firebase.auth().currentUser.email;
+  if(S.ownerEmail !== me){
+    alert('ワークスペースの削除はオーナーのみ可能です。');
+    return;
+  }
+  const wsId = S.workspaceId;
+  const wsName = (S.profile && S.profile.companyName) || wsId;
+  const confirm1 = prompt(`ワークスペース「${wsName}」を完全に削除します。\n\nこの操作は取り消せません。クラウド上のすべてのデータ（プロジェクト・タスク・履歴）が失われ、参加メンバー全員がアクセスできなくなります。\n\n確認のため、ワークスペース名「${wsName}」を入力してください：`);
+  if(confirm1 === null) return;
+  if(confirm1.trim() !== wsName){
+    alert('入力が一致しませんでした。削除を中止します。');
+    return;
+  }
+  if(!confirm(`最終確認：本当に「${wsName}」を完全削除しますか？`)) return;
+  try{
+    // unsubscribe first to prevent snapshot from re-applying after delete
+    if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
+    await firebase.firestore().doc(`workspaces/${wsId}`).delete();
+    toast(`ワークスペース「${wsName}」を削除しました`);
+    // Clear local workspace state
+    delete S.workspaceId;
+    delete S.ownerEmail;
+    delete S.memberEmails;
+    // Reset content to empty defaults (preserve userPrefs)
+    const keepUserPrefs = S.userPrefs;
+    S.goals = [];
+    S.tasks = [];
+    S.members = [];
+    S.authMembers = [];
+    S.history = [];
+    S.events = [];
+    S.userPrefs = keepUserPrefs || {};
+    S.profile = { companyName:'', companyLogo:'', companyMemo:'' };
+    ensureDefaults();
+    if(typeof _origSave === 'function') _origSave();
+    else localStorage.setItem(LS_KEY, JSON.stringify(S));
+    updateSyncStatus('offline');
+    applyProfileToHeader();
+    renderAll();
+    if(typeof renderFirebaseSettings === 'function') renderFirebaseSettings();
+    // Switch to another workspace if any
+    await fetchMyWorkspaces();
+    refreshWorkspaceSwitcher();
+    if(_myWorkspaces.length > 0){
+      if(confirm(`他に参加中のワークスペースが ${_myWorkspaces.length} 件あります。\n「${_myWorkspaces[0].name}」に切り替えますか？`)){
+        await switchWorkspace(_myWorkspaces[0].id);
+      }
+    }
+  }catch(e){
+    console.error('deleteWorkspace failed:', e);
+    if(e.code === 'permission-denied'){
+      alert(`削除に失敗しました：権限エラー\n\nFirestore セキュリティルールでオーナーのみ削除可能になっているか確認してください。\n\n推奨ルール（match /workspaces/{wsId} 内に追加）：\nallow delete: if request.auth != null && request.auth.token.email == resource.data.ownerEmail;`);
+    } else {
+      alert('削除に失敗しました：' + (e.message || e.code || e));
+    }
+  }
 }
 function handleLogoUpload(e){
   const f = e.target.files[0]; if(!f) return;
