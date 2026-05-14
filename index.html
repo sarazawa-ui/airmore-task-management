@@ -143,8 +143,8 @@ tr.done td input,tr.done td select,tr.done td textarea{color:#B2BABB;text-decora
 .cal-head.today{background:var(--primary);color:#fff}
 .cal-head.weekend{background:#F0F4F8;color:var(--text-soft)}
 .cal-head .d{font-size:11px;font-weight:500;opacity:.9}
-.cal-allday-label{background:var(--primary-soft);text-align:center;padding:6px 2px;font-size:11px;color:var(--text-soft);border-right:1px solid var(--border);border-bottom:2px solid var(--border);align-self:stretch;font-weight:600}
-.cal-allday-cell{background:var(--primary-soft);border-bottom:2px solid var(--border);min-height:34px;padding:4px;border-right:1px solid var(--border-soft)}
+.cal-allday-label{background:var(--primary-soft);text-align:center;padding:6px 2px;font-size:11px;color:var(--text-soft);border-right:1px solid var(--border);border-bottom:2px solid var(--border);align-self:stretch;font-weight:600;min-width:0;overflow:hidden}
+.cal-allday-cell{background:var(--primary-soft);border-bottom:2px solid var(--border);min-height:34px;padding:4px;border-right:1px solid var(--border-soft);min-width:0;overflow:hidden;display:flex;flex-direction:column;gap:2px}
 .cal-allday-cell.today{background:#FFFBEA}
 .cal-allday-cell.weekend{background:#F4F7FA}
 .cal-time-col{background:#FBFCFD;border-right:1px solid var(--border);position:relative}
@@ -163,8 +163,9 @@ tr.done td input,tr.done td select,tr.done td textarea{color:#B2BABB;text-decora
 .cal-block.task.done{background:#F4F6F7;border-left-color:#BDC3C7;color:#909497;text-decoration:line-through}
 .cal-block.task.late{background:#FADBD8;border-left-color:#E74C3C;color:#943126}
 .cal-block.event{background:var(--primary-light);border-left-color:var(--primary);color:var(--primary-dark)}
-.cal-block.event.allday{position:static;display:inline-block;margin:2px;font-size:10px;padding:3px 7px;border-radius:10px}
-.cal-block.task.allday{position:static;display:inline-block;margin:2px;font-size:10px;padding:3px 7px;background:#FCF3CF;border-left-color:#D4AC0D;border-radius:10px}
+.cal-block.event.allday{position:static;display:block;margin:0;font-size:10px;padding:3px 7px;border-radius:10px;max-width:100%;width:auto;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal-block.task.allday{position:static;display:block;margin:0;font-size:10px;padding:3px 7px;background:#FCF3CF;border-left-color:#D4AC0D;border-radius:10px;max-width:100%;width:auto;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cal-block.allday .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cal-block .t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cal-block .s{font-size:9.5px;opacity:.85}
 .cal-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:#444;margin:8px 0}
@@ -459,6 +460,32 @@ header.app-header{padding:10px 22px}
 .settings-btn{background:#fff;color:var(--primary);border:1px solid var(--border);padding:7px 14px;border-radius:8px;cursor:pointer;font-family:inherit;font-size:13px;display:inline-flex;align-items:center;gap:5px;font-weight:500;transition:all .12s}
 .settings-btn:hover{background:var(--primary-soft);border-color:var(--primary);box-shadow:var(--shadow-sm)}
 
+/* Workspace switcher */
+.ws-switcher{position:relative;margin-left:14px}
+.ws-switcher-btn{display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,var(--primary-soft),#fff);border:1px solid var(--primary-light);color:var(--primary-dark);padding:6px 12px;border-radius:9px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600;max-width:240px}
+.ws-switcher-btn:hover{background:var(--primary-light);border-color:var(--primary)}
+.ws-switcher-btn .icon{font-size:14px}
+.ws-switcher-btn .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ws-switcher-btn .caret{opacity:.6;font-size:10px}
+.ws-menu{position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1px solid var(--border);border-radius:9px;box-shadow:0 8px 26px rgba(44,62,80,.18);padding:6px;min-width:260px;z-index:50;display:none}
+.ws-switcher.open .ws-menu{display:block}
+.ws-menu .ws-label{font-size:10.5px;color:var(--muted);font-weight:700;padding:6px 10px 4px;letter-spacing:.05em;text-transform:uppercase}
+.ws-menu .ws-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--text)}
+.ws-menu .ws-item:hover{background:var(--primary-soft)}
+.ws-menu .ws-item.active{background:var(--primary);color:#fff;font-weight:700}
+.ws-menu .ws-item.active:hover{background:var(--primary-dark)}
+.ws-menu .ws-item .meta{font-size:10px;opacity:.7;font-weight:400}
+.ws-menu .divider{height:1px;background:var(--border);margin:6px 4px}
+.ws-menu .ws-action{display:flex;width:100%;text-align:left;background:transparent;border:none;padding:8px 10px;cursor:pointer;font-family:inherit;font-size:12.5px;color:var(--text);border-radius:6px;align-items:center;gap:7px;font-weight:500}
+.ws-menu .ws-action:hover{background:var(--primary-soft)}
+.ws-menu .ws-action.primary{color:var(--primary);font-weight:700}
+
+@media (max-width:768px){
+  .ws-switcher{margin-left:6px}
+  .ws-switcher-btn{padding:5px 9px;font-size:11.5px;max-width:130px}
+  .ws-menu{min-width:240px}
+}
+
 /* ===== Settings Modal ===== */
 .modal-backdrop{position:fixed;inset:0;background:rgba(44,62,80,.55);backdrop-filter:blur(3px);z-index:200;display:none;align-items:center;justify-content:center;padding:20px;animation:fadein .15s ease-out}
 .modal-backdrop.show{display:flex}
@@ -740,6 +767,14 @@ header.app-header{padding:10px 22px}
       <span class="val" id="hdrClock">--:--:--</span>
     </div>
   </div>
+  <div class="ws-switcher" id="wsSwitcher" style="display:none">
+    <button class="ws-switcher-btn" onclick="toggleWsMenu(event)" title="ワークスペース切替">
+      <span class="icon">🏢</span>
+      <span class="name" id="wsCurrentName">読込中...</span>
+      <span class="caret">▼</span>
+    </button>
+    <div class="ws-menu" id="wsMenu"></div>
+  </div>
   <div class="user-area">
     <span class="sync-indicator offline" id="syncIndicator" title="同期状態">
       <span class="dot"></span><span class="lbl">未接続</span>
@@ -756,6 +791,7 @@ header.app-header{padding:10px 22px}
   <button data-view="goals">プロジェクト</button>
   <button data-view="calendar">週間カレンダー</button>
   <button data-view="review">週次レビュー</button>
+  <button data-view="personal" title="参加中のすべてのワークスペースの自分のタスク">🗂 マイタスク横断</button>
 </nav>
 <main id="appMain" style="display:none">
 
@@ -905,6 +941,20 @@ header.app-header{padding:10px 22px}
     <button class="btn sm ghost" onclick="window.print()">🖨 印刷／PDF保存</button>
   </div>
   <div class="report-paper" id="reportPaper"></div>
+</section>
+
+<!-- ============ PERSONAL CROSS-WORKSPACE VIEW ============ -->
+<section class="view" id="view-personal">
+  <div style="padding:18px 22px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+      <h2 style="margin:0;font-size:18px;color:var(--primary-dark)">🗂 マイタスク横断（全ワークスペース）</h2>
+      <span style="color:var(--muted);font-size:12px">参加中の全ワークスペースから、自分が担当のタスクを集約表示</span>
+      <span style="margin-left:auto"></span>
+      <button class="btn sm ghost" onclick="refreshPersonalView()">🔄 再読込</button>
+    </div>
+    <div id="personalStatus" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
+    <div id="personalContent"></div>
+  </div>
 </section>
 
 <!-- ============ KPI TASK LIST MODAL ============ -->
@@ -3033,6 +3083,7 @@ function goToView(viewId){
   const view = document.getElementById('view-'+viewId);
   if(view) view.classList.add('active');
   renderAll();
+  if(viewId === 'personal') renderPersonalView();
 }
 function goToGoal(goalId){
   const g = S.goals.find(x=>x.id===goalId);
@@ -4447,6 +4498,164 @@ function leaveWorkspace(){
   updateSyncStatus('offline');
   toast("ワークスペースから離脱しました");
   renderFirebaseSettings();
+  refreshWorkspaceSwitcher();
+}
+
+// ===== Multi-workspace switcher =====
+let _myWorkspaces = []; // [{id, name, ownerEmail, memberCount}]
+
+function getCurrentWsName(){
+  if(S.profile && S.profile.companyName) return S.profile.companyName;
+  if(S.workspaceId) return S.workspaceId;
+  return '(未参加)';
+}
+
+function refreshWorkspaceSwitcher(){
+  const sw = document.getElementById('wsSwitcher');
+  if(!sw) return;
+  if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser){
+    sw.style.display = 'none';
+    return;
+  }
+  sw.style.display = '';
+  const nm = document.getElementById('wsCurrentName');
+  if(nm) nm.textContent = getCurrentWsName();
+  // refresh list in background
+  fetchMyWorkspaces().then(()=> renderWsMenu()).catch(e=> console.warn('fetchMyWorkspaces:', e));
+}
+
+async function fetchMyWorkspaces(){
+  if(!_firebaseReady || !firebase.auth().currentUser) return [];
+  const email = firebase.auth().currentUser.email;
+  try{
+    const snap = await firebase.firestore().collection('workspaces')
+      .where('memberEmails','array-contains', email).get();
+    _myWorkspaces = [];
+    snap.forEach(doc=>{
+      const d = doc.data() || {};
+      _myWorkspaces.push({
+        id: doc.id,
+        name: (d.profile && d.profile.companyName) || d.name || doc.id,
+        ownerEmail: d.ownerEmail || '',
+        memberCount: (d.memberEmails||[]).length
+      });
+    });
+    _myWorkspaces.sort((a,b)=> a.name.localeCompare(b.name,'ja'));
+    return _myWorkspaces;
+  }catch(e){
+    console.warn('fetchMyWorkspaces failed:', e);
+    return [];
+  }
+}
+
+function renderWsMenu(){
+  const menu = document.getElementById('wsMenu');
+  if(!menu) return;
+  const cur = S.workspaceId || '';
+  let html = '<div class="ws-label">参加中のワークスペース</div>';
+  if(_myWorkspaces.length === 0){
+    html += '<div style="padding:8px 10px;color:var(--muted);font-size:12px">読込中... / 参加なし</div>';
+  } else {
+    _myWorkspaces.forEach(ws=>{
+      const active = ws.id === cur;
+      html += `<div class="ws-item${active?' active':''}" onclick="switchWorkspace('${escapeHtml(ws.id)}')">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(ws.name)}</span>
+        <span class="meta">${ws.memberCount}人</span>
+      </div>`;
+    });
+  }
+  html += '<div class="divider"></div>';
+  html += `<button class="ws-action primary" onclick="createNewWorkspace()">➕ 新規ワークスペース作成</button>`;
+  html += `<button class="ws-action" onclick="joinWorkspaceById()">🔗 IDで参加</button>`;
+  html += `<button class="ws-action" onclick="goToView('personal');closeWsMenu()">🗂 マイタスク横断を開く</button>`;
+  menu.innerHTML = html;
+}
+
+function toggleWsMenu(ev){
+  if(ev) ev.stopPropagation();
+  const sw = document.getElementById('wsSwitcher');
+  if(!sw) return;
+  const willOpen = !sw.classList.contains('open');
+  sw.classList.toggle('open');
+  if(willOpen){
+    fetchMyWorkspaces().then(()=> renderWsMenu());
+    document.addEventListener('click', _wsMenuOutsideClick, { once:true });
+  }
+}
+function closeWsMenu(){
+  const sw = document.getElementById('wsSwitcher');
+  if(sw) sw.classList.remove('open');
+}
+function _wsMenuOutsideClick(e){
+  const sw = document.getElementById('wsSwitcher');
+  if(!sw) return;
+  if(!sw.contains(e.target)) sw.classList.remove('open');
+}
+
+async function switchWorkspace(wsId){
+  closeWsMenu();
+  if(!wsId || wsId === S.workspaceId) return;
+  if(!_firebaseReady || !firebase.auth().currentUser){ alert('未ログインです'); return; }
+  // unsubscribe current
+  if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
+  // load target
+  toast('ワークスペースを切替中...');
+  const ok = await joinOrCreateWorkspace(wsId);
+  if(!ok){
+    refreshWorkspaceSwitcher();
+    return;
+  }
+  if(typeof _origSave === 'function') _origSave();
+  else localStorage.setItem(LS_KEY, JSON.stringify(S));
+  subscribeWorkspace();
+  renderAll();
+  refreshWorkspaceSwitcher();
+  if(typeof renderFirebaseSettings === 'function') renderFirebaseSettings();
+}
+
+async function createNewWorkspace(){
+  closeWsMenu();
+  if(!_firebaseReady || !firebase.auth().currentUser){ alert('Firebase未接続です'); return; }
+  const name = prompt('新規ワークスペースの名前を入力してください\n（例：株式会社○○ / プロジェクトX）');
+  if(!name || !name.trim()) return;
+  if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
+  // Start a fresh state for the new workspace, preserve userPrefs
+  const keepUserPrefs = S.userPrefs;
+  delete S.workspaceId;
+  delete S.ownerEmail;
+  delete S.memberEmails;
+  // Re-init defaults to empty (but keep profile companyName as the new ws name)
+  S.profile = S.profile || {};
+  S.profile.companyName = name.trim();
+  S.goals = [];
+  S.tasks = [];
+  S.members = [{ name: _currentUser.name, dept: 'オーナー' }];
+  S.authMembers = [{ email:_currentUser.email, name:_currentUser.name, picture:_currentUser.picture||'', role:'owner', joinedAt:new Date().toISOString() }];
+  S.history = [];
+  S.events = [];
+  S.userPrefs = keepUserPrefs || {};
+  ensureDefaults();
+  const ok = await joinOrCreateWorkspace(null); // create
+  if(!ok){ refreshWorkspaceSwitcher(); return; }
+  if(typeof _origSave === 'function') _origSave();
+  else localStorage.setItem(LS_KEY, JSON.stringify(S));
+  subscribeWorkspace();
+  renderAll();
+  refreshWorkspaceSwitcher();
+  if(typeof renderFirebaseSettings === 'function') renderFirebaseSettings();
+  toast(`新規ワークスペース「${name}」を作成しました`);
+}
+
+async function joinWorkspaceById(){
+  closeWsMenu();
+  const id = prompt('参加するワークスペースID（または招待URL）を入力してください');
+  if(!id) return;
+  let wsId = id.trim();
+  // URLが入っていた場合 ?ws=xxx を抽出
+  const m = wsId.match(/[?&]ws=([^&\s]+)/);
+  if(m) wsId = m[1];
+  if(wsId === S.workspaceId){ toast('既に参加中です'); return; }
+  await switchWorkspace(wsId);
 }
 
 function renderFirebaseSettings(){
@@ -4880,6 +5089,7 @@ function showApp(){
   document.querySelector('main').style.display = '';
   updateHeaderUserInfo();
   applyProfileToHeader();
+  if(typeof refreshWorkspaceSwitcher === 'function') refreshWorkspaceSwitcher();
 }
 function hideApp(){
   document.getElementById('loginScreen').style.display = '';
@@ -5379,7 +5589,118 @@ function renderAll(){
   renderCalendar();
   // Render settings panes
   renderProfileForm(); renderMemberPane(); renderHistory();
+  // If on personal cross-workspace view, render it
+  const pv = document.getElementById('view-personal');
+  if(pv && pv.classList.contains('active')) renderPersonalView();
+  // Update workspace switcher label
+  refreshWorkspaceSwitcher();
 }
+
+// ===== Personal cross-workspace task view =====
+async function renderPersonalView(){
+  const content = document.getElementById('personalContent');
+  const stat = document.getElementById('personalStatus');
+  if(!content) return;
+  if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser){
+    content.innerHTML = '<div style="padding:18px;color:var(--muted)">クラウド同期が未接続のため、横断ビューは利用できません。</div>';
+    if(stat) stat.textContent = '';
+    return;
+  }
+  if(stat) stat.textContent = '全ワークスペースを読込中...';
+  content.innerHTML = '<div style="padding:18px;color:var(--muted)">読込中...</div>';
+  const email = firebase.auth().currentUser.email;
+  const myName = (_currentUser && _currentUser.name) || '';
+  let allRows = [];
+  try{
+    const snap = await firebase.firestore().collection('workspaces')
+      .where('memberEmails','array-contains', email).get();
+    snap.forEach(doc=>{
+      const d = doc.data() || {};
+      const wsName = (d.profile && d.profile.companyName) || d.name || doc.id;
+      const tasks = Array.isArray(d.tasks) ? d.tasks : [];
+      // Identify "self" name in this workspace (authMembers maps email → name)
+      let selfName = myName;
+      const auth = Array.isArray(d.authMembers) ? d.authMembers.find(m=>m.email===email) : null;
+      if(auth && auth.name) selfName = auth.name;
+      tasks.forEach(t=>{
+        if(!t) return;
+        if(t.owner === selfName || t.owner === myName){
+          allRows.push({
+            wsId: doc.id, wsName,
+            id: t.id, title: t.title || '(無題)',
+            status: t.status || '未着手',
+            startD: t.startD || '', endD: t.endD || '',
+            time: t.time || '', endT: t.endT || '',
+            goal: t.goal || '', priority: t.priority || ''
+          });
+        }
+      });
+    });
+  }catch(e){
+    console.error('personal view fetch failed:', e);
+    content.innerHTML = `<div style="padding:18px;color:#c0392b">読込失敗：${escapeHtml(e.message||String(e))}</div>`;
+    if(stat) stat.textContent = '';
+    return;
+  }
+  // Sort: incomplete first by startD, then completed
+  const statusOrder = {'未着手':0,'着手中':1,'完了':3};
+  allRows.sort((a,b)=>{
+    const sa = statusOrder[a.status] ?? 2, sb = statusOrder[b.status] ?? 2;
+    if(sa !== sb) return sa - sb;
+    if(a.startD && b.startD) return a.startD.localeCompare(b.startD);
+    if(a.startD) return -1; if(b.startD) return 1;
+    return 0;
+  });
+  if(stat){
+    const total = allRows.length;
+    const done = allRows.filter(r=>r.status==='完了').length;
+    const active = total - done;
+    stat.innerHTML = `参加ワークスペース：<b>${_myWorkspaces.length || '?'}</b> 件 / 自分のタスク：<b>${total}</b>（未完了 ${active} / 完了 ${done}）`;
+  }
+  if(allRows.length === 0){
+    content.innerHTML = '<div style="padding:24px;color:var(--muted);text-align:center;background:#f8f9fa;border-radius:8px">自分が担当のタスクはありません。</div>';
+    return;
+  }
+  // Group by workspace
+  const groups = {};
+  allRows.forEach(r=>{
+    if(!groups[r.wsId]) groups[r.wsId] = { name: r.wsName, rows: [] };
+    groups[r.wsId].rows.push(r);
+  });
+  let html = '';
+  Object.keys(groups).forEach(wsId=>{
+    const g = groups[wsId];
+    html += `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;margin-bottom:14px;overflow:hidden">
+      <div style="background:var(--primary-soft);padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+        <span style="font-weight:700;color:var(--primary-dark)">🏢 ${escapeHtml(g.name)}</span>
+        <span style="color:var(--muted);font-size:11px">${g.rows.length}件</span>
+        <span style="margin-left:auto"></span>
+        <button class="btn sm ghost" onclick="switchWorkspace('${escapeHtml(wsId)}')">このWSを開く →</button>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#fafbfc;color:var(--muted);font-size:11px">
+          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:80px">状態</th>
+          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft)">タイトル</th>
+          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:140px">プロジェクト</th>
+          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:120px">期間</th>
+        </tr></thead>
+        <tbody>`;
+    g.rows.forEach(r=>{
+      const sColor = r.status==='完了' ? '#82E0AA' : (r.status==='着手中' ? '#F8C471' : '#D5DBDB');
+      const dateStr = r.startD ? (r.endD && r.endD !== r.startD ? `${r.startD}〜${r.endD}` : r.startD) : '-';
+      html += `<tr>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)"><span style="display:inline-block;padding:2px 8px;background:${sColor};border-radius:10px;font-size:11px;font-weight:600">${escapeHtml(r.status)}</span></td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)">${escapeHtml(r.title)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft);color:var(--muted);font-size:12px">${escapeHtml(r.goal||'-')}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft);color:var(--muted);font-size:11px">${escapeHtml(dateStr)}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+  });
+  content.innerHTML = html;
+}
+
+function refreshPersonalView(){ renderPersonalView(); }
 
 // Bootstrap
 loadSession();
