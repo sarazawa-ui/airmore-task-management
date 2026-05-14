@@ -1020,9 +1020,14 @@ header.app-header{padding:10px 22px}
         <div class="help">推奨：正方形 256×256px 以上 / PNG・JPG・SVG（5MB以下）</div>
       </div>
       <div class="field">
-        <label>ワークスペース名（会社名／プロジェクト名）</label>
+        <label>ワークスペース名</label>
+        <input type="text" id="wsNameInput" placeholder="例：営業チーム / プロジェクトX">
+        <div class="help">ヘッダーのワークスペース切替メニューや「マイタスク横断」ビューに表示される識別名です。</div>
+      </div>
+      <div class="field">
+        <label>会社名</label>
         <input type="text" id="companyName" placeholder="株式会社エアモア">
-        <div class="help">この名前は参加メンバー全員に表示され、ヘッダーのワークスペース切替メニューにも反映されます。</div>
+        <div class="help">ヘッダーやブラウザタブのタイトル、通知メールの署名に使用されます。</div>
       </div>
       <div class="field">
         <label>業種・領域メモ（任意）</label>
@@ -4514,6 +4519,7 @@ function leaveWorkspace(){
 let _myWorkspaces = []; // [{id, name, ownerEmail, memberCount}]
 
 function getCurrentWsName(){
+  if(S.wsName) return S.wsName;
   if(S.profile && S.profile.companyName) return S.profile.companyName;
   if(S.workspaceId) return S.workspaceId;
   return '(未参加)';
@@ -4544,7 +4550,7 @@ async function fetchMyWorkspaces(){
       const d = doc.data() || {};
       _myWorkspaces.push({
         id: doc.id,
-        name: (d.profile && d.profile.companyName) || d.name || doc.id,
+        name: d.wsName || (d.profile && d.profile.companyName) || d.name || doc.id,
         ownerEmail: d.ownerEmail || '',
         memberCount: (d.memberEmails||[]).length
       });
@@ -4625,17 +4631,19 @@ async function switchWorkspace(wsId){
 async function createNewWorkspace(){
   closeWsMenu();
   if(!_firebaseReady || !firebase.auth().currentUser){ alert('Firebase未接続です'); return; }
-  const name = prompt('新規ワークスペースの名前を入力してください\n（例：株式会社○○ / プロジェクトX）');
+  const name = prompt('新規ワークスペースの名前を入力してください\n（例：営業チーム / プロジェクトX）');
   if(!name || !name.trim()) return;
+  const company = prompt('このワークスペースに紐づく会社名を入力してください（任意・空欄可）', name.trim()) || '';
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
   // Start a fresh state for the new workspace, preserve userPrefs
   const keepUserPrefs = S.userPrefs;
   delete S.workspaceId;
   delete S.ownerEmail;
   delete S.memberEmails;
-  // Re-init defaults to empty (but keep profile companyName as the new ws name)
+  // Re-init defaults to empty
+  S.wsName = name.trim();
   S.profile = S.profile || {};
-  S.profile.companyName = name.trim();
+  S.profile.companyName = company.trim() || name.trim();
   S.goals = [];
   S.tasks = [];
   S.members = [{ name: _currentUser.name, dept: 'オーナー' }];
@@ -5314,6 +5322,8 @@ function checkCapacityForDrop(dateStr, taskId, durMin){
 // ============ Profile ============
 function renderProfileForm(){
   const p = S.profile||{};
+  const wsInput = document.getElementById('wsNameInput');
+  if(wsInput) wsInput.value = S.wsName || p.companyName || '';
   document.getElementById('companyName').value = p.companyName||'';
   document.getElementById('companyMemo').value = p.companyMemo||'';
   const prev = document.getElementById('logoPreview');
@@ -5338,11 +5348,18 @@ function renderProfileForm(){
   if(dz) dz.style.display = isOwner ? '' : 'none';
 }
 function saveProfile(){
-  const newName = document.getElementById('companyName').value.trim();
-  const oldName = (S.profile && S.profile.companyName) || '';
-  S.profile.companyName = newName;
+  const newCompany = document.getElementById('companyName').value.trim();
+  const oldCompany = (S.profile && S.profile.companyName) || '';
+  const wsInput = document.getElementById('wsNameInput');
+  const newWs = wsInput ? wsInput.value.trim() : '';
+  const oldWs = S.wsName || '';
+  S.profile.companyName = newCompany;
   S.profile.companyMemo = document.getElementById('companyMemo').value.trim();
-  save(true, oldName !== newName ? `ワークスペース名を「${newName}」に変更` : 'プロフィールを更新');
+  S.wsName = newWs || newCompany || S.workspaceId || '';
+  let desc = 'プロフィールを更新';
+  if(oldWs !== S.wsName) desc = `ワークスペース名を「${S.wsName}」に変更`;
+  else if(oldCompany !== newCompany) desc = `会社名を「${newCompany}」に変更`;
+  save(true, desc);
   applyProfileToHeader();
   if(typeof refreshWorkspaceSwitcher === 'function') refreshWorkspaceSwitcher();
   toast("保存しました");
@@ -5384,6 +5401,7 @@ async function deleteWorkspace(){
     S.events = [];
     S.userPrefs = keepUserPrefs || {};
     S.profile = { companyName:'', companyLogo:'', companyMemo:'' };
+    delete S.wsName;
     ensureDefaults();
     if(typeof _origSave === 'function') _origSave();
     else localStorage.setItem(LS_KEY, JSON.stringify(S));
@@ -5706,8 +5724,11 @@ async function renderPersonalView(){
       .where('memberEmails','array-contains', email).get();
     snap.forEach(doc=>{
       const d = doc.data() || {};
-      const wsName = (d.profile && d.profile.companyName) || d.name || doc.id;
+      const wsName = d.wsName || (d.profile && d.profile.companyName) || d.name || doc.id;
       const tasks = Array.isArray(d.tasks) ? d.tasks : [];
+      const goals = Array.isArray(d.goals) ? d.goals : [];
+      const goalMap = {};
+      goals.forEach(g=>{ if(g && g.id) goalMap[g.id] = g.name || g.id; });
       // Identify "self" name in this workspace (authMembers maps email → name)
       let selfName = myName;
       const auth = Array.isArray(d.authMembers) ? d.authMembers.find(m=>m.email===email) : null;
@@ -5715,13 +5736,17 @@ async function renderPersonalView(){
       tasks.forEach(t=>{
         if(!t) return;
         if(t.owner === selfName || t.owner === myName){
+          const projectName = t.goal ? (goalMap[t.goal] || t.goal) : '';
           allRows.push({
             wsId: doc.id, wsName,
-            id: t.id, title: t.title || '(無題)',
+            id: t.id,
+            action: t.act || t.title || '(無題)',
             status: t.status || '未着手',
-            startD: t.startD || '', endD: t.endD || '',
+            startD: t.startD || '', endD: t.due || t.endD || '',
             time: t.time || '', endT: t.endT || '',
-            goal: t.goal || '', priority: t.priority || ''
+            projectId: t.goal || '',
+            projectName,
+            priority: t.pri || t.priority || ''
           });
         }
       });
@@ -5770,18 +5795,21 @@ async function renderPersonalView(){
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead><tr style="background:#fafbfc;color:var(--muted);font-size:11px">
           <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:80px">状態</th>
-          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft)">タイトル</th>
-          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:140px">プロジェクト</th>
-          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:120px">期間</th>
+          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft)">アクション</th>
+          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:180px">プロジェクト</th>
+          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:130px">期間</th>
         </tr></thead>
         <tbody>`;
     g.rows.forEach(r=>{
       const sColor = r.status==='完了' ? '#82E0AA' : (r.status==='着手中' ? '#F8C471' : '#D5DBDB');
       const dateStr = r.startD ? (r.endD && r.endD !== r.startD ? `${r.startD}〜${r.endD}` : r.startD) : '-';
+      const projDisp = r.projectName
+        ? `<span style="display:inline-block;padding:1px 7px;background:var(--primary-soft);border:1px solid var(--primary-light);border-radius:9px;font-size:11px;color:var(--primary-dark)">${escapeHtml(r.projectName)}</span>`
+        : '<span style="color:#bbb">-</span>';
       html += `<tr>
         <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)"><span style="display:inline-block;padding:2px 8px;background:${sColor};border-radius:10px;font-size:11px;font-weight:600">${escapeHtml(r.status)}</span></td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)">${escapeHtml(r.title)}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft);color:var(--muted);font-size:12px">${escapeHtml(r.goal||'-')}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)">${escapeHtml(r.action)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)">${projDisp}</td>
         <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft);color:var(--muted);font-size:11px">${escapeHtml(dateStr)}</td>
       </tr>`;
     });
