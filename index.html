@@ -2110,11 +2110,38 @@ function findNodePath(arr, target, path=[]){
   }
   return null;
 }
-function addGoal(){
+async function addGoal(){
+  // 防御: seq 構造の初期化
+  if(!S.seq) S.seq = {};
   S.seq.goal = (S.seq.goal||0)+1;
   const id = "G-"+String(S.seq.goal).padStart(3,'0');
-  S.goals.push({id,name:"",area:"",owner:"",members:[],start:"",due:"",progress:0,progressManual:null,status:"未着手",defn:"",breakdown:[],expanded:true});
-  save(true,`プロジェクト追加：${id}`); renderAll();
+  // ローカルにある古い deferred snapshot を破棄（消失防止）
+  _deferredSnapshot = null;
+  const newGoal = {id,name:"",area:"",owner:"",members:[],start:"",due:"",progress:0,progressManual:null,status:"未着手",defn:"",breakdown:[],expanded:true};
+  S.goals.push(newGoal);
+  // ローカル保存（履歴ログ含む）
+  if(typeof logHistory === 'function') logHistory('edit', `プロジェクト追加：${id}`);
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+  renderAll();
+  // 即時 Firestore 同期（デバウンス回避＝レース防止）
+  if(_firebaseReady && typeof firebase !== 'undefined' && firebase.auth().currentUser && S.workspaceId){
+    clearTimeout(_saveDebounce);
+    _pendingLocalChanges = true;
+    updateSyncStatus('syncing');
+    try{
+      const ws = serializeWorkspace();
+      await firebase.firestore().doc(`workspaces/${S.workspaceId}`).set(ws, {merge:true});
+      _pendingLocalChanges = false;
+      _deferredSnapshot = null;
+      updateSyncStatus('synced');
+      toast(`プロジェクト ${id} を追加しました`);
+    }catch(err){
+      _pendingLocalChanges = false;
+      console.error('addGoal sync failed:', err);
+      updateSyncStatus('error');
+      alert('プロジェクト追加の同期に失敗しました：' + (err.message||err));
+    }
+  }
 }
 // プロジェクトフィルタのチェックボックスイベント
 document.addEventListener('change', e=>{
