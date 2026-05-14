@@ -2110,38 +2110,16 @@ function findNodePath(arr, target, path=[]){
   }
   return null;
 }
-async function addGoal(){
-  // 防御: seq 構造の初期化
+function addGoal(){
   if(!S.seq) S.seq = {};
   S.seq.goal = (S.seq.goal||0)+1;
   const id = "G-"+String(S.seq.goal).padStart(3,'0');
-  // ローカルにある古い deferred snapshot を破棄（消失防止）
   _deferredSnapshot = null;
   const newGoal = {id,name:"",area:"",owner:"",members:[],start:"",due:"",progress:0,progressManual:null,status:"未着手",defn:"",breakdown:[],expanded:true};
   S.goals.push(newGoal);
-  // ローカル保存（履歴ログ含む）
-  if(typeof logHistory === 'function') logHistory('edit', `プロジェクト追加：${id}`);
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+  save(true, `プロジェクト追加：${id}`);
   renderAll();
-  // 即時 Firestore 同期（デバウンス回避＝レース防止）
-  if(_firebaseReady && typeof firebase !== 'undefined' && firebase.auth().currentUser && S.workspaceId){
-    clearTimeout(_saveDebounce);
-    _pendingLocalChanges = true;
-    updateSyncStatus('syncing');
-    try{
-      const ws = serializeWorkspace();
-      await firebase.firestore().doc(`workspaces/${S.workspaceId}`).set(ws, {merge:true});
-      _pendingLocalChanges = false;
-      _deferredSnapshot = null;
-      updateSyncStatus('synced');
-      toast(`プロジェクト ${id} を追加しました`);
-    }catch(err){
-      _pendingLocalChanges = false;
-      console.error('addGoal sync failed:', err);
-      updateSyncStatus('error');
-      alert('プロジェクト追加の同期に失敗しました：' + (err.message||err));
-    }
-  }
+  toast(`プロジェクト ${id} を追加しました`);
 }
 // プロジェクトフィルタのチェックボックスイベント
 document.addEventListener('change', e=>{
@@ -4047,7 +4025,10 @@ let _wsUnsubscribe = null;
 let _saveDebounce = null;
 let _isRemoteUpdate = false;
 let _pendingLocalChanges = false; // ローカルに未同期の変更があるか
-let _deferredSnapshot = null;       // 未同期中に届いたスナップショット
+let _deferredSnapshot = null;     // 未同期中に届いたスナップショット
+let _lastLocalChange = 0;         // 直近のローカル変更時刻（ms）
+let _snapshotApplyTimer = null;   // クールダウン後の遅延適用タイマー
+const SYNC_COOLDOWN_MS = 1500;    // ローカル変更後この時間はスナップショットを適用しない
 
 try{
   const stored = localStorage.getItem(FB_CONFIG_KEY);
@@ -4313,12 +4294,38 @@ function subscribeWorkspace(){
   const ref = firebase.firestore().doc(`workspaces/${S.workspaceId}`);
   _wsUnsubscribe = ref.onSnapshot(snap=>{
     if(!snap.exists) return;
+    const wsId = snap.id;
+    const data = snap.data();
     // ローカルに未同期変更がある場合は、上書きせず保留
     if(_pendingLocalChanges){
-      _deferredSnapshot = snap.data();
+      _deferredSnapshot = data;
       return;
     }
-    applySnapshotData(snap.data(), snap.id);
+    // クールダウン中：直近のローカル変更から SYNC_COOLDOWN_MS 経過するまで適用を延期
+    const sinceLast = Date.now() - _lastLocalChange;
+    if(sinceLast < SYNC_COOLDOWN_MS){
+      _deferredSnapshot = data;
+      clearTimeout(_snapshotApplyTimer);
+      _snapshotApplyTimer = setTimeout(()=>{
+        // 再チェック：その間に新たなローカル変更があれば破棄、なければ適用
+        if(_pendingLocalChanges){
+          _deferredSnapshot = null;
+          return;
+        }
+        if(Date.now() - _lastLocalChange < SYNC_COOLDOWN_MS){
+          // クールダウン延長中（新たな変更あり） → 破棄。次のスナップショットで反映
+          _deferredSnapshot = null;
+          return;
+        }
+        if(_deferredSnapshot){
+          const d = _deferredSnapshot;
+          _deferredSnapshot = null;
+          applySnapshotData(d, wsId);
+        }
+      }, SYNC_COOLDOWN_MS - sinceLast + 50);
+      return;
+    }
+    applySnapshotData(data, wsId);
   }, err=>{
     console.error("Firestore subscribe error:",err);
     updateSyncStatus('error');
@@ -4331,6 +4338,7 @@ function syncToFirestore(){
   if(!S.workspaceId || !_firebaseReady) return;
   if(!firebase.auth().currentUser) return;
   _pendingLocalChanges = true; // ローカルに未同期の変更あり
+  _lastLocalChange = Date.now(); // 最後にローカル変更があった時刻
   clearTimeout(_saveDebounce);
   updateSyncStatus('syncing');
   _saveDebounce = setTimeout(async ()=>{
