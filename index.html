@@ -2844,12 +2844,15 @@ function makeTaskBlock(t, allDay){
   div.innerHTML = `<div class="t">${escapeHtml(t.act||t.mid||'(無題)')}</div>`+
     (allDay?'':`<div class="s">${tm} ・ ${escapeHtml(t.owner)}</div>`);
   div.title = `[タスク] ${t.id} ${t.act}\n担当：${t.owner}\n${tm}\n見積：${t.est||'-'}分 / ステータス：${t.status}${t.weight?'\nウェイト：'+t.weight:''}\n（ドラッグ：時刻変更／右クリック：詳細表示）`;
+  // IDで都度最新タスクを引く（同期での陳腐化対策）
+  const taskIdBlock = t.id;
+  const getCurT = ()=> S.tasks.find(x=>x.id===taskIdBlock) || t;
   // Drag from calendar to reschedule (desktop)
   div.addEventListener('dragstart', e=>{
     e.stopPropagation();
-    e.dataTransfer.setData('text/plain', t.id);
+    e.dataTransfer.setData('text/plain', taskIdBlock);
     e.dataTransfer.effectAllowed = 'move';
-    _dragTask = t;
+    _dragTask = getCurT();
   });
   div.addEventListener('dragend', ()=>{ _dragTask = null; removeGhost(); });
   // Left-click → focus sidebar task detail
@@ -2857,15 +2860,18 @@ function makeTaskBlock(t, allDay){
     e.preventDefault();
     e.stopPropagation();
     if(div._touchDragJustEnded){ div._touchDragJustEnded = false; return; }
-    focusSideTaskDetail(t.id);
+    focusSideTaskDetail(taskIdBlock);
   });
   // ==== Touch hold-to-drag (mobile) ====
-  attachTouchHoldDrag(div, t);
+  attachTouchHoldDrag(div, getCurT());
   return div;
 }
 
 // タッチデバイスでカレンダー上のタスクを長押し→ドラッグして移動できるようにする
 function attachTouchHoldDrag(div, t){
+  // 同期で陳腐化しないよう ID で都度引く
+  const _tid = t.id;
+  const _ct = ()=> S.tasks.find(x=>x.id===_tid) || t;
   let holdTimer = null;
   let isDragging = false;
   let ghost = null;
@@ -2894,7 +2900,7 @@ function attachTouchHoldDrag(div, t){
       // フィンガーに追従するゴースト
       ghost = document.createElement('div');
       ghost.className = 'touch-drag-ghost';
-      ghost.textContent = (t.act || t.mid || '(無題)').slice(0, 30);
+      ghost.textContent = ((_ct().act) || (_ct().mid) || '(無題)').slice(0, 30);
       ghost.style.left = lastTouch.clientX + 'px';
       ghost.style.top = lastTouch.clientY + 'px';
       document.body.appendChild(ghost);
@@ -2946,9 +2952,10 @@ function attachTouchHoldDrag(div, t){
       const y = touch.clientY - rect.top;
       const minutesFromStart = Math.max(0, Math.round(y / HOUR_PX * 60 / 15) * 15);
       const totalMin = startH*60 + minutesFromStart;
-      const dur = Number(t.est) || 60;
+      const cur = _ct();
+      const dur = Number(cur.est) || 60;
       const targetDate = col.dataset.date;
-      const cap = checkCapacityForDrop(targetDate, t.id, dur);
+      const cap = checkCapacityForDrop(targetDate, cur.id, dur);
       let proceed = true;
       if(!cap.ok){
         if(S.ui.enforceCap){
@@ -2959,24 +2966,25 @@ function attachTouchHoldDrag(div, t){
         }
       }
       if(proceed){
-        t.startD = targetDate;
-        t.time = pad2(Math.floor(totalMin/60)) + ':' + pad2(totalMin%60);
-        if(t.slot === '終日') t.slot = '';
-        if(!t.est) t.est = 60;
-        const statusChanged = (t.status === '未着手' || !t.status);
-        if(statusChanged) t.status = '着手中';
-        save(true, statusChanged ? `${t.id} 移動・着手中に変更` : `${t.id} 移動`);
-        toast(`${t.id} を ${t.startD} ${t.time} に移動`);
+        cur.startD = targetDate;
+        cur.time = pad2(Math.floor(totalMin/60)) + ':' + pad2(totalMin%60);
+        if(cur.slot === '終日') cur.slot = '';
+        if(!cur.est) cur.est = 60;
+        const statusChanged = (cur.status === '未着手' || !cur.status);
+        if(statusChanged) cur.status = '着手中';
+        save(true, statusChanged ? `${cur.id} 移動・着手中に変更` : `${cur.id} 移動`);
+        toast(`${cur.id} を ${cur.startD} ${cur.time} に移動`);
         renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
       }
     } else if(alldayCell){
-      t.startD = alldayCell.dataset.alldayDate;
-      t.time = '';
-      t.slot = '終日';
-      const statusChanged = (t.status === '未着手' || !t.status);
-      if(statusChanged) t.status = '着手中';
-      save(true, statusChanged ? `${t.id} 終日へ移動・着手中に変更` : `${t.id} 終日へ移動`);
-      toast(`${t.id} を ${t.startD} 終日に移動`);
+      const cur = _ct();
+      cur.startD = alldayCell.dataset.alldayDate;
+      cur.time = '';
+      cur.slot = '終日';
+      const statusChanged = (cur.status === '未着手' || !cur.status);
+      if(statusChanged) cur.status = '着手中';
+      save(true, statusChanged ? `${cur.id} 終日へ移動・着手中に変更` : `${cur.id} 終日へ移動`);
+      toast(`${cur.id} を ${cur.startD} 終日に移動`);
       renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
     }
     cleanup();
@@ -3393,20 +3401,25 @@ function renderSideTasks(){
           </div>
         </div>
       </div>`;
+    // クロージャの t は同期で陳腐化する可能性 → 都度ID で最新を引く
+    const taskId = t.id;
+    const getCurTask = ()=> S.tasks.find(x=>x.id===taskId);
     el.querySelector('.chk').addEventListener('change',e=>{
       e.stopPropagation();
+      const cur = getCurTask(); if(!cur) return;
       const becameDone = e.target.checked;
-      if(becameDone){ t._prevStatus = t.status; t.status='完了'; }
-      else t.status = (t._prevStatus && t._prevStatus!=='完了') ? t._prevStatus : '未着手';
+      if(becameDone){ cur._prevStatus = cur.status; cur.status='完了'; }
+      else cur.status = (cur._prevStatus && cur._prevStatus!=='完了') ? cur._prevStatus : '未着手';
       save(); renderSideTasks(); renderCalendar(); renderDashboard(); renderGoals();
-      if(becameDone) maybeNotifyOnComplete(t);
+      if(becameDone) maybeNotifyOnComplete(cur);
     });
     el.querySelectorAll('[data-f]').forEach(inp=>{
       if(inp.type === 'range') return; // handled below
       inp.addEventListener('change',()=>{
+        const cur = getCurTask(); if(!cur) return;
         const f = inp.dataset.f;
-        if(inp.type==='number') t[f] = inp.value===''?'':Number(inp.value);
-        else t[f] = inp.value;
+        if(inp.type==='number') cur[f] = inp.value===''?'':Number(inp.value);
+        else cur[f] = inp.value;
         save(); renderSideTasks(); renderCalendar(); renderDashboard(); renderGoals();
       });
       inp.addEventListener('click',e=>e.stopPropagation());
@@ -3420,24 +3433,31 @@ function renderSideTasks(){
         if(valEl) valEl.textContent = v ? v+'分' : '未設定';
       });
       rng.addEventListener('change',()=>{
+        const cur = getCurTask(); if(!cur) return;
         const v = Number(rng.value);
-        t.est = v;
+        cur.est = v;
         save(); renderSideTasks(); renderCalendar(); renderDashboard(); renderGoals();
       });
       rng.addEventListener('click',e=>e.stopPropagation());
     }
     el.querySelector('.expand-btn-sm').onclick = (e)=>{
       e.stopPropagation();
-      const wasOpen = t._expanded;
-      // 他の展開中タスクをすべて閉じる
+      const cur = getCurTask(); if(!cur) return;
+      const wasOpen = cur._expanded;
       S.tasks.forEach(x => { x._expanded = false; });
-      // このタスクをトグル
-      t._expanded = !wasOpen;
+      cur._expanded = !wasOpen;
       renderSideTasks();
     };
     const gl = el.querySelector('.goal-link');
     if(gl) gl.addEventListener('click',(e)=>{ e.stopPropagation(); goToGoal(gl.dataset.goalid); });
-    el.querySelector('[data-del]').onclick = (e)=>{ e.stopPropagation(); if(confirm(`「${t.id} ${t.act}」を削除しますか？`)){ S.tasks.splice(S.tasks.indexOf(t),1); save(); renderAll(); } };
+    el.querySelector('[data-del]').onclick = (e)=>{
+      e.stopPropagation();
+      const cur = getCurTask(); if(!cur) return;
+      if(!confirm(`「${cur.id} ${cur.act||''}」を削除しますか？`)) return;
+      const idx = S.tasks.findIndex(x=>x.id===cur.id);
+      if(idx>=0) S.tasks.splice(idx,1);
+      save(); renderAll();
+    };
     // Disable drag when interacting with form controls (slider, inputs, etc.)
     el.addEventListener('mousedown',(e)=>{
       const ctrl = e.target.closest('input, select, textarea, button, .est-slider, label');
@@ -3453,9 +3473,9 @@ function renderSideTasks(){
         e.preventDefault();
         return;
       }
-      e.dataTransfer.setData('text/plain', t.id);
+      e.dataTransfer.setData('text/plain', taskId);
       e.dataTransfer.effectAllowed = 'move';
-      _dragTask = t;
+      _dragTask = getCurTask() || t;
     });
     el.addEventListener('dragend',()=>{
       _dragTask = null;
