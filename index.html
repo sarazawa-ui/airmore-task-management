@@ -358,6 +358,8 @@ body > main:has(#view-calendar.active){overflow:hidden}
 /* Drop targets */
 .cal-day-col.drop-hover{background:#fff8dc !important;outline:2px dashed #ED7D31;outline-offset:-2px}
 .cal-allday-cell.drop-hover{background:#fff0a8 !important;outline:2px dashed #ED7D31;outline-offset:-2px}
+.cal-side.drop-hover{background:#FEF5E7 !important;outline:3px dashed #ED7D31;outline-offset:-3px;position:relative}
+.cal-side.drop-hover::before{content:"📥 未割当に戻す";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#ED7D31;color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;font-weight:700;z-index:100;pointer-events:none;box-shadow:0 4px 14px rgba(0,0,0,.25)}
 
 /* Drag ghost preview */
 .drag-ghost{position:absolute;left:2px;right:2px;background:rgba(255,217,102,.85);border:2px dashed #9C5700;border-radius:4px;padding:4px 6px;font-size:11px;z-index:8;pointer-events:none;color:#5a4600;font-weight:700;box-shadow:0 2px 8px rgba(156,87,0,.3)}
@@ -2840,10 +2842,12 @@ function makeTaskBlock(t, allDay){
   if(allDay) cls += ' allday';
   // Fade other team members' tasks based on viewAsMember
   const va = S.ui.viewAsMember||'';
-  if(va && t.owner && t.owner !== va) cls += ' faded';
+  const isOthersTask = !!(va && t.owner && t.owner !== va);
+  if(isOthersTask) cls += ' faded';
   div.className = cls;
   div.dataset.taskId = t.id;
-  div.draggable = true;
+  // 自分以外のタスクはドラッグ不可
+  div.draggable = !isOthersTask;
   const r = taskRange(t);
   const tm = (r && !r.allDay) ? `${pad2(r.start.getHours())}:${pad2(r.start.getMinutes())}-${pad2(r.end.getHours())}:${pad2(r.end.getMinutes())}` : '終日';
   div.innerHTML = `<div class="t">${escapeHtml(t.act||t.mid||'(無題)')}</div>`+
@@ -2854,10 +2858,18 @@ function makeTaskBlock(t, allDay){
   const getCurT = ()=> S.tasks.find(x=>x.id===taskIdBlock) || t;
   // Drag from calendar to reschedule (desktop)
   div.addEventListener('dragstart', e=>{
+    // 自分以外のタスクはドラッグ禁止（viewAsMember 設定時）
+    const curT = getCurT();
+    const va2 = S.ui.viewAsMember||'';
+    if(va2 && curT.owner && curT.owner !== va2){
+      e.preventDefault();
+      toast(`他メンバー（${curT.owner}）のタスクは移動できません`);
+      return;
+    }
     e.stopPropagation();
     e.dataTransfer.setData('text/plain', taskIdBlock);
     e.dataTransfer.effectAllowed = 'move';
-    _dragTask = getCurT();
+    _dragTask = curT;
   });
   div.addEventListener('dragend', ()=>{ _dragTask = null; removeGhost(); });
   // Left-click → focus sidebar task detail
@@ -2893,6 +2905,10 @@ function attachTouchHoldDrag(div, t){
 
   div.addEventListener('touchstart', e=>{
     if(e.touches.length !== 1) return;
+    // 自分以外のタスクはドラッグ禁止
+    const curT = _ct();
+    const va2 = S.ui.viewAsMember||'';
+    if(va2 && curT.owner && curT.owner !== va2) return;
     const touch = e.touches[0];
     startX = touch.clientX;
     startY = touch.clientY;
@@ -2933,8 +2949,10 @@ function attachTouchHoldDrag(div, t){
     const elAt = document.elementFromPoint(touch.clientX, touch.clientY);
     const col = elAt?.closest('.cal-day-col');
     const alldayCell = elAt?.closest('.cal-allday-cell');
+    const side = elAt?.closest('.cal-side');
     if(col) col.classList.add('drop-hover');
     else if(alldayCell) alldayCell.classList.add('drop-hover');
+    else if(side) side.classList.add('drop-hover');
   }, { passive: false });
 
   div.addEventListener('touchend', e=>{
@@ -2990,6 +3008,15 @@ function attachTouchHoldDrag(div, t){
       if(statusChanged) cur.status = '着手中';
       save(true, statusChanged ? `${cur.id} 終日へ移動・着手中に変更` : `${cur.id} 終日へ移動`);
       toast(`${cur.id} を ${cur.startD} 終日に移動`);
+      renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
+    } else if(elAt?.closest('.cal-side')){
+      // サイドバーへドロップ → 未割当に戻す
+      const cur = _ct();
+      cur.startD = '';
+      cur.time = '';
+      cur.slot = '';
+      save(true, `${cur.id} を未割当に戻す`);
+      toast(`${cur.id} を未割当に戻しました`);
       renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
     }
     cleanup();
@@ -3577,6 +3604,45 @@ function attachDropTargets(HOUR_PX, startH, endH){
       toast(`${t.id} を ${t.startD} ${t.time} に配置${statusChanged?'（着手中に変更）':''}（${cap.total}/${cap.cap}分）`);
     });
   });
+  // サイドバー領域へドロップで「未割当」に戻す
+  const calSide = document.getElementById('calSide');
+  if(calSide && !calSide._unassignDropAttached){
+    calSide._unassignDropAttached = true;
+    calSide.addEventListener('dragover', e=>{
+      // ドロップ可能領域に入った合図
+      if(_dragTask){
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        calSide.classList.add('drop-hover');
+      }
+    });
+    calSide.addEventListener('dragleave', e=>{
+      // 子要素間の移動でも leave が発火するので、サイドバー外に出た時のみ
+      const r = calSide.getBoundingClientRect();
+      if(e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom){
+        calSide.classList.remove('drop-hover');
+      }
+    });
+    calSide.addEventListener('drop', e=>{
+      e.preventDefault();
+      calSide.classList.remove('drop-hover');
+      removeGhost();
+      const id = e.dataTransfer.getData('text/plain');
+      const t = S.tasks.find(x=>x.id===id); if(!t) return;
+      // 自分以外のタスクならガード
+      const va = S.ui.viewAsMember || '';
+      if(va && t.owner && t.owner !== va){
+        toast(`他メンバー（${t.owner}）のタスクは移動できません`);
+        return;
+      }
+      t.startD = '';
+      t.time = '';
+      t.slot = '';
+      save(true, `${t.id} を未割当に戻す`);
+      renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
+      toast(`${t.id} を未割当に戻しました`);
+    });
+  }
   document.querySelectorAll('.cal-allday-cell').forEach(cell=>{
     // 終日セルをタップでタスクピッカー
     cell.addEventListener('click', e=>{
