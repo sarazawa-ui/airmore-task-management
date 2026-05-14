@@ -4265,12 +4265,9 @@ function syncToFirestore(){
       await firebase.firestore().doc(`workspaces/${S.workspaceId}`).set(ws, {merge:true});
       _pendingLocalChanges = false;
       updateSyncStatus('synced');
-      // 同期完了。保留中のスナップショットがあれば適用
-      if(_deferredSnapshot){
-        const snapData = _deferredSnapshot;
-        _deferredSnapshot = null;
-        applySnapshotData(snapData);
-      }
+      // 同期完了。保留中の古いスナップショットは破棄
+      // （次回 onSnapshot が最新の合算状態で発火するため待つ）
+      _deferredSnapshot = null;
     }catch(err){
       _pendingLocalChanges = false;
       console.error("Firestore save failed:",err);
