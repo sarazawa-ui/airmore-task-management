@@ -1218,6 +1218,31 @@ service cloud.firestore {
 <script>
 // ============ STATE ============
 const LS_KEY = "airmore_task_v1";
+const LS_COMPANY_KEY = "airmore_company_v1";
+// 会社情報（companyName / companyLogo / companyMemo）はワークスペース共通のため
+// 各ユーザーのローカルストレージにのみ保持し、Firestoreには同期しない
+function loadCompanyProfile(){
+  try{
+    const raw = localStorage.getItem(LS_COMPANY_KEY);
+    if(raw){
+      const p = JSON.parse(raw);
+      S.profile = S.profile || {};
+      if(p.companyName !== undefined) S.profile.companyName = p.companyName;
+      if(p.companyLogo !== undefined) S.profile.companyLogo = p.companyLogo;
+      if(p.companyMemo !== undefined) S.profile.companyMemo = p.companyMemo;
+    }
+  }catch(e){ console.warn('loadCompanyProfile failed:', e); }
+}
+function saveCompanyProfile(){
+  try{
+    const p = S.profile || {};
+    localStorage.setItem(LS_COMPANY_KEY, JSON.stringify({
+      companyName: p.companyName || '',
+      companyLogo: p.companyLogo || '',
+      companyMemo: p.companyMemo || ''
+    }));
+  }catch(e){ console.warn('saveCompanyProfile failed:', e); }
+}
 function ymd(d){
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
@@ -4250,7 +4275,8 @@ function readWsFromUrl(){
 function serializeWorkspace(){
   // events（カレンダー予定）はユーザー個別のため共有しない
   // 各ユーザーのGoogleカレンダー予定はそのユーザーのlocalStorageにのみ保持
-  const allowed = ['profile','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs'];
+  // 'profile'（会社名・ロゴ・メモ）はユーザー共通のためローカルにのみ保持
+  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
   // goals.expanded はUI状態（個人別）のため同期から除外
@@ -4300,6 +4326,7 @@ async function joinOrCreateWorkspace(targetWsId){
       _isRemoteUpdate = true;
       Object.keys(data).forEach(k=>{
         if(k === 'createdAt' || k === 'memberEmails' || k === 'ownerEmail' || k === 'events') return;
+        if(k === 'profile') return; // 会社情報はローカルに保持
         S[k] = data[k];
       });
       S.workspaceId = wsId;
@@ -4307,6 +4334,7 @@ async function joinOrCreateWorkspace(targetWsId){
       S.memberEmails = data.memberEmails || [];
       _isRemoteUpdate = false;
       ensureDefaults();
+      loadCompanyProfile(); // 会社情報はローカル優先で再適用
       // 新規参加：自分を memberEmails / authMembers / members に追加（アトミック）
       if(_currentUser && !S.memberEmails.includes(_currentUser.email)){
         const newAuthMember = {
@@ -4398,9 +4426,10 @@ function applySnapshotData(data, wsId){
     S.goals.forEach(g => { if(g && g.expanded) localExpanded[g.id] = true; });
   }
   _isRemoteUpdate = true;
-  // events（カレンダー予定）は個人別なので Firestore のデータで上書きしない
+  // events（カレンダー予定）は個人別、profile（会社名・ロゴ）はユーザー共通のため、Firestoreデータで上書きしない
   Object.keys(data).forEach(k=>{
-    if(k !== 'createdAt' && k !== 'events') S[k] = data[k];
+    if(k === 'createdAt' || k === 'events' || k === 'profile') return;
+    S[k] = data[k];
   });
   // goals の expanded 状態を復元（Firestoreデータには含まれないため）
   if(Array.isArray(S.goals)){
@@ -4416,6 +4445,7 @@ function applySnapshotData(data, wsId){
   _isRemoteUpdate = false;
   try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
   ensureDefaults();
+  loadCompanyProfile(); // 会社情報はローカル優先で再適用
   if(_currentUser){ renderAll(); }
   updateSyncStatus('synced');
 }
@@ -4633,17 +4663,16 @@ async function createNewWorkspace(){
   if(!_firebaseReady || !firebase.auth().currentUser){ alert('Firebase未接続です'); return; }
   const name = prompt('新規ワークスペースの名前を入力してください\n（例：営業チーム / プロジェクトX）');
   if(!name || !name.trim()) return;
-  const company = prompt('このワークスペースに紐づく会社名を入力してください（任意・空欄可）', name.trim()) || '';
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
-  // Start a fresh state for the new workspace, preserve userPrefs
+  // Start a fresh state for the new workspace
+  // 会社情報（profile）と userPrefs はユーザー共通のため保持
   const keepUserPrefs = S.userPrefs;
+  const keepProfile = S.profile;
   delete S.workspaceId;
   delete S.ownerEmail;
   delete S.memberEmails;
-  // Re-init defaults to empty
   S.wsName = name.trim();
-  S.profile = S.profile || {};
-  S.profile.companyName = company.trim() || name.trim();
+  S.profile = keepProfile || { companyName:'', companyLogo:'', companyMemo:'' };
   S.goals = [];
   S.tasks = [];
   S.members = [{ name: _currentUser.name, dept: 'オーナー' }];
@@ -5353,13 +5382,23 @@ function saveProfile(){
   const wsInput = document.getElementById('wsNameInput');
   const newWs = wsInput ? wsInput.value.trim() : '';
   const oldWs = S.wsName || '';
+  S.profile = S.profile || {};
   S.profile.companyName = newCompany;
   S.profile.companyMemo = document.getElementById('companyMemo').value.trim();
-  S.wsName = newWs || newCompany || S.workspaceId || '';
-  let desc = 'プロフィールを更新';
-  if(oldWs !== S.wsName) desc = `ワークスペース名を「${S.wsName}」に変更`;
-  else if(oldCompany !== newCompany) desc = `会社名を「${newCompany}」に変更`;
-  save(true, desc);
+  // 会社情報はローカル（ユーザー共通）に保存。同期はしない
+  saveCompanyProfile();
+  // ワークスペース名はクラウド同期する
+  if(S.workspaceId){
+    S.wsName = newWs || newCompany || S.workspaceId || '';
+    let desc = 'プロフィールを更新';
+    if(oldWs !== S.wsName) desc = `ワークスペース名を「${S.wsName}」に変更`;
+    else if(oldCompany !== newCompany) desc = `会社名を「${newCompany}」に変更（ローカルのみ）`;
+    save(true, desc);
+  } else {
+    // ローカルモード：S全体も保存
+    if(typeof _origSave === 'function') _origSave();
+    else localStorage.setItem(LS_KEY, JSON.stringify(S));
+  }
   applyProfileToHeader();
   if(typeof refreshWorkspaceSwitcher === 'function') refreshWorkspaceSwitcher();
   toast("保存しました");
@@ -5374,7 +5413,7 @@ async function deleteWorkspace(){
     return;
   }
   const wsId = S.workspaceId;
-  const wsName = (S.profile && S.profile.companyName) || wsId;
+  const wsName = S.wsName || (S.profile && S.profile.companyName) || wsId;
   const confirm1 = prompt(`ワークスペース「${wsName}」を完全に削除します。\n\nこの操作は取り消せません。クラウド上のすべてのデータ（プロジェクト・タスク・履歴）が失われ、参加メンバー全員がアクセスできなくなります。\n\n確認のため、ワークスペース名「${wsName}」を入力してください：`);
   if(confirm1 === null) return;
   if(confirm1.trim() !== wsName){
@@ -5400,7 +5439,7 @@ async function deleteWorkspace(){
     S.history = [];
     S.events = [];
     S.userPrefs = keepUserPrefs || {};
-    S.profile = { companyName:'', companyLogo:'', companyMemo:'' };
+    // 会社情報（profile）はユーザー共通のため削除しない
     delete S.wsName;
     ensureDefaults();
     if(typeof _origSave === 'function') _origSave();
@@ -5432,10 +5471,10 @@ function handleLogoUpload(e){
   const r = new FileReader();
   r.onload = ()=>{
     S.profile.companyLogo = r.result;
-    save(true,'会社ロゴを更新');
+    saveCompanyProfile();
     applyProfileToHeader();
     renderProfileForm();
-    toast("ロゴを更新しました");
+    toast("ロゴを更新しました（ローカルのみ）");
   };
   r.readAsDataURL(f);
   e.target.value = '';
@@ -5443,7 +5482,7 @@ function handleLogoUpload(e){
 function clearLogo(){
   if(!confirm("ロゴを削除しますか？")) return;
   S.profile.companyLogo = '';
-  save(true,'会社ロゴを削除');
+  saveCompanyProfile();
   applyProfileToHeader();
   renderProfileForm();
 }
@@ -5823,6 +5862,7 @@ function refreshPersonalView(){ renderPersonalView(); }
 // Bootstrap
 loadSession();
 ensureDefaults();
+loadCompanyProfile(); // 会社情報（ワークスペース共通）をローカルから読み込み
 applyProfileToHeader(); // populate login screen logo/title from saved profile
 if(_currentUser){
   // ローカルにユーザー情報あり → 即座にアプリ表示（期限チェックなし）
