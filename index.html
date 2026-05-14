@@ -1704,32 +1704,44 @@ function renderGoals(){
       <td class="input"><textarea data-f="defn" rows="2">${escapeHtml(g.defn)}</textarea></td>
       <td class="center"><button class="expand-btn ${g.expanded?'open':''}" data-toggle="${i}">${g.expanded?'▼ 閉じる':'▶ タスク'}<br><small>${countLinkedTasks(g)}件</small></button></td>
       <td class="del-cell"><button class="del-btn" title="削除">✕</button></td>`;
+    // クロージャの g が同期で陳腐化する可能性があるため ID ベースで最新を引く
+    const goalId = g.id;
+    const getCurGoal = ()=> S.goals.find(x => x.id === goalId);
     tr.querySelectorAll('[data-f]').forEach(el=>{
       el.addEventListener('change',()=>{
-        g[el.dataset.f] = el.type==='number' ? Number(el.value) : el.value;
+        const cur = getCurGoal();
+        if(!cur){ console.warn(`Goal ${goalId} not found`); return; }
+        cur[el.dataset.f] = el.type==='number' ? Number(el.value) : el.value;
         save(); renderDashboard(); renderSideTasks(); renderCalendar();
       });
     });
     tr.querySelector('.del-btn').onclick = ()=>{
-      const linkedTaskCount = S.tasks.filter(t => t.goal === g.id).length;
-      let msg = `プロジェクト「${g.id} ${g.name}」を削除しますか？`;
+      const cur = getCurGoal() || g;
+      const linkedTaskCount = S.tasks.filter(t => t.goal === cur.id).length;
+      let msg = `プロジェクト「${cur.id} ${cur.name}」を削除しますか？`;
       if(linkedTaskCount > 0){
         msg += `\n\n⚠️ このプロジェクトに紐づく ${linkedTaskCount} 件のタスクも一緒に削除されます。`;
       }
       if(!confirm(msg)) return;
-      // 関連タスクをまとめて削除
       const beforeCount = S.tasks.length;
-      S.tasks = S.tasks.filter(t => t.goal !== g.id);
+      S.tasks = S.tasks.filter(t => t.goal !== cur.id);
       const removedCount = beforeCount - S.tasks.length;
-      // ID基準でゴール削除（renderの途中でindexがズレるリスク回避）
-      const idx = S.goals.findIndex(x => x.id === g.id);
+      const idx = S.goals.findIndex(x => x.id === cur.id);
       if(idx >= 0) S.goals.splice(idx, 1);
-      save(true, `プロジェクト削除：${g.id}${removedCount?`（タスク${removedCount}件含む）`:''}`);
+      save(true, `プロジェクト削除：${cur.id}${removedCount?`（タスク${removedCount}件含む）`:''}`);
       renderAll();
-      toast(`プロジェクト ${g.id} を削除${removedCount?`（タスク${removedCount}件も削除）`:''}`);
+      toast(`プロジェクト ${cur.id} を削除${removedCount?`（タスク${removedCount}件も削除）`:''}`);
     };
-    tr.querySelector('[data-toggle]').onclick = ()=>{ g.expanded = !g.expanded; save(); renderGoals(); };
-    renderMemberChips(tr.querySelector('.member-chips'), g);
+    tr.querySelector('[data-toggle]').onclick = ()=>{
+      const cur = getCurGoal();
+      if(!cur){ console.warn(`Goal ${goalId} not found`); return; }
+      cur.expanded = !cur.expanded;
+      save();
+      renderGoals();
+    };
+    // メンバーチップ：最新の goal を都度参照するよう ID 経由で渡す
+    const memHost = tr.querySelector('.member-chips');
+    renderMemberChips(memHost, getCurGoal() || g);
     // 期限超過は row-overdue（行全体の赤背景）でカバー済み。
     // 7日以内警告のみ「目標期限」セル（td[6]）に適用。
     if(!isOverdue && g.due && diffDays(g.due,todayStr())<=7 && diffDays(g.due,todayStr())>=0 && g.status!=="完了"){
@@ -1771,39 +1783,39 @@ function renderMemberChips(host, g){
   html += `</div>`;
   host.innerHTML = html;
   // Re-bind handlers (replace, not add) — keep popup state
+  // 同期で g が陳腐化する可能性 → ID で都度引く
+  const goalIdMem = g.id;
+  const cur = ()=> S.goals.find(x=>x.id===goalIdMem) || g;
   host.onclick = (e)=>{
     if(e.target.classList.contains('x')){
       e.stopPropagation();
       const chip = e.target.closest('.chip');
       const name = chip.dataset.name;
-      g.members = (g.members||[]).filter(x=>x!==name);
+      const cg = cur();
+      cg.members = (cg.members||[]).filter(x=>x!==name);
       save();
-      // Re-render only THIS chip group; keep popup open if it was open
       const wasOpen = host.classList.contains('open');
-      renderMemberChips(host, g);
+      renderMemberChips(host, cg);
       if(wasOpen) host.classList.add('open');
-      // Refresh dependent views (without rebuilding goals table)
       renderCalendar();
       return;
     }
     if(e.target.tagName==='INPUT' && e.target.dataset.mname){
       e.stopPropagation();
       const name = e.target.dataset.mname;
-      if(e.target.checked){ if(!g.members.includes(name)) g.members.push(name); }
-      else g.members = g.members.filter(x=>x!==name);
+      const cg = cur();
+      if(e.target.checked){ if(!cg.members.includes(name)) cg.members.push(name); }
+      else cg.members = cg.members.filter(x=>x!==name);
       save();
-      // Update only the chip area; keep popup open and avoid losing focus
       const popupOpen = host.classList.contains('open');
-      renderMemberChips(host, g);
+      renderMemberChips(host, cg);
       if(popupOpen) host.classList.add('open');
       renderCalendar();
       return;
     }
     if(e.target.tagName==='LABEL' || e.target.tagName==='SMALL'){
-      // Click on label text - let bubbling toggle the inner checkbox naturally
       return;
     }
-    // Toggle popup
     host.classList.toggle('open');
   };
 }
