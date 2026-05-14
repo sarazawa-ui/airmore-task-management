@@ -4093,6 +4093,14 @@ function serializeWorkspace(){
   const allowed = ['profile','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
+  // goals.expanded はUI状態（個人別）のため同期から除外
+  if(Array.isArray(out.goals)){
+    out.goals = out.goals.map(g => {
+      const copy = {...g};
+      delete copy.expanded;
+      return copy;
+    });
+  }
   // userPrefs のキーから Firestore で使えない名前（__xxx__ 形式）を除外
   if(out.userPrefs && typeof out.userPrefs === 'object'){
     const sanitized = {};
@@ -4224,11 +4232,20 @@ function applySnapshotData(data, wsId){
     ae.addEventListener('blur', retry, { once: true });
     return;
   }
+  // 適用前に：goals の expanded 状態（UI状態・個人別）をローカルから保存
+  const localExpanded = {};
+  if(Array.isArray(S.goals)){
+    S.goals.forEach(g => { if(g && g.expanded) localExpanded[g.id] = true; });
+  }
   _isRemoteUpdate = true;
   // events（カレンダー予定）は個人別なので Firestore のデータで上書きしない
   Object.keys(data).forEach(k=>{
     if(k !== 'createdAt' && k !== 'events') S[k] = data[k];
   });
+  // goals の expanded 状態を復元（Firestoreデータには含まれないため）
+  if(Array.isArray(S.goals)){
+    S.goals.forEach(g => { if(localExpanded[g.id]) g.expanded = true; });
+  }
   // 受信した userPrefs 内の不正キー（__local__ 等）を掃除
   if(S.userPrefs && typeof S.userPrefs === 'object'){
     Object.keys(S.userPrefs).forEach(k=>{
