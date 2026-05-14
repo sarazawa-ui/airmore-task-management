@@ -1711,7 +1711,22 @@ function renderGoals(){
       });
     });
     tr.querySelector('.del-btn').onclick = ()=>{
-      if(confirm(`プロジェクト「${g.id} ${g.name}」を削除しますか？`)){ S.goals.splice(i,1); save(); renderAll(); }
+      const linkedTaskCount = S.tasks.filter(t => t.goal === g.id).length;
+      let msg = `プロジェクト「${g.id} ${g.name}」を削除しますか？`;
+      if(linkedTaskCount > 0){
+        msg += `\n\n⚠️ このプロジェクトに紐づく ${linkedTaskCount} 件のタスクも一緒に削除されます。`;
+      }
+      if(!confirm(msg)) return;
+      // 関連タスクをまとめて削除
+      const beforeCount = S.tasks.length;
+      S.tasks = S.tasks.filter(t => t.goal !== g.id);
+      const removedCount = beforeCount - S.tasks.length;
+      // ID基準でゴール削除（renderの途中でindexがズレるリスク回避）
+      const idx = S.goals.findIndex(x => x.id === g.id);
+      if(idx >= 0) S.goals.splice(idx, 1);
+      save(true, `プロジェクト削除：${g.id}${removedCount?`（タスク${removedCount}件含む）`:''}`);
+      renderAll();
+      toast(`プロジェクト ${g.id} を削除${removedCount?`（タスク${removedCount}件も削除）`:''}`);
     };
     tr.querySelector('[data-toggle]').onclick = ()=>{ g.expanded = !g.expanded; save(); renderGoals(); };
     renderMemberChips(tr.querySelector('.member-chips'), g);
@@ -1878,7 +1893,12 @@ function renderTree(g){
       if(inp.type==='number') t[f] = inp.value===''?'':Number(inp.value);
       else t[f] = inp.value;
       save(true,`タスク編集：${t.id}/${f}`);
-      renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
+      // status変更時のみテーブルを再描画（進捗バー更新のため）
+      // その他のフィールド編集ではDOMを破壊せず、フォーカスを保持
+      if(f === 'status'){
+        renderGoals();
+      }
+      renderCalendar(); renderSideTasks(); renderDashboard();
     });
   });
   // Delete buttons
@@ -4127,6 +4147,21 @@ async function joinOrCreateWorkspace(targetWsId){
 // Firestoreから受信したスナップショットデータをローカル状態に適用
 function applySnapshotData(data, wsId){
   if(!data) return;
+  // ユーザーが入力中なら描画を遅延（フォーカスロス・編集中断を防止）
+  const ae = document.activeElement;
+  if(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')){
+    _deferredSnapshot = data;
+    // 入力フォーカスが外れた時に再試行（blurイベントをワンショットで監視）
+    const retry = ()=>{
+      if(_deferredSnapshot){
+        const d = _deferredSnapshot;
+        _deferredSnapshot = null;
+        applySnapshotData(d, wsId);
+      }
+    };
+    ae.addEventListener('blur', retry, { once: true });
+    return;
+  }
   _isRemoteUpdate = true;
   // events（カレンダー予定）は個人別なので Firestore のデータで上書きしない
   Object.keys(data).forEach(k=>{
