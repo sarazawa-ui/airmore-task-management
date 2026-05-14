@@ -293,6 +293,7 @@ body > main:has(#view-calendar.active){overflow:hidden}
 .side-task.mit{background:#FCF3CF;border-left-color:#D4AC0D}
 .side-task.done{background:#F4F6F7;border-left-color:#BDC3C7;opacity:.7;text-decoration:line-through}
 .side-task.late{background:#FADBD8;border-left-color:#E74C3C}
+.side-task.due-soon{background:#FADBD8;border-left-color:#E74C3C}
 .side-task .ttl{font-weight:600;line-height:1.4;color:var(--text)}
 .side-task .meta{font-size:10.5px;color:var(--text-soft);margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .side-task .row{display:flex;gap:5px;margin-top:6px;align-items:center}
@@ -3564,7 +3565,11 @@ function renderSideTasks(){
     const el = document.createElement('div');
     let cls = 'side-task';
     if(t.status==='完了') cls += ' done';
-    else if(t.due && diffDays(t.due,todayStr())<0 && t.status!=='中止') cls += ' late';
+    else if(t.due && t.status!=='中止'){
+      const dd = diffDays(t.due, todayStr());
+      if(dd < 0) cls += ' late';            // 期日超過
+      else if(dd <= 7) cls += ' due-soon';   // 期日1週間以内
+    }
     if(t._expanded) cls += ' expanded';
     el.className = cls;
     el.draggable = true;
@@ -6028,14 +6033,13 @@ function _renderPersonalViewFromRows(allRowsIn){
   const stat = document.getElementById('personalStatus');
   if(!content) return;
   const allRows = (allRowsIn || []).slice();
-  // Sort: incomplete first by startD, then completed
-  const statusOrder = {'未着手':0,'着手中':1,'完了':3};
+  // 完了は末尾。それ以外は期日（due）が近い順、期日なしは最後
   allRows.sort((a,b)=>{
-    const sa = statusOrder[a.status] ?? 2, sb = statusOrder[b.status] ?? 2;
-    if(sa !== sb) return sa - sb;
-    if(a.startD && b.startD) return a.startD.localeCompare(b.startD);
-    if(a.startD) return -1; if(b.startD) return 1;
-    return 0;
+    if((a.status==='完了')!==(b.status==='完了')) return a.status==='完了'?1:-1;
+    const ad = a.endD || '9999-12-31';
+    const bd = b.endD || '9999-12-31';
+    if(ad !== bd) return ad.localeCompare(bd);
+    return (a.action||'').localeCompare(b.action||'','ja');
   });
   if(stat){
     const total = allRows.length;
@@ -6068,12 +6072,21 @@ function _renderPersonalViewFromRows(allRowsIn){
           <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:80px">状態</th>
           <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft)">アクション</th>
           <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:180px">プロジェクト</th>
-          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:130px">期間</th>
+          <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:120px">期限</th>
         </tr></thead>
         <tbody>`;
     g.rows.forEach(r=>{
       const sColor = r.status==='完了' ? '#82E0AA' : (r.status==='着手中' ? '#F8C471' : '#D5DBDB');
-      const dateStr = r.startD ? (r.endD && r.endD !== r.startD ? `${r.startD}〜${r.endD}` : r.startD) : '-';
+      // 期限（due）を表示。設定がなければハイフン
+      const due = r.endD || '';
+      let dueStr = due || '-';
+      let dueColor = 'var(--muted)';
+      if(due && r.status !== '完了'){
+        const d = diffDays(due, todayStr());
+        if(d < 0){ dueColor = '#C0392B'; dueStr = `${due}（${-d}日超過）`; }
+        else if(d === 0){ dueColor = '#C0392B'; dueStr = `${due}（本日）`; }
+        else if(d <= 7){ dueColor = '#B7950B'; dueStr = `${due}（あと${d}日）`; }
+      }
       const projDisp = r.projectName
         ? `<span style="display:inline-block;padding:1px 7px;background:var(--primary-soft);border:1px solid var(--primary-light);border-radius:9px;font-size:11px;color:var(--primary-dark)">${escapeHtml(r.projectName)}</span>`
         : '<span style="color:#bbb">-</span>';
@@ -6081,7 +6094,7 @@ function _renderPersonalViewFromRows(allRowsIn){
         <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)"><span style="display:inline-block;padding:2px 8px;background:${sColor};border-radius:10px;font-size:11px;font-weight:600">${escapeHtml(r.status)}</span></td>
         <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)">${escapeHtml(r.action)}</td>
         <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)">${projDisp}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft);color:var(--muted);font-size:11px">${escapeHtml(dateStr)}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft);color:${dueColor};font-size:11px;font-weight:${dueColor==='var(--muted)'?'400':'600'}">${escapeHtml(dueStr)}</td>
       </tr>`;
     });
     html += '</tbody></table></div>';
