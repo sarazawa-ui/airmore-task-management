@@ -46,24 +46,6 @@ nav{display:flex;align-items:center;background:#fff;padding:0 12px;flex-wrap:wra
 nav button{background:transparent;color:var(--text-soft);border:none;padding:12px 20px;cursor:pointer;font-size:13px;font-family:inherit;font-weight:500;border-bottom:2px solid transparent;transition:all .15s}
 nav button:hover{color:var(--primary);background:var(--primary-soft)}
 nav button.active{color:var(--primary);border-bottom-color:var(--primary);font-weight:700}
-/* Firestore usage badge */
-.fb-usage{margin-left:auto;display:flex;align-items:center;gap:8px;padding:5px 11px;background:linear-gradient(135deg,#F8F9FA,#fff);border:1px solid var(--border);border-radius:9px;font-size:11px;color:var(--text-soft);cursor:pointer;transition:all .12s;font-family:'SF Mono','Consolas',monospace}
-.fb-usage:hover{border-color:var(--primary);box-shadow:var(--shadow-sm)}
-.fb-usage .seg{display:flex;align-items:center;gap:3px}
-.fb-usage .seg .lbl{font-weight:700;color:var(--text)}
-.fb-usage .seg.warn .lbl{color:#B7950B}
-.fb-usage .seg.crit .lbl{color:#C0392B}
-.fb-usage .sep{color:#ccc}
-.fb-usage .ic{font-size:13px}
-@media (max-width:768px){
-  /* margin-left:auto を打ち消し、ナビボタンの直後に並べる（マイタスク横断が見切れる問題対策） */
-  .fb-usage{font-size:10px;padding:4px 8px;gap:5px;margin-left:6px}
-  .fb-usage .ic{font-size:11px}
-}
-nav .fb-usage{}
-@media (max-width:768px){
-  nav .fb-usage{margin-left:6px !important}
-}
 /* Personal cross-workspace view */
 .personal-wrap{padding:18px 22px}
 .personal-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
@@ -79,11 +61,6 @@ nav .fb-usage{}
   #personalContent table{font-size:11.5px;min-width:480px}
   #personalContent th,#personalContent td{padding:5px 6px !important}
 }
-/* Usage detail modal */
-.usage-bar{height:8px;background:#ECEFF1;border-radius:4px;overflow:hidden;margin:4px 0}
-.usage-bar > span{display:block;height:100%;background:linear-gradient(90deg,#1E8449,#27AE60);transition:width .3s}
-.usage-bar.warn > span{background:linear-gradient(90deg,#D4AC0D,#F4D03F)}
-.usage-bar.crit > span{background:linear-gradient(90deg,#C0392B,#E74C3C)}
 main{padding:20px 24px;max-width:1480px;margin:0 auto}
 .view{display:none}
 .view.active{display:block}
@@ -841,34 +818,7 @@ header.app-header{padding:10px 22px}
   <button data-view="calendar">週間カレンダー</button>
   <button data-view="review">週次レビュー</button>
   <button data-view="personal" title="参加中のすべてのワークスペースの自分のタスク">🗂 マイタスク横断</button>
-  <div class="fb-usage" id="fbUsageBadge" onclick="openUsageModal()" title="Firestore 無料枠の使用状況（クリックで詳細）" style="display:none">
-    <span class="ic">📊</span>
-    <span class="seg" id="fbUseRead"><span>読:</span><span class="lbl">0</span></span>
-    <span class="sep">/</span>
-    <span class="seg" id="fbUseWrite"><span>書:</span><span class="lbl">0</span></span>
-    <span class="sep">/</span>
-    <span class="seg" id="fbUseDel"><span>削:</span><span class="lbl">0</span></span>
-  </div>
 </nav>
-
-<!-- Firestore usage detail modal -->
-<div class="modal-backdrop" id="usageModal">
-  <div class="modal" style="max-width:560px">
-    <div class="modal-header">
-      <h2>📊 Firestore 無料枠の使用状況</h2>
-      <button class="modal-close" onclick="closeUsageModal()" title="閉じる">✕</button>
-    </div>
-    <div class="modal-body" style="padding:20px 24px">
-      <div id="usageDetail"></div>
-      <div style="margin-top:16px;padding:10px 12px;background:#FFF8DC;border:1px solid #FFD966;border-radius:7px;font-size:11.5px;line-height:1.6;color:#5a4600">
-        ℹ️ この計測は <strong>このブラウザでの本日の操作のみ</strong> をカウントしています。同じワークスペースを他のメンバーや他のデバイスから操作した分はここには含まれません。正確な合計は <a href="https://console.firebase.google.com" target="_blank" rel="noopener" style="color:#0B5394">Firebase Console</a> の利用状況タブで確認してください。
-      </div>
-      <div style="margin-top:12px;text-align:right">
-        <button class="btn sm ghost" onclick="resetUsageCounter()">📛 本日のカウンタをリセット</button>
-      </div>
-    </div>
-  </div>
-</div>
 <main id="appMain" style="display:none">
 
 <!-- ============ DASHBOARD ============ -->
@@ -4336,92 +4286,11 @@ let _snapshotApplyTimer = null;   // クールダウン後の遅延適用タイ�
 let _writeVersion = 0;            // 書込バージョン（race condition 検出用）
 const SYNC_COOLDOWN_MS = 1500;    // ローカル変更後この時間はスナップショットを適用しない
 
-// ===== Firestore 無料枠カウンタ =====
-// Spark プラン日次クォータ：読み込み 50,000 / 書き込み 20,000 / 削除 20,000
-const FB_USAGE_KEY = "airmore_fb_usage_v1";
-const FB_QUOTAS = { read: 50000, write: 20000, delete: 20000 };
-let _fbUsage = { date:'', read:0, write:0, delete:0 };
-function _todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-function loadFbUsage(){
-  try{
-    const raw = localStorage.getItem(FB_USAGE_KEY);
-    if(raw){
-      const u = JSON.parse(raw);
-      if(u && u.date === _todayStr()){ _fbUsage = u; return; }
-    }
-  }catch(e){}
-  _fbUsage = { date: _todayStr(), read:0, write:0, delete:0 };
-  saveFbUsage();
-}
-function saveFbUsage(){ try{ localStorage.setItem(FB_USAGE_KEY, JSON.stringify(_fbUsage)); }catch(e){} }
-function bumpFbUsage(kind, n){
-  n = n || 1;
-  if(_fbUsage.date !== _todayStr()) loadFbUsage();
-  if(kind === 'read') _fbUsage.read += n;
-  else if(kind === 'write') _fbUsage.write += n;
-  else if(kind === 'delete') _fbUsage.delete += n;
-  saveFbUsage();
-  renderFbUsageBadge();
-}
-function _fbPct(used, max){ return Math.min(100, Math.round((used/max)*100)); }
-function _fbLevel(pct){ return pct >= 90 ? 'crit' : (pct >= 60 ? 'warn' : 'ok'); }
-function renderFbUsageBadge(){
-  const el = document.getElementById('fbUsageBadge');
-  if(!el) return;
-  if(!_firebaseReady){ el.style.display = 'none'; return; }
-  el.style.display = '';
-  if(_fbUsage.date !== _todayStr()) loadFbUsage();
-  const segs = [
-    {id:'fbUseRead', used:_fbUsage.read, max:FB_QUOTAS.read},
-    {id:'fbUseWrite', used:_fbUsage.write, max:FB_QUOTAS.write},
-    {id:'fbUseDel', used:_fbUsage.delete, max:FB_QUOTAS.delete}
-  ];
-  segs.forEach(s=>{
-    const seg = document.getElementById(s.id);
-    if(!seg) return;
-    const lbl = seg.querySelector('.lbl');
-    if(lbl) lbl.textContent = s.used.toLocaleString();
-    const pct = _fbPct(s.used, s.max);
-    seg.classList.remove('warn','crit');
-    if(pct >= 90) seg.classList.add('crit');
-    else if(pct >= 60) seg.classList.add('warn');
-  });
-}
-function openUsageModal(){
-  if(_fbUsage.date !== _todayStr()) loadFbUsage();
-  const detail = document.getElementById('usageDetail');
-  if(!detail) return;
-  const rows = [
-    {label:'📖 ドキュメント読み込み', key:'read', max:FB_QUOTAS.read, hint:'Firestoreの doc.get() や onSnapshot 受信ごとに+1'},
-    {label:'✏️ ドキュメント書き込み', key:'write', max:FB_QUOTAS.write, hint:'set / update でカウント。タスク追加・編集など'},
-    {label:'🗑 ドキュメント削除', key:'delete', max:FB_QUOTAS.delete, hint:'ワークスペース削除など'}
-  ];
-  let html = `<div style="font-size:12px;color:var(--muted);margin-bottom:14px">本日（${_fbUsage.date}）の Firestore 操作カウント</div>`;
-  rows.forEach(r=>{
-    const used = _fbUsage[r.key];
-    const pct = _fbPct(used, r.max);
-    const lvl = _fbLevel(pct);
-    html += `<div style="margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px">
-        <span><strong>${r.label}</strong></span>
-        <span style="font-family:'SF Mono','Consolas',monospace;color:${lvl==='crit'?'#C0392B':(lvl==='warn'?'#B7950B':'#1E8449')}"><b>${used.toLocaleString()}</b> / ${r.max.toLocaleString()} (${pct}%)</span>
-      </div>
-      <div class="usage-bar ${lvl==='ok'?'':lvl}"><span style="width:${pct}%"></span></div>
-      <div style="font-size:11px;color:var(--muted);margin-top:3px">${r.hint}</div>
-    </div>`;
-  });
-  detail.innerHTML = html;
-  document.getElementById('usageModal').classList.add('show');
-}
-function closeUsageModal(){ document.getElementById('usageModal').classList.remove('show'); }
-function resetUsageCounter(){
-  if(!confirm('本日のカウンタをリセットしますか？\n（実際のFirestore課金/制限には影響しません。表示のみリセット）')) return;
-  _fbUsage = { date: _todayStr(), read:0, write:0, delete:0 };
-  saveFbUsage();
-  renderFbUsageBadge();
-  openUsageModal();
-}
-loadFbUsage();
+// Firestore 使用量カウンタは削除しました（クライアントだけでは正確な合計を取得できないため）。
+// 使用状況は Firebase Console の「使用量」タブで確認してください。
+// 旧呼び出し箇所が残っているため、互換のため no-op としてスタブを残します。
+function bumpFbUsage(){}
+function renderFbUsageBadge(){}
 
 try{
   const stored = localStorage.getItem(FB_CONFIG_KEY);
@@ -4445,7 +4314,6 @@ function initFirebase(){
     }
     _firebaseReady = true;
     updateSyncStatus('offline');
-    if(typeof renderFbUsageBadge === 'function') renderFbUsageBadge();
     // Firebase Auth 状態の変化を監視
     firebase.auth().onAuthStateChanged(user=>{
       if(user){
