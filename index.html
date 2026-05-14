@@ -1382,7 +1382,9 @@ document.querySelectorAll('nav button').forEach(b=>{
     document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
     b.classList.add('active');
     document.getElementById('view-'+b.dataset.view).classList.add('active');
-    renderAll();
+    // personal view は明示遷移時のみ Firestore を読みに行く
+    if(b.dataset.view === 'personal') renderPersonalView();
+    else renderAll();
   };
 });
 
@@ -3197,8 +3199,10 @@ function goToView(viewId){
   if(navBtn) navBtn.classList.add('active');
   const view = document.getElementById('view-'+viewId);
   if(view) view.classList.add('active');
-  renderAll();
+  // personal view 以外は通常の renderAll で再描画
+  // personal view はユーザーが明示的に開いた時のみ Firestore に問い合わせる
   if(viewId === 'personal') renderPersonalView();
+  else renderAll();
 }
 function goToGoal(goalId){
   const g = S.goals.find(x=>x.id===goalId);
@@ -4724,7 +4728,8 @@ function getCurrentWsName(){
   return '(未参加)';
 }
 
-function refreshWorkspaceSwitcher(){
+// 表示ラベルのみ更新（Firestoreは叩かない）。renderAll から毎回呼ばれるためコスト ゼロ。
+function updateWsSwitcherLabel(){
   const sw = document.getElementById('wsSwitcher');
   if(!sw) return;
   if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser){
@@ -4734,13 +4739,27 @@ function refreshWorkspaceSwitcher(){
   sw.style.display = '';
   const nm = document.getElementById('wsCurrentName');
   if(nm) nm.textContent = getCurrentWsName();
-  // refresh list in background
+}
+// 旧API互換：明示的に切替直後など、フル更新が必要な場面のみ呼ぶ
+function refreshWorkspaceSwitcher(){
+  updateWsSwitcherLabel();
+  if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser) return;
   fetchMyWorkspaces().then(()=> renderWsMenu()).catch(e=> console.warn('fetchMyWorkspaces:', e));
 }
 
-async function fetchMyWorkspaces(){
+let _myWorkspacesFetchedAt = 0;
+let _myWorkspacesInflight = null;
+async function fetchMyWorkspaces(opts){
+  const force = !!(opts && opts.force);
   if(!_firebaseReady || !firebase.auth().currentUser) return [];
+  // 30秒以内の連続呼び出しはキャッシュを返す（読込クォータ節約）
+  if(!force && _myWorkspacesFetchedAt && (Date.now() - _myWorkspacesFetchedAt) < 30000){
+    return _myWorkspaces;
+  }
+  // 進行中のフェッチがあれば共有
+  if(_myWorkspacesInflight) return _myWorkspacesInflight;
   const email = firebase.auth().currentUser.email;
+  _myWorkspacesInflight = (async ()=>{
   try{
     const snap = await firebase.firestore().collection('workspaces')
       .where('memberEmails','array-contains', email).get();
@@ -4756,11 +4775,16 @@ async function fetchMyWorkspaces(){
       });
     });
     _myWorkspaces.sort((a,b)=> a.name.localeCompare(b.name,'ja'));
+    _myWorkspacesFetchedAt = Date.now();
     return _myWorkspaces;
   }catch(e){
     console.warn('fetchMyWorkspaces failed:', e);
     return [];
+  } finally {
+    _myWorkspacesInflight = null;
   }
+  })();
+  return _myWorkspacesInflight;
 }
 
 function renderWsMenu(){
@@ -4793,6 +4817,9 @@ function toggleWsMenu(ev){
   const willOpen = !sw.classList.contains('open');
   sw.classList.toggle('open');
   if(willOpen){
+    // 直近キャッシュがあれば即座に描画（読込クォータ節約）。
+    // 30秒以上前なら fetchMyWorkspaces 内で自動的に再取得される
+    renderWsMenu();
     fetchMyWorkspaces().then(()=> renderWsMenu());
     document.addEventListener('click', _wsMenuOutsideClick, { once:true });
   }
@@ -4811,6 +4838,9 @@ async function switchWorkspace(wsId){
   closeWsMenu();
   if(!wsId || wsId === S.workspaceId) return;
   if(!_firebaseReady || !firebase.auth().currentUser){ alert('未ログインです'); return; }
+  // 切替時はパーソナルビューと WS 一覧のキャッシュを無効化（次回取得時に最新）
+  _personalViewFetchedAt = 0;
+  _personalViewCache = null;
   // unsubscribe current
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
   // load target
@@ -5307,7 +5337,8 @@ function showApp(){
   document.querySelector('main').style.display = '';
   updateHeaderUserInfo();
   applyProfileToHeader();
-  if(typeof refreshWorkspaceSwitcher === 'function') refreshWorkspaceSwitcher();
+  // 初回表示時は label のみ更新（メニュー展開時に fetch される）
+  if(typeof updateWsSwitcherLabel === 'function') updateWsSwitcherLabel();
   if(typeof renderFbUsageBadge === 'function') renderFbUsageBadge();
 }
 function hideApp(){
@@ -5910,14 +5941,18 @@ function renderAll(){
   renderCalendar();
   // Render settings panes
   renderProfileForm(); renderMemberPane(); renderHistory();
-  // If on personal cross-workspace view, render it
-  const pv = document.getElementById('view-personal');
-  if(pv && pv.classList.contains('active')) renderPersonalView();
-  // Update workspace switcher label
-  refreshWorkspaceSwitcher();
+  // ❗ workspace switcher と personal view は renderAll から呼ばない
+  //   （Firestoreの onSnapshot 毎に renderAll が走るため、毎回コレクションクエリが
+  //    発生して 1秒間隔の連続読込になっていた）
+  //   - switcher: ラベル更新のみで十分（中身は menu を開いたタイミングで fetch）
+  //   - personal view: ユーザーが明示的に開くまたは🔄ボタンを押した時のみ fetch
+  updateWsSwitcherLabel();
 }
 
 // ===== Personal cross-workspace task view =====
+let _personalViewInflight = null;
+let _personalViewFetchedAt = 0;
+let _personalViewCache = null;
 async function renderPersonalView(){
   const content = document.getElementById('personalContent');
   const stat = document.getElementById('personalStatus');
@@ -5927,11 +5962,19 @@ async function renderPersonalView(){
     if(stat) stat.textContent = '';
     return;
   }
+  // 30秒以内に取得済みのキャッシュがあれば即座に描画
+  if(_personalViewCache && (Date.now() - _personalViewFetchedAt) < 30000){
+    _renderPersonalViewFromRows(_personalViewCache);
+    return;
+  }
+  // 進行中のフェッチがあれば同じ Promise を共有
+  if(_personalViewInflight) return _personalViewInflight;
   if(stat) stat.textContent = '全ワークスペースを読込中...';
   content.innerHTML = '<div style="padding:18px;color:var(--muted)">読込中...</div>';
   const email = firebase.auth().currentUser.email;
   const myName = (_currentUser && _currentUser.name) || '';
   let allRows = [];
+  _personalViewInflight = (async ()=> {
   try{
     const snap = await firebase.firestore().collection('workspaces')
       .where('memberEmails','array-contains', email).get();
@@ -5969,8 +6012,22 @@ async function renderPersonalView(){
     console.error('personal view fetch failed:', e);
     content.innerHTML = `<div style="padding:18px;color:#c0392b">読込失敗：${escapeHtml(e.message||String(e))}</div>`;
     if(stat) stat.textContent = '';
+    _personalViewInflight = null;
     return;
   }
+  _personalViewCache = allRows;
+  _personalViewFetchedAt = Date.now();
+  _personalViewInflight = null;
+  _renderPersonalViewFromRows(allRows);
+  })();
+  return _personalViewInflight;
+}
+
+function _renderPersonalViewFromRows(allRowsIn){
+  const content = document.getElementById('personalContent');
+  const stat = document.getElementById('personalStatus');
+  if(!content) return;
+  const allRows = (allRowsIn || []).slice();
   // Sort: incomplete first by startD, then completed
   const statusOrder = {'未着手':0,'着手中':1,'完了':3};
   allRows.sort((a,b)=>{
@@ -6032,7 +6089,13 @@ async function renderPersonalView(){
   content.innerHTML = html;
 }
 
-function refreshPersonalView(){ renderPersonalView(); }
+function refreshPersonalView(){
+  // 手動リロード時はキャッシュを無効化して必ず再取得
+  _myWorkspacesFetchedAt = 0;
+  _personalViewFetchedAt = 0;
+  _personalViewCache = null;
+  renderPersonalView();
+}
 
 // Bootstrap
 loadSession();
