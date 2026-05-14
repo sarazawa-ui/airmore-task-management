@@ -1818,6 +1818,18 @@ function countNodes(arr){
   (function walk(a){ a.forEach(x=>{ n++; if(x.children) walk(x.children); }); })(arr||[]);
   return n;
 }
+// 同期によるオブジェクト差し替えに耐えるよう、IDから現在のノードを動的取得
+function findNodeById(arr, id){
+  if(!arr) return null;
+  for(const n of arr){
+    if(n.id === id) return n;
+    if(n.children){
+      const found = findNodeById(n.children, id);
+      if(found) return found;
+    }
+  }
+  return null;
+}
 function countLinkedTasks(g){
   return S.tasks.filter(t=>t.goal===g.id).length;
 }
@@ -1995,30 +2007,60 @@ function renderNode(goal, node, parentArr){
       </span>
     </div>`;
   const inp = li.querySelector('input');
+  // IDを保持しておき、編集時に最新のSから動的にノードを取得
+  const goalId = goal.id;
+  const nodeId = node.id;
+  const getCurrentNode = ()=>{
+    const g = S.goals.find(x=>x.id===goalId); if(!g) return null;
+    return findNodeById(g.breakdown, nodeId);
+  };
   inp.addEventListener('change', ()=>{
-    node.name = inp.value;
-    if(node.taskId){
-      const t = S.tasks.find(x=>x.id===node.taskId);
-      if(t){ t.act = node.name; }
+    const curNode = getCurrentNode();
+    if(!curNode){
+      // 同期で消滅していた場合のフォールバック：元のローカル参照に書く
+      node.name = inp.value;
+    } else {
+      curNode.name = inp.value;
+      if(curNode.taskId){
+        const t = S.tasks.find(x=>x.id===curNode.taskId);
+        if(t){ t.act = curNode.name; }
+      }
     }
     save(); renderTasks();
   });
   const [addBtn, taskBtn, delBtn] = li.querySelectorAll('.tree-actions button');
   addBtn.onclick = ()=>{
-    // フォーカス中の入力があれば blur して change を確実に発火（typing 中の値を取りこぼさない）
     if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
-    node.children.push(newNode("新しいサブ項目"));
+    const curNode = getCurrentNode() || node;
+    curNode.children = curNode.children || [];
+    curNode.children.push(newNode("新しいサブ項目"));
     save();
     renderGoals();
   };
   taskBtn.onclick = ()=>{
     if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
-    promoteNodeToTask(goal, node);
+    const curNode = getCurrentNode() || node;
+    const curGoal = S.goals.find(x=>x.id===goalId) || goal;
+    promoteNodeToTask(curGoal, curNode);
   };
   delBtn.onclick = ()=>{
-    if(!confirm(`項目「${node.name}」を削除しますか？${node.children.length?'（子要素も削除されます）':''}`)) return;
-    const idx = parentArr.indexOf(node);
-    if(idx>=0) parentArr.splice(idx,1);
+    const curNode = getCurrentNode() || node;
+    if(!confirm(`項目「${curNode.name}」を削除しますか？${curNode.children&&curNode.children.length?'（子要素も削除されます）':''}`)) return;
+    // 最新の親配列から削除（IDベース）
+    const curGoal = S.goals.find(x=>x.id===goalId);
+    if(curGoal){
+      // 親配列を探して削除
+      const removeFromArr = arr => {
+        const i = arr.findIndex(n => n.id === nodeId);
+        if(i >= 0){ arr.splice(i,1); return true; }
+        for(const n of arr){ if(n.children && removeFromArr(n.children)) return true; }
+        return false;
+      };
+      removeFromArr(curGoal.breakdown);
+    } else {
+      const idx = parentArr.indexOf(node);
+      if(idx>=0) parentArr.splice(idx,1);
+    }
     save(); renderGoals(); renderTasks();
   };
   if(node.children && node.children.length){
@@ -4151,13 +4193,21 @@ function applySnapshotData(data, wsId){
   const ae = document.activeElement;
   if(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')){
     _deferredSnapshot = data;
-    // 入力フォーカスが外れた時に再試行（blurイベントをワンショットで監視）
+    // blur後に少し待ってから再試行：change → save → _pendingLocalChanges=true の流れを待つ
     const retry = ()=>{
-      if(_deferredSnapshot){
-        const d = _deferredSnapshot;
-        _deferredSnapshot = null;
-        applySnapshotData(d, wsId);
-      }
+      setTimeout(()=>{
+        // 未同期のローカル変更があれば、古いスナップショットは破棄
+        // （次回 write 完了時に最新のスナップショットが来るので問題なし）
+        if(_pendingLocalChanges){
+          _deferredSnapshot = null;
+          return;
+        }
+        if(_deferredSnapshot){
+          const d = _deferredSnapshot;
+          _deferredSnapshot = null;
+          applySnapshotData(d, wsId);
+        }
+      }, 100); // change→save→_pendingLocalChanges set の時間を確保
     };
     ae.addEventListener('blur', retry, { once: true });
     return;
