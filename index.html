@@ -56,8 +56,28 @@ nav button.active{color:var(--primary);border-bottom-color:var(--primary);font-w
 .fb-usage .sep{color:#ccc}
 .fb-usage .ic{font-size:13px}
 @media (max-width:768px){
+  /* margin-left:auto を打ち消し、ナビボタンの直後に並べる（マイタスク横断が見切れる問題対策） */
   .fb-usage{font-size:10px;padding:4px 8px;gap:5px;margin-left:6px}
   .fb-usage .ic{font-size:11px}
+}
+nav .fb-usage{}
+@media (max-width:768px){
+  nav .fb-usage{margin-left:6px !important}
+}
+/* Personal cross-workspace view */
+.personal-wrap{padding:18px 22px}
+.personal-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+#personalContent .ws-card{background:#fff;border:1px solid var(--border);border-radius:10px;margin-bottom:14px;overflow:hidden}
+#personalContent .ws-card-head{background:var(--primary-soft);padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+#personalContent .ws-card-body{overflow-x:auto;-webkit-overflow-scrolling:touch}
+#personalContent table{width:100%;border-collapse:collapse;font-size:13px;min-width:540px}
+@media (max-width:768px){
+  .personal-wrap{padding:12px 10px}
+  .personal-head h2{font-size:15px !important}
+  .personal-head .hint{display:none}
+  #personalContent .ws-card-head{padding:8px 10px;font-size:12px}
+  #personalContent table{font-size:11.5px;min-width:480px}
+  #personalContent th,#personalContent td{padding:5px 6px !important}
 }
 /* Usage detail modal */
 .usage-bar{height:8px;background:#ECEFF1;border-radius:4px;overflow:hidden;margin:4px 0}
@@ -205,9 +225,11 @@ tr.gd-red.done td,tr.gd-yellow.done td,tr.gd-green.done td{background:#EFEFEF !i
 
 /* Goal-deadline tag for task list */
 .gd-tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:700}
+.gd-tag.overdue{background:#7B0F0F;color:#fff;animation:pulse-overdue 1.6s ease-in-out infinite}
 .gd-tag.red{background:#C00000;color:#fff}
 .gd-tag.yellow{background:#FFD966;color:#5a4600}
 .gd-tag.green{background:#70AD47;color:#fff}
+@keyframes pulse-overdue{0%,100%{opacity:1}50%{opacity:.55}}
 
 /* プロジェクトフィルタ */
 .project-filter{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text-soft);flex-wrap:wrap;background:#fff;padding:6px 10px;border:1px solid var(--border);border-radius:7px;box-shadow:var(--shadow-sm)}
@@ -507,7 +529,8 @@ header.app-header{padding:10px 22px}
 @media (max-width:768px){
   .ws-switcher{margin-left:6px}
   .ws-switcher-btn{padding:5px 9px;font-size:11.5px;max-width:130px}
-  .ws-menu{min-width:240px}
+  /* メニューがビューポート外に出ないよう、右端基準＋最大幅をビューポート内に制限 */
+  .ws-menu{left:auto;right:0;min-width:220px;max-width:calc(100vw - 24px)}
 }
 
 /* ===== Settings Modal ===== */
@@ -528,6 +551,9 @@ header.app-header{padding:10px 22px}
 .settings-nav button{display:flex;width:100%;text-align:left;background:transparent;border:none;padding:9px 14px;cursor:pointer;font-family:inherit;font-size:13px;color:var(--text-soft);border-radius:7px;align-items:center;gap:8px;margin-bottom:2px;font-weight:500;transition:all .12s}
 .settings-nav button:hover{background:#fff;color:var(--text)}
 .settings-nav button.active{background:#fff;color:var(--primary);box-shadow:var(--shadow-sm);font-weight:700}
+.settings-nav button.pane-logout{color:#C0392B;margin-top:auto}
+.settings-nav button.pane-logout:hover{background:#FADBD8;color:#943126}
+.settings-nav button.pane-logout.active{background:#FADBD8;color:#943126}
 .settings-nav .divider{height:1px;background:var(--border);margin:8px 6px}
 .settings-nav .label{font-size:10.5px;color:var(--muted);padding:8px 14px 4px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
 .settings-content{padding:20px 24px}
@@ -618,8 +644,8 @@ header.app-header{padding:10px 22px}
   nav::-webkit-scrollbar{height:3px}
   nav button{padding:10px 12px;font-size:12px;white-space:nowrap;flex:0 0 auto}
 
-  /* Main padding compact */
-  main{padding:12px 10px}
+  /* Main padding compact + safe area bottom (iOS下部に隠れない様に) */
+  main{padding:12px 10px;padding-bottom:calc(24px + env(safe-area-inset-bottom,0px))}
 
   /* Headings */
   h2{font-size:15px}
@@ -676,7 +702,7 @@ header.app-header{padding:10px 22px}
 
   /* Modal: full-screen on mobile */
   .modal-backdrop{padding:0;align-items:flex-start}
-  .modal{max-height:100vh;height:100vh;border-radius:0;max-width:100%;width:100%}
+  .modal{max-height:100vh;max-height:100dvh;height:100dvh;border-radius:0;max-width:100%;width:100%}
   .modal-header{padding:12px 14px}
   .modal-header h2{font-size:14px}
   .modal-close{width:30px;height:30px;font-size:16px}
@@ -684,11 +710,11 @@ header.app-header{padding:10px 22px}
 
   /* Settings inner layout - stack vertically on mobile */
   .settings-layout{grid-template-columns:1fr;min-height:auto}
-  .settings-nav{border-right:none;border-bottom:1px solid var(--border);padding:8px;display:flex;flex-wrap:wrap;gap:4px;background:#fff;position:sticky;top:0;z-index:5}
+  .settings-nav{border-right:none;border-bottom:1px solid var(--border);padding:8px;display:flex;flex-wrap:wrap;gap:4px;background:#fff;position:sticky;top:0;max-height:none;overflow-y:visible;z-index:5}
   .settings-nav button{flex:1 1 auto;text-align:center;padding:7px 10px;font-size:11.5px;border-radius:6px}
   .settings-nav button.active{background:var(--primary);color:#fff;box-shadow:none}
   .settings-nav .divider,.settings-nav .label{display:none}
-  .settings-content{padding:14px}
+  .settings-content{padding:14px;padding-bottom:calc(48px + env(safe-area-inset-bottom,0px))}
   .settings-pane h3{font-size:14px}
   .profile-form{max-width:none}
   .profile-form input[type=text],.profile-form select,.profile-form textarea{font-size:13px;padding:8px 10px}
@@ -805,7 +831,6 @@ header.app-header{padding:10px 22px}
     </span>
     <div class="user-info" id="hdrUserInfo"></div>
     <button class="settings-btn" onclick="openSettingsModal('profile')" title="設定">⚙</button>
-    <button class="settings-btn" onclick="appLogout()" title="ログアウト" style="padding:7px 10px">🚪</button>
     <input type="file" id="importFile" accept="application/json" style="display:none" onchange="importData(event)">
   </div>
 </header>
@@ -996,10 +1021,10 @@ header.app-header{padding:10px 22px}
 
 <!-- ============ PERSONAL CROSS-WORKSPACE VIEW ============ -->
 <section class="view" id="view-personal">
-  <div style="padding:18px 22px">
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
-      <h2 style="margin:0;font-size:18px;color:var(--primary-dark)">🗂 マイタスク横断（全ワークスペース）</h2>
-      <span style="color:var(--muted);font-size:12px">参加中の全ワークスペースから、自分が担当のタスクを集約表示</span>
+  <div class="personal-wrap">
+    <div class="personal-head">
+      <h2 style="margin:0;font-size:18px;color:var(--primary-dark)">🗂 マイタスク横断</h2>
+      <span class="hint" style="color:var(--muted);font-size:12px">参加中の全ワークスペースから、自分が担当のタスクを集約表示</span>
       <span style="margin-left:auto"></span>
       <button class="btn sm ghost" onclick="refreshPersonalView()">🔄 再読込</button>
     </div>
@@ -1044,24 +1069,47 @@ header.app-header{padding:10px 22px}
     <div class="modal-body">
     <div class="settings-layout">
     <div class="settings-nav">
-      <div class="label">ワークスペース</div>
-      <button class="active" data-pane="profile">🏢 プロフィール</button>
-      <div class="divider"></div>
-      <div class="label">設定</div>
-      <button data-pane="display">👤 個人設定</button>
-      <button data-pane="master">📋 マスタ管理（共通）</button>
-      <div class="divider"></div>
-      <div class="label">運用</div>
+      <div class="label">ワークスペース設定</div>
+      <button class="active" data-pane="workspace">🏢 ワークスペース名</button>
+      <button data-pane="master">📋 マスタ管理</button>
       <button data-pane="firebase">☁️ クラウド同期</button>
       <button data-pane="history">📜 編集履歴</button>
       <button data-pane="data">💾 データ管理</button>
+      <div class="divider"></div>
+      <div class="label">プロフィール</div>
+      <button data-pane="profile">🏛 会社名</button>
+      <button data-pane="display">👤 個人設定</button>
+      <button data-pane="logout" class="pane-logout">🚪 ログアウト</button>
     </div>
     <div class="settings-content">
 
-  <!-- Profile pane -->
-  <div class="settings-pane active" id="pane-profile">
-    <h3>🏢 ワークスペース・プロフィール</h3>
+  <!-- Workspace pane -->
+  <div class="settings-pane active" id="pane-workspace">
+    <h3>🏢 ワークスペース設定</h3>
     <div id="wsInfoBanner" style="background:#EBF5FB;border:1px solid var(--primary-light);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--text-soft);margin-bottom:14px"></div>
+    <div class="profile-form">
+      <div class="field">
+        <label>ワークスペース名</label>
+        <input type="text" id="wsNameInput" placeholder="例：営業チーム / プロジェクトX">
+        <div class="help">ヘッダーのワークスペース切替メニューや「マイタスク横断」ビューに表示される識別名です。参加メンバー全員に共有されます。</div>
+      </div>
+      <button class="btn" onclick="saveProfile()">💾 保存</button>
+      <div id="wsDangerZone" style="display:none;margin-top:24px;padding-top:18px;border-top:2px solid #FADBD8">
+        <h4 style="color:#C0392B;margin:0 0 8px">⚠ 危険な操作（オーナー専用）</h4>
+        <div style="color:var(--text-soft);font-size:12px;margin-bottom:10px">
+          ワークスペースを削除すると、クラウド上のすべてのデータ（プロジェクト・タスク・履歴）が失われ、参加メンバー全員がアクセスできなくなります。<strong>この操作は取り消せません。</strong>
+        </div>
+        <button class="btn" style="background:#C0392B;border-color:#C0392B" onclick="deleteWorkspace()">🗑 ワークスペースを完全削除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Profile pane -->
+  <div class="settings-pane" id="pane-profile">
+    <h3>🏛 会社名（プロフィール）</h3>
+    <div style="background:#EBF5FB;border:1px solid var(--primary-light);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--text-soft);margin-bottom:14px">
+      💡 会社名・ロゴは <strong>このブラウザのみ</strong> に保存され、どのワークスペースに切り替えても共通で表示されます。他メンバーには共有されません。
+    </div>
     <div class="profile-form">
       <div class="field">
         <label>会社ロゴ</label>
@@ -1069,11 +1117,6 @@ header.app-header{padding:10px 22px}
         <input type="file" id="logoUpload" accept="image/*" onchange="handleLogoUpload(event)" style="display:block;font-size:12px">
         <div style="margin-top:6px"><button class="btn sm ghost" onclick="clearLogo()">ロゴを削除</button></div>
         <div class="help">推奨：正方形 256×256px 以上 / PNG・JPG・SVG（5MB以下）</div>
-      </div>
-      <div class="field">
-        <label>ワークスペース名</label>
-        <input type="text" id="wsNameInput" placeholder="例：営業チーム / プロジェクトX">
-        <div class="help">ヘッダーのワークスペース切替メニューや「マイタスク横断」ビューに表示される識別名です。</div>
       </div>
       <div class="field">
         <label>会社名</label>
@@ -1085,14 +1128,17 @@ header.app-header{padding:10px 22px}
         <input type="text" id="companyMemo" placeholder="例：圧縮空気の総合エンジニアリング">
       </div>
       <button class="btn" onclick="saveProfile()">💾 保存</button>
-      <div id="wsDangerZone" style="display:none;margin-top:24px;padding-top:18px;border-top:2px solid #FADBD8">
-        <h4 style="color:#C0392B;margin:0 0 8px">⚠ 危険な操作（オーナー専用）</h4>
-        <div style="color:var(--text-soft);font-size:12px;margin-bottom:10px">
-          ワークスペースを削除すると、クラウド上のすべてのデータ（プロジェクト・タスク・履歴）が失われ、参加メンバー全員がアクセスできなくなります。<strong>この操作は取り消せません。</strong>
-        </div>
-        <button class="btn" style="background:#C0392B;border-color:#C0392B" onclick="deleteWorkspace()">🗑 ワークスペースを完全削除</button>
-      </div>
     </div>
+  </div>
+
+  <!-- Logout pane -->
+  <div class="settings-pane" id="pane-logout">
+    <h3>🚪 ログアウト</h3>
+    <div style="background:#FFF8DC;border:1px solid #FFD966;border-radius:7px;padding:12px 16px;font-size:13px;color:#5a4600;margin-bottom:16px;line-height:1.7">
+      ログアウトすると、このブラウザのセッションが終了します。<br>
+      ローカルに保存されたデータは保持され、再ログイン後に復元されます。クラウド同期中のワークスペースのデータも安全です。
+    </div>
+    <button class="btn" style="background:#C0392B;border-color:#C0392B" onclick="appLogout()">🚪 ログアウトする</button>
   </div>
 
   <!-- Display + work settings pane (個人設定) -->
@@ -1559,11 +1605,11 @@ function openTaskPickerAt(dateStr, totalMin, allDay){
   if(!dateStr) return;
   // 配置可能タスクのリスト（完了/中止以外）
   const available = S.tasks.filter(t => t.status !== '完了' && t.status !== '中止');
-  // ソート：未割当 → 当日 → 他
+  // ソート：期日（due）が近い順、期日なしは末尾
   available.sort((a,b) => {
-    const aSched = a.startD ? 1 : 0;
-    const bSched = b.startD ? 1 : 0;
-    if(aSched !== bSched) return aSched - bSched;
+    const ad = a.due || '9999-12-31';
+    const bd = b.due || '9999-12-31';
+    if(ad !== bd) return ad.localeCompare(bd);
     return (a.startD||'9999').localeCompare(b.startD||'9999');
   });
   const timeStr = allDay ? '終日' : (pad2(Math.floor(totalMin/60)) + ':' + pad2(totalMin%60));
@@ -1580,16 +1626,26 @@ function openTaskPickerAt(dateStr, totalMin, allDay){
       <th style="width:80px">ID</th>
       <th style="text-align:left">アクション</th>
       <th style="width:90px">担当</th>
+      <th style="width:120px">期日</th>
       <th style="width:120px">現在の予定</th>
       <th style="width:60px">所要</th>
       <th style="width:80px">状態</th>
     </tr></thead><tbody>`;
     available.forEach(t => {
       const scheduled = t.startD ? `${t.startD}${t.time?' '+t.time:''}` : '<em style="color:var(--muted)">未割当</em>';
-      html += `<tr style="cursor:pointer" data-pick-task="${escapeHtml(t.id)}">
+      // 期日が近い／超過しているタスクは行背景を赤に
+      let rowBg = '';
+      let dueDisp = t.due || '<span style="color:#bbb">-</span>';
+      if(t.due){
+        const dd = diffDays(t.due, todayStr());
+        if(dd < 0){ rowBg = 'background:#FADBD8'; dueDisp = `<b style="color:#C0392B">${t.due}（${-dd}日超過）</b>`; }
+        else if(dd <= 7){ rowBg = 'background:#FADBD8'; dueDisp = `<b style="color:#C0392B">${t.due}（あと${dd}日）</b>`; }
+      }
+      html += `<tr style="cursor:pointer;${rowBg}" data-pick-task="${escapeHtml(t.id)}">
         <td class="center">${escapeHtml(t.id)}</td>
         <td>${escapeHtml(t.act||t.mid||'(無題)')}</td>
         <td class="center">${escapeHtml(t.owner||'-')}</td>
+        <td class="center" style="font-size:11px">${dueDisp}</td>
         <td class="center" style="font-size:11px">${scheduled}</td>
         <td class="center">${t.est||'-'}</td>
         <td class="center" style="font-size:11px">${escapeHtml(t.status||'')}</td>
@@ -2322,11 +2378,18 @@ const TASK_COLS = [
   {key:'note',  label:'備考', width:140},
 ];
 
+// 紐づくプロジェクト（ゴール）の期日までの日数で判定：
+//   days < 0  : 期限切れ (gd-overdue)  ← プロジェクト期日が過ぎている
+//   0〜6      : 期限間近 (gd-red)
+//   7〜13     : 2週内    (gd-yellow)
+//   14〜20    : (タグなし／通常)
+//   21+       : 余裕     (gd-green)
 function goalDeadlineClass(t){
   if(!t.goal) return '';
   const g = S.goals.find(x=>x.id===t.goal);
   if(!g || !g.due) return '';
   const days = diffDays(g.due, todayStr());
+  if(days < 0) return 'gd-overdue';
   if(days < 7) return 'gd-red';
   if(days < 14) return 'gd-yellow';
   if(days >= 21) return 'gd-green';
@@ -3575,7 +3638,8 @@ function renderSideTasks(){
     el.draggable = true;
     el.dataset.taskId = t.id;
     const gd = goalDeadlineClass(t);
-    const gdLabel = gd==='gd-red'?'<span class="gd-tag red">期限間近</span>':
+    const gdLabel = gd==='gd-overdue'?'<span class="gd-tag overdue">期限切れ</span>':
+                    gd==='gd-red'?'<span class="gd-tag red">期限間近</span>':
                     gd==='gd-yellow'?'<span class="gd-tag yellow">2週内</span>':
                     gd==='gd-green'?'<span class="gd-tag green">余裕</span>':'';
     const goalName = t.goal ? (S.goals.find(g=>g.id===t.goal)||{}).name : '';
@@ -5461,7 +5525,9 @@ function deleteEditingTask(){
 // ============ Settings modal ============
 function openSettingsModal(pane){
   document.getElementById('settingsModal').classList.add('show');
-  switchSettingsPane(pane||'profile');
+  // 旧呼び出し（'profile'）はワークスペース設定にリダイレクト
+  if(pane === 'profile' || !pane) pane = 'workspace';
+  switchSettingsPane(pane);
   renderProfileForm();
   renderMemberPane();
   renderHistory();
@@ -5475,7 +5541,7 @@ function closeSettingsModal(){
 function switchSettingsPane(pane){
   document.querySelectorAll('.settings-nav button').forEach(b=>b.classList.toggle('active', b.dataset.pane===pane));
   document.querySelectorAll('.settings-pane').forEach(p=>p.classList.toggle('active', p.id==='pane-'+pane));
-  if(pane==='profile') renderProfileForm();
+  if(pane==='workspace' || pane==='profile') renderProfileForm();
   else if(pane==='history') renderHistory();
   else if(pane==='master') renderMaster();
   else if(pane==='display') renderDisplaySettings();
@@ -6060,14 +6126,15 @@ function _renderPersonalViewFromRows(allRowsIn){
   let html = '';
   Object.keys(groups).forEach(wsId=>{
     const g = groups[wsId];
-    html += `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;margin-bottom:14px;overflow:hidden">
-      <div style="background:var(--primary-soft);padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+    html += `<div class="ws-card">
+      <div class="ws-card-head">
         <span style="font-weight:700;color:var(--primary-dark)">🏢 ${escapeHtml(g.name)}</span>
         <span style="color:var(--muted);font-size:11px">${g.rows.length}件</span>
         <span style="margin-left:auto"></span>
         <button class="btn sm ghost" onclick="switchWorkspace('${escapeHtml(wsId)}')">このWSを開く →</button>
       </div>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <div class="ws-card-body">
+      <table>
         <thead><tr style="background:#fafbfc;color:var(--muted);font-size:11px">
           <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft);width:80px">状態</th>
           <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border-soft)">アクション</th>
@@ -6097,7 +6164,7 @@ function _renderPersonalViewFromRows(allRowsIn){
         <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft);color:${dueColor};font-size:11px;font-weight:${dueColor==='var(--muted)'?'400':'600'}">${escapeHtml(dueStr)}</td>
       </tr>`;
     });
-    html += '</tbody></table></div>';
+    html += '</tbody></table></div></div>';
   });
   content.innerHTML = html;
 }
