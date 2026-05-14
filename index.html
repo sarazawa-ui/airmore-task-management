@@ -229,6 +229,11 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 #tblGoals td textarea{min-width:0;line-height:1.4}
 #tblGoals td .progress-auto{padding:6px 4px;font-size:12px}
 #tblGoals td .progress-auto small{font-size:9.5px;letter-spacing:-.03em}
+/* Estimated-time slider for project task rows */
+.est-slider{display:flex;align-items:center;gap:6px;width:100%}
+.est-slider input[type=range]{flex:1 1 auto;min-width:60px;height:18px;accent-color:var(--primary);cursor:pointer;margin:0}
+.est-slider .est-val{flex:0 0 auto;font-size:11.5px;font-weight:700;color:var(--primary-dark);min-width:42px;text-align:right;font-variant-numeric:tabular-nums;font-family:'SF Mono','Consolas',monospace}
+.est-slider .est-val.zero{color:#bbb;font-weight:500}
 #tblGoals .expand-btn{white-space:nowrap;font-size:10.5px;padding:4px 8px;line-height:1.2}
 #tblGoals .expand-btn small{font-size:9.5px}
 #tblGoals .member-chips{flex-wrap:wrap;min-height:30px;padding:3px}
@@ -1414,9 +1419,20 @@ function computeGoalProgress(g){
   if(ts.length===0){
     return {value: Number(g.progressManual)||0, source:'manual', total:0, done:0};
   }
-  // 各タスクのウェイトは 100/n で自動按分されるため、進捗は完了件数/全件数と等価
-  const done = ts.filter(t=>t.status==='完了').length;
-  return {value: Math.round(done/ts.length*100), source:'auto', total:ts.length, done};
+  // 所要時間ベース：est が設定されていればその合計、未設定は既定値(15分)で按分
+  const DEFAULT_EST = 15;
+  let totalMin = 0, doneMin = 0;
+  ts.forEach(t=>{
+    const m = Math.max(0, Math.min(90, Number(t.est) || DEFAULT_EST));
+    totalMin += m;
+    if(t.status === '完了') doneMin += m;
+  });
+  if(totalMin === 0){
+    // すべて est=0 → 件数ベースにフォールバック
+    const done = ts.filter(t=>t.status==='完了').length;
+    return {value: Math.round(done/ts.length*100), source:'auto', total:ts.length, done};
+  }
+  return {value: Math.round(doneMin/totalMin*100), source:'auto', total:ts.length, done: ts.filter(t=>t.status==='完了').length, totalMin, doneMin};
 }
 function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]); }
 
@@ -1824,7 +1840,9 @@ function renderGoals(){
     const tr = document.createElement('tr');
     const prog = computeGoalProgress(g);
     g.progress = prog.value;
-    const progSrc = prog.source==='auto' ? `${prog.done}/${prog.total}件` : '手動';
+    const progSrc = prog.source==='auto'
+      ? (prog.totalMin ? `${prog.doneMin}/${prog.totalMin}分` : `${prog.done}/${prog.total}件`)
+      : '手動';
     const isOverdue = g.due && diffDays(g.due, todayStr()) < 0 && g.status !== '完了' && g.status !== '中止';
     if(isOverdue) tr.classList.add('row-overdue');
     tr.innerHTML = `
@@ -2005,7 +2023,7 @@ function renderTree(g){
       <th style="text-align:left">アクション</th>
       <th style="width:110px">担当</th>
       <th style="width:120px">期日</th>
-      <th style="width:90px">所要(分)</th>
+      <th style="width:140px">所要時間(0〜90分)</th>
       <th style="width:90px">状態</th>
       <th style="width:90px">操作</th>
     </tr></thead><tbody>`;
@@ -2016,7 +2034,10 @@ function renderTree(g){
         <td class="input"><input type="text" data-tf="act" value="${escapeHtml(t.act||t.mid||'')}" style="border:none;background:transparent;width:100%;font:inherit;outline:none"></td>
         <td class="input"><select data-tf="owner" style="border:none;background:transparent;width:100%;font:inherit;outline:none">${memberOptions(t.owner)}</select></td>
         <td class="input"><input type="date" data-tf="due" value="${t.due||''}" style="border:none;background:transparent;width:100%;font:inherit;outline:none"></td>
-        <td class="input center"><input type="number" data-tf="est" value="${t.est??''}" min="0" step="15" style="border:none;background:transparent;width:100%;font:inherit;outline:none;text-align:center"></td>
+        <td class="input center"><div class="est-slider">
+          <input type="range" data-tf="est" min="0" max="90" step="15" value="${Math.min(90, Number(t.est)||0)}" title="所要時間（0〜90分・15分刻み）">
+          <span class="est-val${(Number(t.est)||0)===0?' zero':''}" data-est-val>${(Number(t.est)||0)===0?'未設定':(Number(t.est)||0)+'分'}</span>
+        </div></td>
         <td class="input"><select data-tf="status" style="border:none;background:transparent;width:100%;font:inherit;outline:none">${statusOptions(t.status)}</select></td>
         <td class="center" style="white-space:nowrap">
           <button data-task-edit="${escapeHtml(t.id)}" title="詳細編集" style="background:none;border:none;color:var(--primary);cursor:pointer;font-size:14px;padding:2px 4px">✏️</button>
@@ -2046,16 +2067,26 @@ function renderTree(g){
   // Inline edits for non-checkbox fields
   linkedSection.querySelectorAll('[data-tf]').forEach(inp=>{
     if(inp.type === 'checkbox') return;
+    // Slider: live-update label as the user drags
+    if(inp.type === 'range'){
+      inp.addEventListener('input',()=>{
+        const v = Number(inp.value)||0;
+        const lbl = inp.parentElement.querySelector('[data-est-val]');
+        if(lbl){
+          lbl.textContent = v===0 ? '未設定' : v+'分';
+          lbl.classList.toggle('zero', v===0);
+        }
+      });
+    }
     inp.addEventListener('change',()=>{
       const tid = inp.closest('tr').dataset.tid;
       const t = S.tasks.find(x=>x.id===tid); if(!t) return;
       const f = inp.dataset.tf;
-      if(inp.type==='number') t[f] = inp.value===''?'':Number(inp.value);
+      if(inp.type==='number' || inp.type==='range') t[f] = inp.value===''?'':Number(inp.value);
       else t[f] = inp.value;
       save(true,`タスク編集：${t.id}/${f}`);
-      // status変更時のみテーブルを再描画（進捗バー更新のため）
-      // その他のフィールド編集ではDOMを破壊せず、フォーカスを保持
-      if(f === 'status'){
+      // status/est変更時はテーブルを再描画（進捗バー更新のため）
+      if(f === 'status' || f === 'est'){
         renderGoals();
       }
       renderCalendar(); renderSideTasks(); renderDashboard();
