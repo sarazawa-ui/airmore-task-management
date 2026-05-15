@@ -2390,13 +2390,15 @@ function renderTree(g){
 
   // === Breakdown tree ===
   // セクション全体を開閉可能（個人ごとのUI状態）
-  const sectionCollapsed = !!g._treeCollapsed;
+  // デフォルトは折りたたみ。明示的に開いた時のみ展開（_treeCollapsed === false）。
+  const sectionCollapsed = g._treeCollapsed !== false;
   const treeHeader = document.createElement('div');
   treeHeader.className = 'tree-section-header';
   treeHeader.innerHTML = `<span class="tree-section-toggle">${sectionCollapsed?'▶':'▼'}</span> 🌳 分解ツリー（計画用） <span class="tree-section-count">${countNodes(g.breakdown)}項目</span>`;
   treeHeader.addEventListener('click', ()=>{
     const cur = S.goals.find(x=>x.id===g.id); if(!cur) return;
-    cur._treeCollapsed = !cur._treeCollapsed;
+    // 現在開いている (_treeCollapsed===false) なら閉じる(true)、それ以外（折りたたみ）なら開く(false)
+    cur._treeCollapsed = (cur._treeCollapsed === false);
     save();
     renderGoals();
   });
