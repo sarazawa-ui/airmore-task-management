@@ -4087,10 +4087,23 @@ function renderSideTasks(){
         e.preventDefault();
         return;
       }
+      // テキストが選択されている状態でのドラッグはタスク移動ではなく
+      // 「テキスト選択ドラッグ」とみなしてキャンセル
+      const sel = window.getSelection && window.getSelection();
+      if(sel && !sel.isCollapsed && sel.toString().length > 0){
+        try{
+          if(el.contains(sel.anchorNode) || el.contains(sel.focusNode)){
+            e.preventDefault();
+            return;
+          }
+        }catch(_){ /* ignore */ }
+      }
       e.dataTransfer.setData('text/plain', taskId);
       e.dataTransfer.effectAllowed = 'move';
       _dragTask = getCurTask() || t;
     });
+    // mouseup後に draggable を初期状態に戻す（次のジェスチャに備える）
+    el.addEventListener('mouseup',()=>{ setTimeout(()=>{ el.draggable = true; }, 0); });
     el.addEventListener('dragend',()=>{
       _dragTask = null;
       if(_dragGhost){ _dragGhost.remove(); _dragGhost = null; }
@@ -4156,6 +4169,8 @@ function attachDropTargets(HOUR_PX, startH, endH){
     col.addEventListener('drop',e=>{
       e.preventDefault(); col.classList.remove('drop-hover');
       removeGhost();
+      // タスクドラッグでなければ無視（テキスト選択のドラッグなど）
+      if(!_dragTask) return;
       const id = e.dataTransfer.getData('text/plain');
       const t = S.tasks.find(x=>x.id===id); if(!t) return;
       const rect = col.getBoundingClientRect();
@@ -4208,6 +4223,8 @@ function attachDropTargets(HOUR_PX, startH, endH){
       e.preventDefault();
       calSide.classList.remove('drop-hover');
       removeGhost();
+      // タスクドラッグでなければ無視
+      if(!_dragTask) return;
       const id = e.dataTransfer.getData('text/plain');
       const t = S.tasks.find(x=>x.id===id); if(!t) return;
       // 自分以外のタスクならガード
@@ -4236,6 +4253,8 @@ function attachDropTargets(HOUR_PX, startH, endH){
     cell.addEventListener('drop',e=>{
       e.preventDefault(); cell.classList.remove('drop-hover');
       removeGhost();
+      // タスクドラッグでなければ無視
+      if(!_dragTask) return;
       const id = e.dataTransfer.getData('text/plain');
       const t = S.tasks.find(x=>x.id===id); if(!t) return;
       t.startD = cell.dataset.alldayDate;
