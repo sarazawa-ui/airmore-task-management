@@ -489,6 +489,7 @@ header.app-header{padding:10px 22px}
 .sync-indicator.synced{background:#D5F5E3;color:#1E8449}
 .sync-indicator.syncing{background:#FCF3CF;color:#7E5109}
 .sync-indicator.error{background:#FADBD8;color:#943126}
+.sync-indicator.quota{background:#F5CBA7;color:#A04000;cursor:help}
 .sync-indicator.offline{background:#F4F6F7;color:#7F8C8D}
 .sync-indicator .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:currentColor}
 .sync-indicator.syncing .dot{animation:pulse-syncing 1.2s ease-in-out infinite}
@@ -4557,12 +4558,16 @@ function initFirebase(){
 function updateSyncStatus(state){
   const el = document.getElementById('syncIndicator');
   if(!el) return;
-  el.classList.remove('synced','syncing','error','offline');
+  el.classList.remove('synced','syncing','error','offline','quota');
   el.classList.add(state);
+  el.title = '';
   const lbl = el.querySelector('.lbl');
   if(state==='synced') lbl.textContent = '同期済';
   else if(state==='syncing') lbl.textContent = '同期中';
-  else if(state==='error') lbl.textContent = 'エラー';
+  else if(state==='quota'){
+    lbl.textContent = '⚠ 上限超過';
+    el.title = 'Firestore無料枠の日次上限に達しました（書込20K/日）。約17時(JST)にリセットされます。継続利用するには Blaze プラン（従量制）への切替を検討してください。';
+  } else if(state==='error') lbl.textContent = 'エラー';
   else lbl.textContent = _firebaseConfig ? '未接続' : 'ローカル';
 }
 
@@ -4824,7 +4829,11 @@ function subscribeWorkspace(){
     applySnapshotData(data, wsId);
   }, err=>{
     console.error("Firestore subscribe error:",err);
-    updateSyncStatus('error');
+    if(err && err.code === 'resource-exhausted'){
+      updateSyncStatus('quota');
+    } else {
+      updateSyncStatus('error');
+    }
   });
   updateSyncStatus('synced');
 }
@@ -4859,14 +4868,25 @@ function syncToFirestore(){
       if(myVersion === _writeVersion){
         _pendingLocalChanges = false;
       }
-      updateSyncStatus('error');
       console.error("Firestore save failed:",err);
-      if(err.code === 'permission-denied'){
-        console.warn("⚠️ 書き込み権限エラー: Firestoreルールを確認してください");
+      // Firestore 無料枠クォータ超過：'quota' ステータスでユーザーに通知
+      if(err.code === 'resource-exhausted'){
+        updateSyncStatus('quota');
+        // 連続トーストを抑制（5分に1回まで）
+        if(!_quotaToastedAt || (Date.now() - _quotaToastedAt) > 5*60*1000){
+          _quotaToastedAt = Date.now();
+          toast('⚠ Firestore 無料枠の上限に達しました。約17時(JST)にリセットされます。');
+        }
+      } else {
+        updateSyncStatus('error');
+        if(err.code === 'permission-denied'){
+          console.warn("⚠️ 書き込み権限エラー: Firestoreルールを確認してください");
+        }
       }
     }
-  }, 300);
+  }, 1500);  // デバウンスを 300ms → 1500ms に延長：連続操作中の書込回数を約 5分の1 に削減
 }
+let _quotaToastedAt = 0;
 
 // 安全弁：syncing 状態が長時間続いている場合は自動で 'synced' に戻す
 // （write が完了しているのに version 不整合などで取り残された／await が hang したケースの保険）
