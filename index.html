@@ -4718,19 +4718,21 @@ function syncToFirestore(){
       const ws = serializeWorkspace();
       await firebase.firestore().doc(`workspaces/${S.workspaceId}`).set(ws, {merge:true});
       bumpFbUsage('write', 1);
-      // 自分の write が「最新」だった場合のみフラグをクリア
+      // 自分の write が「最新」だった場合のみ pending フラグをクリア
       if(myVersion === _writeVersion){
         _pendingLocalChanges = false;
         _deferredSnapshot = null;
-        updateSyncStatus('synced');
       }
-      // そうでなければ：後続の save() が新しい debounce を仕掛けているのでそちらに任せる
+      // 書き込み成功時は常に 'synced' に戻す（後続 write があってもそれが新たに 'syncing' を立てる）
+      // 「自分の最新書込以外」を 'syncing' のまま放置すると、後続 debounce が更に上書きされた場合
+      // 永遠に 'syncing' が解除されないため、ここでは常に成功シグナルを出す
+      updateSyncStatus('synced');
     }catch(err){
       // エラー時：最新の write 担当ならフラグクリア
       if(myVersion === _writeVersion){
         _pendingLocalChanges = false;
-        updateSyncStatus('error');
       }
+      updateSyncStatus('error');
       console.error("Firestore save failed:",err);
       if(err.code === 'permission-denied'){
         console.warn("⚠️ 書き込み権限エラー: Firestoreルールを確認してください");
@@ -4738,6 +4740,19 @@ function syncToFirestore(){
     }
   }, 300);
 }
+
+// 安全弁：syncing 状態が長時間続いている場合は自動で 'synced' に戻す
+// （write が完了しているのに version 不整合などで取り残されたケースの保険）
+setInterval(()=>{
+  if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser) return;
+  if(!S.workspaceId) return;
+  const el = document.getElementById('syncIndicator');
+  if(!el || !el.classList.contains('syncing')) return;
+  // _pendingLocalChanges が false で、最後の操作から 4 秒以上経っていれば「取り残し」と判定
+  if(_pendingLocalChanges) return;
+  if(Date.now() - _lastLocalChange < 4000) return;
+  updateSyncStatus('synced');
+}, 2000);
 
 function leaveWorkspace(){
   if(!confirm("このワークスペースから離脱しますか？\n（クラウドのデータは保持されます）")) return;
