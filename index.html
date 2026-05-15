@@ -1668,8 +1668,7 @@ function openTaskPickerAt(dateStr, totalMin, allDay){
           if(t.slot === '終日') t.slot = '';
           if(!t.est) t.est = 60;
         }
-        const statusChanged = (t.status === '未着手' || !t.status);
-        if(statusChanged) t.status = '着手中';
+        const statusChanged = applyAutoStatus(t);
         save(true, statusChanged ? `${t.id} 配置・着手中に変更` : `${t.id} 配置`);
         closeKpiModal();
         renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
@@ -1912,7 +1911,7 @@ function renderGoals(){
       <td class="formula"><div class="progress-auto">${prog.value}%<small>${progSrc}</small></div><div class="progress" style="width:90%;margin:4px auto 0"><span style="width:${prog.value}%"></span></div></td>
       <td class="input"><select data-f="status">${statusOptions(g.status)}</select></td>
       <td class="input drive-cell">
-        <div class="drive-row" data-mode="${g.driveUrl?'view':'edit'}">
+        <div class="drive-row" data-mode="view">
           <a href="${escapeHtml(g.driveUrl||'#')}" target="_blank" rel="noopener" class="drive-link" title="${escapeHtml(g.driveUrl||'')}">${escapeHtml(driveLabel(g.driveUrl||''))||'未設定'}</a>
           <input type="url" data-f="driveUrl" value="${escapeHtml(g.driveUrl||'')}" placeholder="https://drive.google.com/..." title="GoogleドライブのフォルダURL">
           <button type="button" class="drive-edit" title="リンクを編集">✎</button>
@@ -3066,6 +3065,18 @@ const SLOT_TIME = {
   "夜間(18以降)":["18:00", 120],
 };
 
+// タスクの startD 設定／解除に応じて status を自動更新
+// 完了 / 中止 は手動状態を尊重して変更しない
+function applyAutoStatus(t){
+  if(!t) return false;
+  if(t.status === '完了' || t.status === '中止') return false;
+  const placed = !!(t.startD && String(t.startD).trim());
+  const newStatus = placed ? '着手中' : '未着手';
+  if(t.status === newStatus) return false;
+  t.status = newStatus;
+  return true;
+}
+
 function taskRange(t){
   if(!t.startD) return null;
   if(t.slot==="終日") return {date:t.startD, allDay:true};
@@ -3362,8 +3373,7 @@ function attachTouchHoldDrag(div, t){
         cur.time = pad2(Math.floor(totalMin/60)) + ':' + pad2(totalMin%60);
         if(cur.slot === '終日') cur.slot = '';
         if(!cur.est) cur.est = 60;
-        const statusChanged = (cur.status === '未着手' || !cur.status);
-        if(statusChanged) cur.status = '着手中';
+        const statusChanged = applyAutoStatus(cur);
         save(true, statusChanged ? `${cur.id} 移動・着手中に変更` : `${cur.id} 移動`);
         toast(`${cur.id} を ${cur.startD} ${cur.time} に移動`);
         renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
@@ -3373,8 +3383,7 @@ function attachTouchHoldDrag(div, t){
       cur.startD = alldayCell.dataset.alldayDate;
       cur.time = '';
       cur.slot = '終日';
-      const statusChanged = (cur.status === '未着手' || !cur.status);
-      if(statusChanged) cur.status = '着手中';
+      const statusChanged = applyAutoStatus(cur);
       save(true, statusChanged ? `${cur.id} 終日へ移動・着手中に変更` : `${cur.id} 終日へ移動`);
       toast(`${cur.id} を ${cur.startD} 終日に移動`);
       renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
@@ -3384,7 +3393,8 @@ function attachTouchHoldDrag(div, t){
       cur.startD = '';
       cur.time = '';
       cur.slot = '';
-      save(true, `${cur.id} を未割当に戻す`);
+      applyAutoStatus(cur);
+      save(true, `${cur.id} を未割当・未着手に戻す`);
       toast(`${cur.id} を未割当に戻しました`);
       renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
     }
@@ -3975,8 +3985,7 @@ function attachDropTargets(HOUR_PX, startH, endH){
       if(t.slot==='終日') t.slot = '';
       if(!t.est) t.est = 60;
       // カレンダー配置時：未着手なら着手中に自動切替
-      const statusChanged = (t.status === '未着手' || !t.status);
-      if(statusChanged) t.status = '着手中';
+      const statusChanged = applyAutoStatus(t);
       save(true, statusChanged ? `${t.id} 配置・着手中に変更` : `${t.id} 配置`);
       renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
       toast(`${t.id} を ${t.startD} ${t.time} に配置${statusChanged?'（着手中に変更）':''}（${cap.total}/${cap.cap}分）`);
@@ -4016,7 +4025,8 @@ function attachDropTargets(HOUR_PX, startH, endH){
       t.startD = '';
       t.time = '';
       t.slot = '';
-      save(true, `${t.id} を未割当に戻す`);
+      applyAutoStatus(t);
+      save(true, `${t.id} を未割当・未着手に戻す`);
       renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
       toast(`${t.id} を未割当に戻しました`);
     });
@@ -4037,8 +4047,7 @@ function attachDropTargets(HOUR_PX, startH, endH){
       t.startD = cell.dataset.alldayDate;
       t.time = ''; t.slot = '終日';
       // カレンダー配置時：未着手なら着手中に自動切替
-      const statusChanged = (t.status === '未着手' || !t.status);
-      if(statusChanged) t.status = '着手中';
+      const statusChanged = applyAutoStatus(t);
       save(true, statusChanged ? `${t.id} 配置・着手中に変更` : `${t.id} 配置`);
       renderCalendar(); renderSideTasks(); renderDashboard(); renderGoals();
       toast(`${t.id} を ${t.startD} 終日に配置${statusChanged?'（着手中に変更）':''}`);
@@ -4860,17 +4869,26 @@ function syncToFirestore(){
 }
 
 // 安全弁：syncing 状態が長時間続いている場合は自動で 'synced' に戻す
-// （write が完了しているのに version 不整合などで取り残されたケースの保険）
+// （write が完了しているのに version 不整合などで取り残された／await が hang したケースの保険）
 setInterval(()=>{
   if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser) return;
   if(!S.workspaceId) return;
   const el = document.getElementById('syncIndicator');
   if(!el || !el.classList.contains('syncing')) return;
-  // _pendingLocalChanges が false で、最後の操作から 4 秒以上経っていれば「取り残し」と判定
-  if(_pendingLocalChanges) return;
-  if(Date.now() - _lastLocalChange < 4000) return;
-  updateSyncStatus('synced');
-}, 2000);
+  const idleMs = Date.now() - _lastLocalChange;
+  // Soft: pending=false かつ 3秒以上経過 → 取り残しと判定
+  if(!_pendingLocalChanges && idleMs >= 3000){
+    updateSyncStatus('synced');
+    return;
+  }
+  // Hard: 8 秒以上経過 → pending が残っていても強制クリア（write が hung したケース）
+  if(idleMs >= 8000){
+    console.warn('[sync] watchdog: force-clearing stuck syncing state');
+    _pendingLocalChanges = false;
+    _deferredSnapshot = null;
+    updateSyncStatus('synced');
+  }
+}, 1500);
 
 function leaveWorkspace(){
   if(!confirm("このワークスペースから離脱しますか？\n（クラウドのデータは保持されます）")) return;
