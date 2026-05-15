@@ -38,7 +38,8 @@
 html,body{height:100%}
 body{font-family:"Meiryo UI","Hiragino Sans","Yu Gothic UI",-apple-system,sans-serif;margin:0;background:var(--bg);color:var(--text);font-size:13px;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;overflow:hidden}
 body > header,body > nav,body > main{flex:0 0 auto}
-body > main{flex:1 1 auto;min-height:0;overflow-y:auto;width:100%}
+/* scrollbar-gutter: stable でバー出現時のレイアウト揺れを防止 */
+body > main{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-gutter:stable;width:100%}
 header{background:#fff;color:var(--text);padding:10px 20px;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow-sm);position:sticky;top:0;z-index:10;border-bottom:1px solid var(--border)}
 header h1{margin:0;font-size:15px;font-weight:600;color:var(--text)}
 header .today{font-size:12px;color:var(--muted);margin-left:auto}
@@ -276,7 +277,10 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .tree > ul{padding-left:6px}
 .tree li{padding:2px 0;position:relative}
 .tree-node{display:flex;align-items:center;gap:6px;padding:3px 0}
-.tree-node > .toggle{width:16px;text-align:center;cursor:pointer;color:#888;user-select:none;flex:0 0 16px}
+.tree-node > .toggle{width:18px;text-align:center;color:#888;user-select:none;flex:0 0 18px;font-size:12px}
+.tree-node > .toggle.clickable{cursor:pointer;color:var(--primary-dark);font-weight:700;border-radius:3px;transition:background .12s}
+.tree-node > .toggle.clickable:hover{background:var(--primary-soft);color:var(--primary)}
+.tree-node .child-count{font-size:10px;color:var(--muted);font-weight:600;flex:0 0 auto;background:#F4F6F7;padding:1px 6px;border-radius:8px}
 .tree-node > .lbl{flex:1;padding:3px 8px;background:#fff;border:1px solid #d8dee5;border-radius:3px;display:flex;align-items:center;gap:6px;min-width:120px}
 .tree-node > .lbl input{flex:1;border:none;background:transparent;font:inherit;outline:none;padding:1px 2px}
 .tree-node > .lbl input:focus{background:#FFF8DC}
@@ -2363,11 +2367,15 @@ function renderTree(g){
 function renderNode(goal, node, parentArr){
   const li = document.createElement('li');
   const linked = node.taskId && S.tasks.some(t=>t.id===node.taskId);
+  const hasChildren = !!(node.children && node.children.length);
+  const collapsed = hasChildren && node.collapsed === true;
+  const toggleIcon = hasChildren ? (collapsed ? '▸' : '▾') : '•';
   li.innerHTML = `
     <div class="tree-node">
-      <span class="toggle">${node.children&&node.children.length?'▾':'•'}</span>
+      <span class="toggle${hasChildren?' clickable':''}" title="${hasChildren?(collapsed?'子要素を展開':'子要素を折りたたみ'):''}">${toggleIcon}</span>
       <span class="lbl${linked?' task-linked':''}">
         <input value="${escapeHtml(node.name)}" placeholder="タスク内容を入力">
+        ${hasChildren?`<span class="child-count" title="子要素の数">(${countNodes(node.children)})</span>`:''}
         ${linked?`<span style="font-size:10px;color:#7a3a04;flex:0 0 auto" title="連動中のタスクID">→ ${escapeHtml(node.taskId)}</span>`:''}
       </span>
       <span class="tree-actions">
@@ -2376,6 +2384,16 @@ function renderNode(goal, node, parentArr){
         <button class="del" title="削除">✕</button>
       </span>
     </div>`;
+  // 展開／折りたたみトグル
+  if(hasChildren){
+    const tog = li.querySelector('.toggle');
+    tog.addEventListener('click', ()=>{
+      const cur = getCurrentNode() || node;
+      cur.collapsed = !cur.collapsed;
+      save();
+      renderGoals();
+    });
+  }
   const inp = li.querySelector('input');
   // IDを保持しておき、編集時に最新のSから動的にノードを取得
   const goalId = goal.id;
@@ -2433,7 +2451,7 @@ function renderNode(goal, node, parentArr){
     }
     save(); renderGoals(); renderTasks();
   };
-  if(node.children && node.children.length){
+  if(node.children && node.children.length && !node.collapsed){
     const ul = document.createElement('ul');
     node.children.forEach(c => ul.appendChild(renderNode(goal, c, node.children)));
     li.appendChild(ul);
