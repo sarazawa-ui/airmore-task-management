@@ -400,7 +400,8 @@ body > main:has(#view-calendar.active){overflow:hidden}
 .member-chips .chip .x{cursor:pointer;font-weight:700;opacity:.8}
 .member-chips .chip .x:hover{opacity:1}
 .member-chips .placeholder{color:#999;font-size:11px}
-.member-popup{position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1px solid var(--border);border-radius:4px;padding:6px;z-index:30;min-width:180px;box-shadow:0 4px 14px rgba(0,0,0,.12);display:none;max-height:240px;overflow-y:auto}
+/* position:fixed にしてスクロール領域（overflow:auto）の外でレンダー＝親に切り取られない */
+.member-popup{position:fixed;top:0;left:0;background:#fff;border:1px solid var(--border);border-radius:4px;padding:6px;z-index:200;min-width:200px;box-shadow:0 4px 14px rgba(0,0,0,.18);display:none;max-height:280px;overflow-y:auto}
 .member-chips.open .member-popup{display:block}
 .member-popup label{display:flex;align-items:center;gap:6px;padding:3px 6px;cursor:pointer;font-size:12px;border-radius:3px}
 .member-popup label:hover{background:#f0f4f9}
@@ -1990,12 +1991,54 @@ function renderMemberChips(host, g){
     const nowOpen = !host.classList.contains('open');
     host.classList.toggle('open', nowOpen);
     _openMemberChipGoalId = nowOpen ? g.id : null;
+    if(nowOpen) positionMemberPopup(host);
   };
   // 再描画後の復元
   if(_openMemberChipGoalId === g.id){
     host.classList.add('open');
+    // 復元時もポジション再計算
+    setTimeout(()=> positionMemberPopup(host), 0);
   }
 }
+
+// member-popup を position:fixed で表示するため、ホストの位置に合わせて座標計算
+function positionMemberPopup(host){
+  if(!host) return;
+  const pop = host.querySelector('.member-popup');
+  if(!pop) return;
+  const rect = host.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  // 仮にdisplay:blockしてサイズ計測
+  const prevDisplay = pop.style.display;
+  pop.style.visibility = 'hidden';
+  pop.style.display = 'block';
+  const pw = pop.offsetWidth;
+  const ph = pop.offsetHeight;
+  pop.style.display = prevDisplay;
+  pop.style.visibility = '';
+  // デフォルト：ホストの下、左寄せ
+  let top = rect.bottom + 4;
+  let left = rect.left;
+  // 下にはみ出す場合はホストの上に表示
+  if(top + ph > vh - 6){
+    top = Math.max(6, rect.top - ph - 4);
+  }
+  // 右にはみ出す場合は右端揃え
+  if(left + pw > vw - 6){
+    left = Math.max(6, vw - pw - 6);
+  }
+  pop.style.top = top + 'px';
+  pop.style.left = left + 'px';
+  pop.style.minWidth = Math.max(180, rect.width) + 'px';
+}
+// スクロールやリサイズで開いたままのpopupを追従
+window.addEventListener('scroll', ()=>{
+  document.querySelectorAll('.member-chips.open').forEach(positionMemberPopup);
+}, true);
+window.addEventListener('resize', ()=>{
+  document.querySelectorAll('.member-chips.open').forEach(positionMemberPopup);
+});
 // Single global handler to close any open chip popups when clicking outside
 document.addEventListener('click', (ev)=>{
   let anyClosed = false;
