@@ -354,7 +354,11 @@ body > main:has(#view-calendar.active){overflow:hidden}
 .side-task .est-slider input[type=range]::-moz-range-thumb{width:16px;height:16px;background:var(--primary);border-radius:50%;cursor:pointer;border:none}
 .side-task .est-slider .est-val{font-size:11px;font-weight:700;color:var(--primary-dark);min-width:48px;text-align:right;font-feature-settings:"tnum"}
 .side-task .chk{margin-right:5px;cursor:pointer}
-.side-task:hover{box-shadow:var(--shadow);transform:translateY(-1px)}
+.side-task:hover{box-shadow:var(--shadow);transform:translateY(-1px);background:var(--primary-soft);border-color:var(--primary-light)}
+/* 完了 / 期日超過などのスタイル付き行でも、ホバーでわかるよう同色系を上書き */
+.side-task.done:hover{background:#E8EBED}
+.side-task.late:hover,.side-task.due-soon:hover{background:#F5B7B1}
+.side-task.mit:hover{background:#F9E79F}
 .side-task .goal-link{color:var(--primary);cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
 .side-task .goal-link:hover{color:var(--primary-dark);text-decoration:underline}
 .side-empty{color:var(--muted);text-align:center;padding:24px 12px;font-size:12px}
