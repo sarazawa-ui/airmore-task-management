@@ -1070,6 +1070,19 @@ header.app-header{padding:10px 22px}
   </div>
 </div>
 
+<!-- ============ PROJECT TRANSFER MODAL ============ -->
+<div class="modal-backdrop" id="projTransferModal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <h2>📤 プロジェクトを別のワークスペースへ</h2>
+      <button class="modal-close" onclick="closeProjectTransferModal()" title="閉じる">✕</button>
+    </div>
+    <div class="modal-body" style="padding:20px 24px">
+      <div id="projTransferBody"></div>
+    </div>
+  </div>
+</div>
+
 <!-- ============ TASK EDIT MODAL ============ -->
 <div class="modal-backdrop" id="taskEditModal">
   <div class="modal" style="max-width:560px">
@@ -1988,7 +2001,10 @@ function renderGoals(){
         </div>
       </td>
       <td class="center"><button class="expand-btn ${g.expanded?'open':''}" data-toggle="${i}">${g.expanded?'▼ 閉じる':'▶ タスク'}<br><small>${countLinkedTasks(g)}件</small></button></td>
-      <td class="del-cell"><button class="del-btn" title="削除">✕</button></td>`;
+      <td class="del-cell" style="white-space:nowrap">
+        <button class="move-ws-btn" title="別のワークスペースへ移動／複製" style="background:transparent;border:1px solid var(--border);color:var(--primary);cursor:pointer;font-size:13px;padding:3px 6px;border-radius:5px;margin-right:3px">📤</button>
+        <button class="del-btn" title="削除">✕</button>
+      </td>`;
     // クロージャの g が同期で陳腐化する可能性があるため ID ベースで最新を引く
     const goalId = g.id;
     const getCurGoal = ()=> S.goals.find(x => x.id === goalId);
@@ -2045,6 +2061,14 @@ function renderGoals(){
           driveBtn.title = 'リンクを編集';
         }
       });
+    }
+    // 別ワークスペースへ移動/複製
+    const moveBtn = tr.querySelector('.move-ws-btn');
+    if(moveBtn){
+      moveBtn.onclick = ()=>{
+        const cur = getCurGoal() || g;
+        openProjectTransferModal(cur.id);
+      };
     }
     tr.querySelector('.del-btn').onclick = ()=>{
       const cur = getCurGoal() || g;
@@ -6188,6 +6212,155 @@ function saveProfile(){
   applyProfileToHeader();
   if(typeof refreshWorkspaceSwitcher === 'function') refreshWorkspaceSwitcher();
   toast("保存しました");
+}
+
+// ===== Project transfer (move/copy to another workspace) =====
+let _transferGoalId = null;
+async function openProjectTransferModal(goalId){
+  if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser){
+    alert('クラウド同期されていない状態では別ワークスペースへの転送はできません。');
+    return;
+  }
+  if(!S.workspaceId){ alert('ワークスペース未参加です'); return; }
+  const goal = S.goals.find(g=>g.id===goalId);
+  if(!goal){ alert('プロジェクトが見つかりません'); return; }
+  _transferGoalId = goalId;
+  const body = document.getElementById('projTransferBody');
+  if(!body) return;
+  body.innerHTML = `<div style="padding:14px;color:var(--muted);text-align:center">参加中のワークスペースを取得中…</div>`;
+  document.getElementById('projTransferModal').classList.add('show');
+  // 最新の参加ワークスペース一覧を取得
+  await fetchMyWorkspaces({force:true});
+  const candidates = (_myWorkspaces||[]).filter(w => w.id !== S.workspaceId);
+  const linkedTasks = S.tasks.filter(t => t.goal === goalId);
+  if(candidates.length === 0){
+    body.innerHTML = `<div style="padding:14px;color:#c0392b;background:#FADBD8;border-radius:7px">参加中の別ワークスペースが見つかりません。先に「🏢 ワークスペース切替メニュー」から新規作成または参加してください。</div>`;
+    return;
+  }
+  body.innerHTML = `
+    <div style="background:#EBF5FB;border:1px solid var(--primary-light);padding:10px 14px;border-radius:7px;margin-bottom:14px;font-size:12.5px;line-height:1.6">
+      🎯 対象：<strong>${escapeHtml(goal.name||goal.id)}</strong>（${linkedTasks.length}件のタスクを含む）
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="display:block;font-weight:600;font-size:12.5px;margin-bottom:5px">移動先ワークスペース</label>
+      <select id="transferTargetWs" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font:inherit;background:#fff">
+        ${candidates.map(w=>`<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)}（${w.memberCount}人）</option>`).join('')}
+      </select>
+    </div>
+    <div style="margin-bottom:14px">
+      <label style="display:block;font-weight:600;font-size:12.5px;margin-bottom:5px">操作</label>
+      <label style="display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer">
+        <input type="radio" name="transferMode" value="copy" checked>
+        <div>
+          <div style="font-weight:600">📋 複製（コピー）</div>
+          <div style="font-size:11.5px;color:var(--muted)">プロジェクトとタスクを移動先にコピーします。現ワークスペースには残ります。</div>
+        </div>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border);border-radius:6px;cursor:pointer">
+        <input type="radio" name="transferMode" value="move">
+        <div>
+          <div style="font-weight:600">✂ 移動（カット）</div>
+          <div style="font-size:11.5px;color:var(--muted)">移動先にコピー後、現ワークスペースから削除します。<strong style="color:#C0392B">取消不可</strong></div>
+        </div>
+      </label>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn ghost" onclick="closeProjectTransferModal()">キャンセル</button>
+      <button class="btn" id="transferExecBtn">実行</button>
+    </div>
+    <div id="transferStatus" style="margin-top:10px;font-size:12px;color:var(--muted)"></div>
+  `;
+  document.getElementById('transferExecBtn').onclick = executeProjectTransfer;
+}
+function closeProjectTransferModal(){
+  document.getElementById('projTransferModal').classList.remove('show');
+  _transferGoalId = null;
+}
+async function executeProjectTransfer(){
+  if(!_transferGoalId) return;
+  const targetWsId = document.getElementById('transferTargetWs').value;
+  const mode = document.querySelector('input[name="transferMode"]:checked').value;
+  const goalId = _transferGoalId;
+  const goal = S.goals.find(g=>g.id===goalId);
+  if(!goal || !targetWsId){ alert('対象が選択されていません'); return; }
+  const statusEl = document.getElementById('transferStatus');
+  const btn = document.getElementById('transferExecBtn');
+  if(btn) btn.disabled = true;
+  const setStat = (msg, color)=>{ if(statusEl){ statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; } };
+  try{
+    setStat('移動先ワークスペースを読込中…');
+    const db = firebase.firestore();
+    const targetRef = db.doc(`workspaces/${targetWsId}`);
+    const targetSnap = await targetRef.get();
+    if(!targetSnap.exists){ throw new Error('移動先ワークスペースが見つかりません'); }
+    const targetData = targetSnap.data() || {};
+    const targetGoals = Array.isArray(targetData.goals) ? targetData.goals.slice() : [];
+    const targetTasks = Array.isArray(targetData.tasks) ? targetData.tasks.slice() : [];
+    const targetSeq = Object.assign({goal:5, task:7, node:0}, targetData.seq||{});
+
+    // ID 重複回避：常に新しい ID を採番
+    targetSeq.goal = (targetSeq.goal||0) + 1;
+    const newGoalId = 'G-'+String(targetSeq.goal).padStart(3,'0');
+    const newGoal = JSON.parse(JSON.stringify(goal));
+    newGoal.id = newGoalId;
+    delete newGoal.expanded; delete newGoal._treeCollapsed; delete newGoal._open;
+    targetGoals.push(newGoal);
+
+    const linkedTasks = S.tasks.filter(t => t.goal === goalId);
+    const idMap = {}; // old task id → new task id
+    // 一旦すべての新 ID を採番してから内容を構築（parentTaskId 解決のため）
+    linkedTasks.forEach(t => {
+      targetSeq.task = (targetSeq.task||0) + 1;
+      idMap[t.id] = 'T-'+String(targetSeq.task).padStart(3,'0');
+    });
+    linkedTasks.forEach(t => {
+      const nt = JSON.parse(JSON.stringify(t));
+      nt.id = idMap[t.id];
+      nt.goal = newGoalId;
+      if(nt.parentTaskId && idMap[nt.parentTaskId]){
+        nt.parentTaskId = idMap[nt.parentTaskId];
+      } else if(nt.parentTaskId){
+        // 親が転送対象外（同一プロジェクト外） → 親リンク切断
+        nt.parentTaskId = '';
+      }
+      delete nt._expanded; delete nt._prevStatus;
+      targetTasks.push(nt);
+    });
+
+    // breakdown 内の taskId 参照も新 ID に書き換え
+    const remapBreakdown = arr => {
+      if(!Array.isArray(arr)) return;
+      arr.forEach(n => {
+        if(n && n.taskId && idMap[n.taskId]) n.taskId = idMap[n.taskId];
+        else if(n && n.taskId) n.taskId = '';
+        if(n && n.children) remapBreakdown(n.children);
+      });
+    };
+    remapBreakdown(newGoal.breakdown);
+
+    setStat('移動先へ書き込み中…');
+    await targetRef.set({ goals: targetGoals, tasks: targetTasks, seq: targetSeq }, {merge:true});
+    bumpFbUsage('write', 1);
+
+    if(mode === 'move'){
+      // 現ワークスペースから削除
+      setStat('現ワークスペースから削除中…');
+      S.tasks = S.tasks.filter(t => t.goal !== goalId);
+      S.goals = S.goals.filter(g => g.id !== goalId);
+      save(true, `プロジェクト「${goal.name||goalId}」を別WSへ移動`);
+    } else {
+      logHistory('transfer', `プロジェクト「${goal.name||goalId}」を別WSへ複製`);
+    }
+    const targetName = (_myWorkspaces.find(w=>w.id===targetWsId)||{}).name || targetWsId;
+    setStat(`✅ 完了：「${goal.name||goalId}」を「${targetName}」へ${mode==='move'?'移動':'複製'}しました`, '#1E8449');
+    toast(`プロジェクトを${mode==='move'?'移動':'複製'}しました（新ID：${newGoalId}）`);
+    renderAll();
+    setTimeout(closeProjectTransferModal, 1400);
+  }catch(err){
+    console.error('Project transfer failed:', err);
+    setStat('失敗：'+(err.message||err.code||err), '#C0392B');
+    if(btn) btn.disabled = false;
+  }
 }
 
 async function deleteWorkspace(){
