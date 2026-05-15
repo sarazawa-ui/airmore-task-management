@@ -228,6 +228,9 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 #tblGoals td textarea{min-width:0;line-height:1.4}
 #tblGoals td .progress-auto{padding:6px 4px;font-size:12px}
 #tblGoals td .progress-auto small{font-size:9.5px;letter-spacing:-.03em}
+/* Dashboard project name jump link */
+.goal-jump{color:var(--primary);text-decoration:underline dotted;text-underline-offset:2px;cursor:pointer;font-weight:600}
+.goal-jump:hover{color:var(--primary-dark);text-decoration:underline}
 /* Estimated-time slider for project task rows */
 .est-slider{display:flex;align-items:center;gap:6px;width:100%}
 .est-slider input[type=range]{flex:1 1 auto;min-width:60px;height:18px;accent-color:var(--primary);cursor:pointer;margin:0}
@@ -1807,11 +1810,19 @@ function renderDashboard(){
     }
     const remDisp = g.due ? (rem>=0?rem+"日":(rem)+"日") : "-";
     gb.insertAdjacentHTML('beforeend',
-      `<tr><td class="center">${escapeHtml(g.id)}</td><td>${escapeHtml(g.name)}</td>
+      `<tr><td class="center"><a href="javascript:void(0)" class="goal-jump" data-goalid="${escapeHtml(g.id)}">${escapeHtml(g.id)}</a></td>
+       <td><a href="javascript:void(0)" class="goal-jump" data-goalid="${escapeHtml(g.id)}">${escapeHtml(g.name)}</a></td>
        <td class="center">${escapeHtml(g.owner)}</td><td class="center">${escapeHtml(g.due)}</td>
        <td class="center"><div class="progress"><span style="width:${Math.min(100,Math.max(0,Number(g.progress)||0))}%"></span></div> ${g.progress||0}%</td>
        <td class="center">${escapeHtml(g.status)}</td><td class="center">${remDisp}</td>
        <td class="center ${cls}">${situ}</td></tr>`);
+  });
+  // Wire up jump links
+  gb.querySelectorAll('.goal-jump').forEach(a=>{
+    a.addEventListener('click', e=>{
+      e.preventDefault();
+      goToGoal(a.dataset.goalid);
+    });
   });
 }
 
