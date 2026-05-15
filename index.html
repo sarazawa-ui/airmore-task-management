@@ -231,6 +231,18 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 /* Dashboard project name jump link */
 .goal-jump{color:var(--primary);text-decoration:underline dotted;text-underline-offset:2px;cursor:pointer;font-weight:600}
 .goal-jump:hover{color:var(--primary-dark);text-decoration:underline}
+/* Google Drive link cell */
+#tblGoals td.drive-cell{padding:4px 6px}
+#tblGoals td.drive-cell .drive-row{display:flex;align-items:center;gap:4px}
+#tblGoals td.drive-cell input[type=url]{flex:1;min-width:0;font-size:11.5px;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-family:inherit;background:#fff}
+#tblGoals td.drive-cell input[type=url]:focus{border-color:var(--primary);outline:none}
+#tblGoals td.drive-cell .drive-open{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:var(--primary-soft);border:1px solid var(--primary-light);border-radius:5px;color:var(--primary-dark);text-decoration:none;font-weight:700;font-size:13px;transition:all .12s}
+#tblGoals td.drive-cell .drive-open:hover{background:var(--primary);color:#fff;border-color:var(--primary)}
+/* Project completion definition card (above daily tasks in tree view) */
+.proj-defn-card{padding:10px 12px;background:#FFFBEA;border:1px solid #FFE082;border-left:4px solid #FFA000;border-radius:8px;margin-bottom:10px}
+.proj-defn-card .lbl{font-size:11.5px;font-weight:700;color:#7E5109;margin-bottom:4px;display:flex;align-items:center;gap:5px}
+.proj-defn-card textarea{width:100%;min-height:48px;border:1px solid #FFE082;border-radius:5px;padding:7px 9px;font-family:inherit;font-size:12.5px;line-height:1.5;background:#fff;resize:vertical}
+.proj-defn-card textarea:focus{border-color:#FFA000;outline:none}
 /* Estimated-time slider for project task rows */
 .est-slider{display:flex;align-items:center;gap:6px;width:100%}
 .est-slider input[type=range]{flex:1 1 auto;min-width:60px;height:18px;accent-color:var(--primary);cursor:pointer;margin:0}
@@ -895,7 +907,7 @@ header.app-header{padding:10px 22px}
         <th style="width:115px">開始日</th><th style="width:115px">目標期限</th>
         <th style="width:100px">進捗率<br><small style="font-weight:400;font-size:10px">（自動）</small></th>
         <th style="width:100px">ステータス</th>
-        <th style="min-width:220px">成果物の定義</th>
+        <th style="min-width:180px">📁 Googleドライブ</th>
         <th style="width:90px">タスク</th>
         <th class="del-cell">削除</th>
       </tr></thead>
@@ -1876,7 +1888,12 @@ function renderGoals(){
       <td class="input"><input type="date" value="${g.due||''}" data-f="due"></td>
       <td class="formula"><div class="progress-auto">${prog.value}%<small>${progSrc}</small></div><div class="progress" style="width:90%;margin:4px auto 0"><span style="width:${prog.value}%"></span></div></td>
       <td class="input"><select data-f="status">${statusOptions(g.status)}</select></td>
-      <td class="input"><textarea data-f="defn" rows="2">${escapeHtml(g.defn)}</textarea></td>
+      <td class="input drive-cell">
+        <div class="drive-row">
+          <input type="url" data-f="driveUrl" value="${escapeHtml(g.driveUrl||'')}" placeholder="https://drive.google.com/..." title="Googleドライブのフォルダ/ファイルURL">
+          ${g.driveUrl ? `<a href="${escapeHtml(g.driveUrl)}" target="_blank" rel="noopener" class="drive-open" title="新規タブで開く">↗</a>` : ''}
+        </div>
+      </td>
       <td class="center"><button class="expand-btn ${g.expanded?'open':''}" data-toggle="${i}">${g.expanded?'▼ 閉じる':'▶ タスク'}<br><small>${countLinkedTasks(g)}件</small></button></td>
       <td class="del-cell"><button class="del-btn" title="削除">✕</button></td>`;
     // クロージャの g が同期で陳腐化する可能性があるため ID ベースで最新を引く
@@ -1888,6 +1905,29 @@ function renderGoals(){
         if(!cur){ console.warn(`Goal ${goalId} not found`); return; }
         cur[el.dataset.f] = el.type==='number' ? Number(el.value) : el.value;
         save(); renderDashboard(); renderSideTasks(); renderCalendar();
+        // driveUrl 変更時：↗ ボタンを表示/非表示する（行は再描画しない）
+        if(el.dataset.f === 'driveUrl'){
+          const cell = el.closest('.drive-cell');
+          if(cell){
+            const existing = cell.querySelector('.drive-open');
+            const url = (cur.driveUrl||'').trim();
+            if(url){
+              if(existing){ existing.setAttribute('href', url); }
+              else {
+                const a = document.createElement('a');
+                a.href = url;
+                a.target = '_blank';
+                a.rel = 'noopener';
+                a.className = 'drive-open';
+                a.title = '新規タブで開く';
+                a.textContent = '↗';
+                cell.querySelector('.drive-row').appendChild(a);
+              }
+            } else if(existing){
+              existing.remove();
+            }
+          }
+        }
       });
     });
     tr.querySelector('.del-btn').onclick = ()=>{
@@ -2088,6 +2128,21 @@ function newNode(name=""){
 function renderTree(g){
   const root = document.getElementById('tree-'+g.id); if(!root) return;
   root.innerHTML = '';
+
+  // === Project completion definition (editable) ===
+  const defnCard = document.createElement('div');
+  defnCard.className = 'proj-defn-card';
+  defnCard.innerHTML = `
+    <div class="lbl">🎯 プロジェクト完了の定義</div>
+    <textarea data-proj-defn rows="2" placeholder="このプロジェクトが「完了」と言える状態を具体的に記述してください（例：βテスト顧客5社で稼働、有償契約3社獲得）">${escapeHtml(g.defn||'')}</textarea>
+  `;
+  root.appendChild(defnCard);
+  const defnIdMem = g.id;
+  defnCard.querySelector('[data-proj-defn]').addEventListener('change',(e)=>{
+    const cur = S.goals.find(x=>x.id===defnIdMem); if(!cur) return;
+    cur.defn = e.target.value;
+    save(true, `プロジェクト完了の定義を更新：${cur.id}`);
+  });
 
   // === Linked daily tasks list ===
   const linked = S.tasks.filter(t=>t.goal===g.id);
