@@ -988,8 +988,8 @@ header.app-header{padding:10px 22px}
       自分：<select id="viewAsMember" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font:inherit"></select>
     </span>
     <span style="margin-left:auto;font-size:12px;color:var(--muted)">
-      時間：<input type="number" id="calStartHour" value="7" min="0" max="23" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:5px" onchange="renderCalendar()">時 〜
-      <input type="number" id="calEndHour" value="22" min="1" max="24" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:5px" onchange="renderCalendar()">時
+      時間：<input type="number" id="calStartHour" value="9" min="0" max="23" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:5px" onchange="renderCalendar()">時 〜
+      <input type="number" id="calEndHour" value="21" min="1" max="24" style="width:50px;padding:4px 6px;border:1px solid var(--border);border-radius:5px" onchange="renderCalendar()">時
     </span>
   </div>
 
@@ -3211,8 +3211,8 @@ function resetAll(){ localStorage.removeItem(LS_KEY); S = load(); renderAll(); t
 
 // ============ CALENDAR ============
 if(!S.events) S.events = [];
-if(!S.ui.calStartHour) S.ui.calStartHour = 7;
-if(!S.ui.calEndHour) S.ui.calEndHour = 22;
+if(!S.ui.calStartHour) S.ui.calStartHour = 9;
+if(!S.ui.calEndHour) S.ui.calEndHour = 21;
 if(S.ui.weekStartDay === undefined) S.ui.weekStartDay = 1; // 1=Mon, 0=Sun
 if(!S.ui.weekStart) S.ui.weekStart = weekStartOf(todayStr());
 
@@ -3282,8 +3282,8 @@ function taskRange(t){
 function renderCalendar(){
   const tbl = document.getElementById('calTable');
   if(!tbl) return;
-  const startH = Math.max(0, Math.min(23, Number(document.getElementById('calStartHour').value)||7));
-  const endH = Math.max(startH+1, Math.min(24, Number(document.getElementById('calEndHour').value)||22));
+  const startH = Math.max(0, Math.min(23, Number(document.getElementById('calStartHour').value)||9));
+  const endH = Math.max(startH+1, Math.min(24, Number(document.getElementById('calEndHour').value)||21));
   S.ui.calStartHour = startH; S.ui.calEndHour = endH;
   // Normalize weekStart in case it was stored from a buggy version
   S.ui.weekStart = weekStartOf(S.ui.weekStart || todayStr());
