@@ -2385,7 +2385,7 @@ function renderTree(g){
   if(addLinked) addLinked.onclick = ()=>{
     S.seq.task = (S.seq.task||0)+1;
     const id = "T-"+String(S.seq.task).padStart(3,'0');
-    const t = {id,goal:g.id,mid:"",act:"新しいタスク",owner:g.owner||"",startD:"",due:g.due||"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:`プロジェクト「${g.name}」より追加`,time:""};
+    const t = {id,goal:g.id,mid:"",act:"新しいタスク",owner:g.owner||"",startD:"",due:g.due||"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:"",time:""};
     S.tasks.push(t);
     save(true,`タスク追加：${id}（${g.id}）`);
     renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
@@ -2558,7 +2558,7 @@ function promoteNodeToTask(goal, node){
         id: pid, goal: goal.id, mid: parentName, act: parentName || '(無題)',
         owner: goal.owner||"", startD:"", due: goal.due||"",
         slot:"", pri:"", mit:false, est:"", act_min:"", status:"未着手",
-        defn:"", interrupt:"", note:`プロジェクト「${goal.name}」より自動生成（親タスク）`, time:"",
+        defn:"", interrupt:"", note:"", time:"",
         parentTaskId:""
       });
       parentNode.taskId = pid;
@@ -2571,7 +2571,7 @@ function promoteNodeToTask(goal, node){
     id, goal: goal.id, mid: parentName, act: node.name||"(無題)",
     owner: goal.owner||"", startD:"", due: goal.due||"",
     slot:"", pri:"", mit:false, est:"", act_min:"", status:"未着手",
-    defn:"", interrupt:"", note:`プロジェクト「${goal.name}」より自動生成${parentTaskId?'（サブタスク）':''}`,
+    defn:"", interrupt:"", note:"",
     time:"", parentTaskId: parentTaskId
   });
   node.taskId = id;
