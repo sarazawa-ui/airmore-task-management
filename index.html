@@ -175,6 +175,12 @@ tr.done td input,tr.done td select,tr.done td textarea{color:#B2BABB;text-decora
 .cal-block{position:absolute;left:3px;right:3px;border-radius:6px;padding:4px 7px;font-size:10.5px;line-height:1.3;overflow:hidden;cursor:pointer;box-shadow:0 1px 2px rgba(52,73,94,.08);border-left:3px solid;z-index:2;transition:all .12s}
 /* 「自分」として選択中ユーザーのタスクは前面（他メンバーのタスクと重なった場合に隠れないように） */
 .cal-block.task.mine{z-index:5;box-shadow:0 2px 6px rgba(52,152,219,.25)}
+/* サイドバーからのジャンプ時に2秒間点滅 */
+.cal-block.task.flash{z-index:20 !important;animation:cal-flash 0.4s ease-in-out 5;outline:3px solid #ED7D31;outline-offset:1px}
+@keyframes cal-flash{
+  0%,100%{box-shadow:0 0 0 0 rgba(237,125,49,0);transform:scale(1)}
+  50%{box-shadow:0 0 0 8px rgba(237,125,49,.55);transform:scale(1.04)}
+}
 .cal-block:hover{z-index:6;box-shadow:0 4px 12px rgba(52,73,94,.18);overflow:visible;transform:translateX(1px)}
 .cal-block.task{background:#FEF5E7;border-left-color:#F39C12;color:#7E5109}
 .cal-block.task.mit{background:#FCF3CF;border-left-color:#D4AC0D;color:#7D6608;font-weight:700}
@@ -3253,6 +3259,13 @@ function applyAutoStatus(t){
   return true;
 }
 
+// 「未割当」判定の共通ヘルパー：startDに有効な日付がない＝未割当
+function isUnassigned(t){
+  if(!t) return true;
+  const d = (t.startD || '').toString().trim();
+  return !d;
+}
+
 function taskRange(t){
   if(!t.startD) return null;
   if(t.slot==="終日") return {date:t.startD, allDay:true};
@@ -3633,6 +3646,42 @@ function goToGoal(goalId){
   }, 80);
 }
 
+// サイドバーからカレンダー上の該当タスクへジャンプし、2秒間点滅
+function focusTaskOnCalendar(taskId){
+  const t = S.tasks.find(x=>x.id===taskId);
+  if(!t){ toast('タスクが見つかりません'); return; }
+  if(!t.startD || (!t.time && !t.slot)){
+    toast('このタスクはまだカレンダーに配置されていません');
+    return;
+  }
+  // 必要なら週を切替
+  const wsStart = S.ui.weekStart;
+  const wsEnd = addDays(wsStart, 6);
+  if(t.startD < wsStart || t.startD > wsEnd){
+    S.ui.weekStart = weekStartOf(t.startD);
+    save();
+    renderCalendar();
+  }
+  // 描画完了後にスクロール＆点滅
+  setTimeout(()=>{
+    const blocks = document.querySelectorAll(`.cal-block.task[data-task-id="${CSS.escape(taskId)}"]`);
+    if(!blocks.length){
+      toast('カレンダー上にタスクブロックが見つかりませんでした');
+      return;
+    }
+    const block = blocks[0];
+    block.scrollIntoView({behavior:'smooth', block:'center', inline:'center'});
+    // 既存の flash クラスを除去してから付与（連続クリック対策）
+    blocks.forEach(b=>{
+      b.classList.remove('flash');
+      // 強制リフロー
+      void b.offsetWidth;
+      b.classList.add('flash');
+      setTimeout(()=>b.classList.remove('flash'), 2050);
+    });
+  }, 60);
+}
+
 function focusSideTaskDetail(taskId){
   const t = S.tasks.find(x=>x.id===taskId);
   if(!t) return;
@@ -3644,7 +3693,7 @@ function focusSideTaskDetail(taskId){
     const inTab = (
       (S.ui.sideTab==='today' && t.startD===todayStr()) ||
       (S.ui.sideTab==='week' && t.startD>=wkStart && t.startD<=wkEnd) ||
-      (S.ui.sideTab==='unscheduled' && (!t.startD || (!t.time && !t.slot)))
+      (S.ui.sideTab==='unscheduled' && isUnassigned(t))
     );
     if(!inTab){ S.ui.sideTab = 'all'; }
   }
@@ -3907,7 +3956,7 @@ function renderSideTasks(){
     const tabCounts = {
       today: S.tasks.filter(t => t.startD === today && passesFilters(t)).length,
       week: wkStart ? S.tasks.filter(t => t.startD && t.startD >= wkStart && t.startD <= wkEnd && passesFilters(t)).length : 0,
-      unscheduled: S.tasks.filter(t => (!t.startD || (!t.time && !t.slot)) && passesFilters(t)).length,
+      unscheduled: S.tasks.filter(t => isUnassigned(t) && passesFilters(t)).length,
       all: S.tasks.filter(passesFilters).length
     };
     document.querySelectorAll('.side-tab button[data-side] .tab-badge').forEach(badge => {
@@ -3939,7 +3988,7 @@ function renderSideTasks(){
   let list = S.tasks.slice();
   if(tab==='today') list = list.filter(t=>t.startD===todayStr());
   else if(tab==='week') list = list.filter(t=>t.startD && t.startD>=wkStart && t.startD<=wkEnd);
-  else if(tab==='unscheduled') list = list.filter(t=>!t.startD || (!t.time && !t.slot));
+  else if(tab==='unscheduled') list = list.filter(isUnassigned);
   if(memVal) list = list.filter(t=>t.owner===memVal);
   if(stVal) list = list.filter(t=>t.status===stVal);
   if(hideDone) list = list.filter(t=>t.status!=='完了');
@@ -3995,7 +4044,7 @@ function renderSideTasks(){
       <div style="display:flex;align-items:flex-start;gap:5px">
         <input type="checkbox" class="chk" ${t.status==='完了'?'checked':''} title="完了">
         <div style="flex:1;min-width:0">
-          <div class="ttl">${pcChip}${escapeHtml(t.act||t.mid||'(無題)')}</div>
+          <div class="ttl" data-jump-task="${escapeHtml(t.id)}" title="クリックでカレンダー上の配置位置にジャンプ">${pcChip}${escapeHtml(t.act||t.mid||'(無題)')}</div>
           <div class="meta">
             ${escapeHtml(t.owner||'-')} ${gdLabel}
             ${parentT?`・<span class="parent-link" title="親タスクを表示">親：${escapeHtml((parentT.act||parentT.id).slice(0,18))}</span>`:''}
@@ -4058,6 +4107,15 @@ function renderSideTasks(){
         save(); renderCalendar(); renderDashboard();
       });
       rng.addEventListener('click',e=>e.stopPropagation());
+    }
+    // タイトルをクリックでカレンダー上の位置にジャンプ＆2秒点滅
+    const ttlEl = el.querySelector('.ttl');
+    if(ttlEl){
+      ttlEl.style.cursor = 'pointer';
+      ttlEl.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        focusTaskOnCalendar(taskId);
+      });
     }
     el.querySelector('.expand-btn-sm').onclick = (e)=>{
       e.stopPropagation();
