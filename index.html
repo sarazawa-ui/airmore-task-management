@@ -4332,6 +4332,64 @@ function attachDropTargets(HOUR_PX, startH, endH){
 }
 document.addEventListener('dragend',()=>{ _dragTask = null; removeGhost(); document.querySelectorAll('.drop-hover').forEach(x=>x.classList.remove('drop-hover')); });
 
+// ===== Google OAuth アクセストークンの再取得（reauth popup） =====
+let _reauthInProgress = false;
+async function reauthGoogleAccessToken(reason){
+  if(_reauthInProgress) return false;
+  _reauthInProgress = true;
+  try{
+    if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser){
+      alert('Firebase 認証セッションが切れています。ログイン画面から再ログインしてください。');
+      return false;
+    }
+    const msg = (reason || 'アクセストークンの有効期限が切れた可能性があります。')
+      + '\n\n再認証用のポップアップを表示します（Gmail/Calendar の権限を再付与）。\n続行しますか？';
+    if(!confirm(msg)) return false;
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
+    provider.addScope('https://www.googleapis.com/auth/gmail.send');
+    provider.setCustomParameters({ prompt: 'consent', access_type: 'online', include_granted_scopes: 'true' });
+    const result = await firebase.auth().currentUser.reauthenticateWithPopup(provider);
+    // 新しい access token を抽出
+    let accessToken = null;
+    try{
+      const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
+      accessToken = credential?.accessToken || null;
+    }catch(e){ console.warn('credentialFromResult failed:', e); }
+    if(!accessToken && result.credential) accessToken = result.credential.accessToken || null;
+    if(!accessToken && result._tokenResponse) accessToken = result._tokenResponse.oauthAccessToken || result._tokenResponse.access_token || null;
+    if(!accessToken){
+      alert('再認証は完了しましたが、新しいアクセストークンの取得に失敗しました。一度ログアウトして再ログインしてください。');
+      return false;
+    }
+    _currentUser = Object.assign({}, _currentUser, { accessToken, expiry: 0 });
+    saveSession();
+    toast('✅ アクセストークンを再取得しました');
+    return true;
+  }catch(err){
+    console.error('Reauth failed:', err);
+    if(err && err.code === 'auth/popup-closed-by-user'){
+      toast('再認証がキャンセルされました');
+    } else if(err && err.code === 'auth/popup-blocked'){
+      alert('ポップアップがブロックされました。ブラウザのポップアップ許可設定を確認してください。');
+    } else {
+      alert('再認証に失敗しました：' + (err.message || err.code || err));
+    }
+    return false;
+  }finally{
+    _reauthInProgress = false;
+  }
+}
+
+// API レスポンスがトークン失効を示すか判定
+function _isAuthError(resStatus, msgText){
+  if(resStatus === 401) return true;
+  const m = (msgText||'').toLowerCase();
+  return m.includes('invalid credentials') || m.includes('unauthorized')
+      || m.includes('insufficient') || m.includes('access_denied')
+      || m.includes('permission_denied') || m.includes('invalid_token');
+}
+
 // ===== Gmail completion notification =====
 async function sendCompletionEmail(t){
   if(!_currentUser?.accessToken){ alert("Googleログインが必要です"); return; }
@@ -4390,8 +4448,9 @@ async function sendCompletionEmail(t){
   const raw = btoa(unescape(encodeURIComponent(message)))
     .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 
-  try{
-    const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
+  // Gmail 送信実行（_currentUser.accessToken を使ったリクエスト）。失効時は再認証→再試行
+  const doSend = async ()=>{
+    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
       method:'POST',
       headers:{
         'Authorization':'Bearer '+_currentUser.accessToken,
@@ -4399,15 +4458,27 @@ async function sendCompletionEmail(t){
       },
       body: JSON.stringify({raw})
     });
+    return r;
+  };
+  try{
+    let res = await doSend();
     if(!res.ok){
       const errText = await res.text();
-      const err = (()=>{try{return JSON.parse(errText)}catch(_){return null;}})();
-      const msg = err?.error?.message || errText;
-      if(/insufficient.*scope|PERMISSION_DENIED|access_denied/i.test(msg)){
-        if(confirm('Gmail送信権限が不足しています。\n再ログインで権限を更新しますか？')){ appLogout(); }
-        return;
+      const errObj = (()=>{try{return JSON.parse(errText)}catch(_){return null;}})();
+      const msg = errObj?.error?.message || errText;
+      if(_isAuthError(res.status, msg)){
+        // 認証エラー → ユーザーに再認証ポップアップを促す
+        const ok = await reauthGoogleAccessToken('Gmail 送信時にアクセストークンが拒否されました。');
+        if(!ok){ toast('メール送信を中止しました'); return; }
+        // 再認証成功 → 1回だけ再試行
+        res = await doSend();
+        if(!res.ok){
+          const t2 = await res.text();
+          throw new Error('再試行も失敗：' + t2);
+        }
+      } else {
+        throw new Error(msg);
       }
-      throw new Error(msg);
     }
     toast(`✉️ ${recipients.length}名に通知メールを送信しました`);
     logHistory('email', `${t.id} 完了通知メール送信（宛先 ${recipients.length}名）`);
@@ -4456,8 +4527,8 @@ async function sendReminderEmail(t){
   ].join('\r\n');
   const raw = btoa(unescape(encodeURIComponent(message)))
     .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-  try{
-    const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
+  const doSend = async ()=>{
+    return fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
       method:'POST',
       headers:{
         'Authorization':'Bearer '+_currentUser.accessToken,
@@ -4465,10 +4536,23 @@ async function sendReminderEmail(t){
       },
       body: JSON.stringify({raw})
     });
+  };
+  try{
+    let res = await doSend();
     if(!res.ok){
       const errText = await res.text();
       console.warn('Reminder send failed:', errText);
-      return false;
+      if(_isAuthError(res.status, errText)){
+        const ok = await reauthGoogleAccessToken('リマインドメールの送信時にアクセストークンが拒否されました。');
+        if(!ok) return false;
+        res = await doSend();
+        if(!res.ok){
+          console.warn('Reminder send retry failed:', await res.text());
+          return false;
+        }
+      } else {
+        return false;
+      }
     }
     toast(`⏰ ${t.id} 10分前リマインド送信（${ownerEmail}）`);
     logHistory('reminder', `${t.id} 10分前リマインド送信（${ownerEmail}）`);
