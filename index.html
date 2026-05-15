@@ -1171,7 +1171,8 @@ header.app-header{padding:10px 22px}
       </div>
       <div class="field" style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px">
         <label><input type="checkbox" id="cfgNotifyOnComplete"> タスク完了時にメンバーへメール通知</label>
-        <div class="help">タスクのチェックボックスをONにした際、登録メンバー（自分以外）の Gmail アドレス宛にGmail経由で完了通知を送信します。<br>
+        <div class="help">タスクのチェックボックスをONにした際、<strong>そのタスクが紐づくプロジェクトのチームメンバー（自分以外）</strong> の Gmail アドレス宛にGmail経由で完了通知を送信します。<br>
+        ※ プロジェクトの「主担当者」+「チームメンバー」がそのまま通知対象です。<br>
         ※ Gmail送信権限が必要です。権限が無い場合、初回送信時に再ログインを促します。<br>
         ※ 自動送信ではなく、毎回確認ダイアログが出ます。</div>
       </div>
@@ -4198,15 +4199,28 @@ document.addEventListener('dragend',()=>{ _dragTask = null; removeGhost(); docum
 // ===== Gmail completion notification =====
 async function sendCompletionEmail(t){
   if(!_currentUser?.accessToken){ alert("Googleログインが必要です"); return; }
-  const recipients = (S.authMembers||[])
-    .map(m=>m.email)
-    .filter(e=>e && e!==_currentUser.email);
-  if(recipients.length === 0){
-    toast("通知先のメンバー（自分以外）が登録されていません");
-    return;
-  }
+  // 通知先：当該プロジェクト（goal）に紐づくメンバーのみ
   const goalObj = t.goal ? S.goals.find(g=>g.id===t.goal) : null;
   const goalName = goalObj ? (goalObj.name||t.goal) : '';
+  if(!goalObj){
+    toast('タスクが未紐付のため、通知対象メンバーが特定できません');
+    return;
+  }
+  // プロジェクトのメンバー名 → 認証メンバーのメールへ変換
+  let memberNames = Array.isArray(goalObj.members) ? goalObj.members.slice() : [];
+  // 主担当者(owner)もメンバーに含める（重複は排除）
+  if(goalObj.owner && !memberNames.includes(goalObj.owner)){
+    memberNames.unshift(goalObj.owner);
+  }
+  const authMap = {};
+  (S.authMembers||[]).forEach(m=>{ if(m.name && m.email) authMap[m.name] = m.email; });
+  const recipients = memberNames
+    .map(name => authMap[name])
+    .filter((e,i,arr) => e && e !== _currentUser.email && arr.indexOf(e) === i);
+  if(recipients.length === 0){
+    toast(`プロジェクト「${goalName}」の通知対象メンバー（自分以外）がいません`);
+    return;
+  }
   const taskName = t.act || t.mid || '(無題)';
   const wsName = S.wsName || S.profile?.companyName || 'ワークスペース';
   // プロジェクト進捗（％）— このタスク完了反映後の状態で計算
