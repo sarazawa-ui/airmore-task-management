@@ -6490,6 +6490,9 @@ async function renderPersonalView(){
       if(auth && auth.name) selfName = auth.name;
       tasks.forEach(t=>{
         if(!t) return;
+        // 着手中 / 未着手 のみ表示（完了・中止・保留 などは除外）
+        const st = t.status || '未着手';
+        if(st !== '着手中' && st !== '未着手') return;
         if(t.owner === selfName || t.owner === myName){
           const projectName = t.goal ? (goalMap[t.goal] || t.goal) : '';
           allRows.push({
@@ -6526,9 +6529,11 @@ function _renderPersonalViewFromRows(allRowsIn){
   const stat = document.getElementById('personalStatus');
   if(!content) return;
   const allRows = (allRowsIn || []).slice();
-  // 完了は末尾。それ以外は期日（due）が近い順、期日なしは最後
+  // 着手中を先頭、未着手はその後ろ。同種内は期日（due）が近い順、期日なしは最後
   allRows.sort((a,b)=>{
-    if((a.status==='完了')!==(b.status==='完了')) return a.status==='完了'?1:-1;
+    const order = s => s==='着手中' ? 0 : 1;
+    const oa = order(a.status), ob = order(b.status);
+    if(oa !== ob) return oa - ob;
     const ad = a.endD || '9999-12-31';
     const bd = b.endD || '9999-12-31';
     if(ad !== bd) return ad.localeCompare(bd);
@@ -6536,9 +6541,9 @@ function _renderPersonalViewFromRows(allRowsIn){
   });
   if(stat){
     const total = allRows.length;
-    const done = allRows.filter(r=>r.status==='完了').length;
-    const active = total - done;
-    stat.innerHTML = `参加ワークスペース：<b>${_myWorkspaces.length || '?'}</b> 件 / 自分のタスク：<b>${total}</b>（未完了 ${active} / 完了 ${done}）`;
+    const doing = allRows.filter(r=>r.status==='着手中').length;
+    const todo = allRows.filter(r=>r.status==='未着手').length;
+    stat.innerHTML = `参加ワークスペース：<b>${_myWorkspaces.length || '?'}</b> 件 / 自分の進行中タスク：<b>${total}</b>（着手中 ${doing} / 未着手 ${todo}）<span style="color:var(--muted);margin-left:8px">※完了・中止は非表示</span>`;
   }
   if(allRows.length === 0){
     content.innerHTML = '<div style="padding:24px;color:var(--muted);text-align:center;background:#f8f9fa;border-radius:8px">自分が担当のタスクはありません。</div>';
