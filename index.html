@@ -281,6 +281,26 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .tree-node > .toggle.clickable{cursor:pointer;color:var(--primary-dark);font-weight:700;border-radius:3px;transition:background .12s}
 .tree-node > .toggle.clickable:hover{background:var(--primary-soft);color:var(--primary)}
 .tree-node .child-count{font-size:10px;color:var(--muted);font-weight:600;flex:0 0 auto;background:#F4F6F7;padding:1px 6px;border-radius:8px}
+.tree-node.depth-sub{margin-left:0}
+.tree-section-header{display:flex;align-items:center;gap:8px;padding:8px 12px;font-size:12px;font-weight:700;color:var(--text-soft);margin-top:6px;cursor:pointer;user-select:none;border-radius:6px;transition:background .12s}
+.tree-section-header:hover{background:var(--primary-soft)}
+.tree-section-toggle{font-size:11px;color:var(--primary)}
+.tree-section-count{margin-left:auto;font-size:10.5px;color:var(--muted);font-weight:600;background:#F4F6F7;padding:1px 8px;border-radius:9px}
+/* Parent-child task chips & indent */
+.pc-chip{display:inline-block;font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:8px;margin-right:5px;vertical-align:1px;letter-spacing:.02em}
+.pc-chip.parent{background:#3498DB;color:#fff}
+.pc-chip.child{background:#E67E22;color:#fff}
+.pc-chip.orphan{background:#C0392B;color:#fff}
+.pc-badge{display:inline-block;font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:8px;margin-right:5px;letter-spacing:.02em;flex:0 0 auto}
+.pc-badge.parent{background:#D6EAF8;color:#1F4E78}
+.pc-badge.child{background:#FDEBD0;color:#7E5109}
+.pc-badge.orphan{background:#FADBD8;color:#943126}
+.pc-tree{color:#aaa;flex:0 0 auto;font-family:'SF Mono','Consolas',monospace;font-size:11px;margin-right:2px}
+.pc-row{display:flex;align-items:center;gap:0;width:100%}
+.link-row-d1 > td.input:nth-child(2){background:linear-gradient(90deg,#FFF8DC 0,transparent 30px)}
+.side-task .parent-link{color:#E67E22;font-weight:600}
+.cal-block.task.has-children{border-left-width:5px}
+.cal-block.task.is-sub{border-left-style:dashed}
 .tree-node > .lbl{flex:1;padding:3px 8px;background:#fff;border:1px solid #d8dee5;border-radius:3px;display:flex;align-items:center;gap:6px;min-width:120px}
 .tree-node > .lbl input{flex:1;border:none;background:transparent;font:inherit;outline:none;padding:1px 2px}
 .tree-node > .lbl input:focus{background:#FFF8DC}
@@ -2211,6 +2231,27 @@ function renderTree(g){
   if(linked.length === 0){
     html += `<div style="color:var(--muted);font-size:11.5px;font-style:italic;padding:6px">まだタスクがありません。下の「タスク追加」または分解ツリーから作成できます。</div>`;
   } else {
+    // 親→子の順に並べる（親タスク直下にサブタスクを字下げ表示）
+    const childByParent = {};
+    const parents = [];
+    linked.forEach(t=>{
+      if(t.parentTaskId){
+        (childByParent[t.parentTaskId] = childByParent[t.parentTaskId] || []).push(t);
+      } else {
+        parents.push(t);
+      }
+    });
+    const ordered = [];
+    parents.forEach(p=>{
+      const kids = childByParent[p.id] || [];
+      ordered.push({task:p, depth:0, hasChildren:kids.length>0});
+      kids.forEach(c=> ordered.push({task:c, depth:1, hasChildren:false}));
+      delete childByParent[p.id];
+    });
+    // 孤児（親が削除された子タスク）
+    Object.keys(childByParent).forEach(pid=>{
+      childByParent[pid].forEach(c=> ordered.push({task:c, depth:0, hasChildren:false, orphan:true}));
+    });
     html += `<table style="font-size:11.5px;width:100%"><thead><tr>
       <th style="width:34px"></th>
       <th style="text-align:left">アクション</th>
@@ -2220,11 +2261,21 @@ function renderTree(g){
       <th style="width:90px">状態</th>
       <th style="width:90px">操作</th>
     </tr></thead><tbody>`;
-    linked.forEach(t=>{
+    ordered.forEach(({task:t, depth, hasChildren, orphan})=>{
       const done = t.status==='完了';
-      html += `<tr data-tid="${escapeHtml(t.id)}" style="${done?'opacity:.55;':''}">
+      const indent = depth*16;
+      const badge = depth===0
+        ? (hasChildren ? '<span class="pc-badge parent" title="親タスク">親</span>' : '')
+        : '<span class="pc-tree" aria-hidden="true">└</span><span class="pc-badge child" title="サブタスク">子</span>';
+      const orphanTag = orphan ? '<span class="pc-badge orphan" title="親タスクが削除されています">親なし</span>' : '';
+      html += `<tr data-tid="${escapeHtml(t.id)}" class="link-row link-row-d${depth}" style="${done?'opacity:.55;':''}">
         <td class="center"><input type="checkbox" data-tf="done" ${done?'checked':''}></td>
-        <td class="input"><input type="text" data-tf="act" value="${escapeHtml(t.act||t.mid||'')}" style="border:none;background:transparent;width:100%;font:inherit;outline:none"></td>
+        <td class="input">
+          <div class="pc-row" style="padding-left:${indent}px">
+            ${badge}${orphanTag}
+            <input type="text" data-tf="act" value="${escapeHtml(t.act||t.mid||'')}" style="border:none;background:transparent;flex:1;min-width:0;font:inherit;outline:none">
+          </div>
+        </td>
         <td class="input"><select data-tf="owner" style="border:none;background:transparent;width:100%;font:inherit;outline:none">${memberOptions(t.owner)}</select></td>
         <td class="input"><input type="date" data-tf="due" value="${t.due||''}" style="border:none;background:transparent;width:100%;font:inherit;outline:none"></td>
         <td class="input center"><div class="est-slider">
@@ -2338,19 +2389,32 @@ function renderTree(g){
   };
 
   // === Breakdown tree ===
+  // セクション全体を開閉可能（個人ごとのUI状態）
+  const sectionCollapsed = !!g._treeCollapsed;
   const treeHeader = document.createElement('div');
-  treeHeader.style.cssText = 'padding:6px 12px;font-size:12px;font-weight:700;color:var(--text-soft);margin-top:6px';
-  treeHeader.textContent = '🌳 分解ツリー（計画用）';
+  treeHeader.className = 'tree-section-header';
+  treeHeader.innerHTML = `<span class="tree-section-toggle">${sectionCollapsed?'▶':'▼'}</span> 🌳 分解ツリー（計画用） <span class="tree-section-count">${countNodes(g.breakdown)}項目</span>`;
+  treeHeader.addEventListener('click', ()=>{
+    const cur = S.goals.find(x=>x.id===g.id); if(!cur) return;
+    cur._treeCollapsed = !cur._treeCollapsed;
+    save();
+    renderGoals();
+  });
   root.appendChild(treeHeader);
+
+  if(sectionCollapsed){
+    // 折りたたみ中は中身を描画しない
+    return;
+  }
 
   if(g.breakdown.length===0){
     const empty = document.createElement('div');
     empty.className = 'tree-empty';
-    empty.textContent = 'タスクを階層的に分解して整理できます。';
+    empty.textContent = 'タスクを階層的に分解して整理できます（最大2階層）。';
     root.appendChild(empty);
   } else {
     const ul = document.createElement('ul');
-    g.breakdown.forEach(n => ul.appendChild(renderNode(g, n, g.breakdown)));
+    g.breakdown.forEach(n => ul.appendChild(renderNode(g, n, g.breakdown, 0)));
     root.appendChild(ul);
   }
   const addBtn = document.createElement('div');
@@ -2364,14 +2428,17 @@ function renderTree(g){
   };
   root.appendChild(addBtn);
 }
-function renderNode(goal, node, parentArr){
+function renderNode(goal, node, parentArr, depth){
+  depth = depth || 0;
   const li = document.createElement('li');
   const linked = node.taskId && S.tasks.some(t=>t.id===node.taskId);
   const hasChildren = !!(node.children && node.children.length);
   const collapsed = hasChildren && node.collapsed === true;
   const toggleIcon = hasChildren ? (collapsed ? '▸' : '▾') : '•';
+  // 最大2階層：depth=0 は親、depth=1 はサブ。サブ階層では「＋ サブ」を表示しない
+  const canAddSub = depth < 1;
   li.innerHTML = `
-    <div class="tree-node">
+    <div class="tree-node${depth>0?' depth-sub':''}">
       <span class="toggle${hasChildren?' clickable':''}" title="${hasChildren?(collapsed?'子要素を展開':'子要素を折りたたみ'):''}">${toggleIcon}</span>
       <span class="lbl${linked?' task-linked':''}">
         <input value="${escapeHtml(node.name)}" placeholder="タスク内容を入力">
@@ -2379,7 +2446,7 @@ function renderNode(goal, node, parentArr){
         ${linked?`<span style="font-size:10px;color:#7a3a04;flex:0 0 auto" title="連動中のタスクID">→ ${escapeHtml(node.taskId)}</span>`:''}
       </span>
       <span class="tree-actions">
-        <button class="add" title="サブ項目を追加">＋ サブ</button>
+        ${canAddSub?'<button class="add" title="サブ項目を追加">＋ サブ</button>':''}
         <button class="toTask" title="デイリータスク化">→ タスク化</button>
         <button class="del" title="削除">✕</button>
       </span>
@@ -2416,15 +2483,20 @@ function renderNode(goal, node, parentArr){
     }
     save(); renderTasks();
   });
-  const [addBtn, taskBtn, delBtn] = li.querySelectorAll('.tree-actions button');
-  addBtn.onclick = ()=>{
-    if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
-    const curNode = getCurrentNode() || node;
-    curNode.children = curNode.children || [];
-    curNode.children.push(newNode("新しいサブ項目"));
-    save();
-    renderGoals();
-  };
+  // 「＋ サブ」は depth=0 のみ存在するため、ボタン位置は可変
+  const addBtn = li.querySelector('.tree-actions button.add');
+  const taskBtn = li.querySelector('.tree-actions button.toTask');
+  const delBtn  = li.querySelector('.tree-actions button.del');
+  if(addBtn){
+    addBtn.onclick = ()=>{
+      if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+      const curNode = getCurrentNode() || node;
+      curNode.children = curNode.children || [];
+      curNode.children.push(newNode("新しいサブ項目"));
+      save();
+      renderGoals();
+    };
+  }
   taskBtn.onclick = ()=>{
     if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     const curNode = getCurrentNode() || node;
@@ -2453,7 +2525,7 @@ function renderNode(goal, node, parentArr){
   };
   if(node.children && node.children.length && !node.collapsed){
     const ul = document.createElement('ul');
-    node.children.forEach(c => ul.appendChild(renderNode(goal, c, node.children)));
+    node.children.forEach(c => ul.appendChild(renderNode(goal, c, node.children, depth+1)));
     li.appendChild(ul);
   }
   return li;
@@ -2462,19 +2534,45 @@ function promoteNodeToTask(goal, node){
   if(node.taskId && S.tasks.some(t=>t.id===node.taskId)){
     if(!confirm("既にデイリータスク化されています。再生成しますか？")) return;
   }
+  // 親ノード解析：自分が depth=1（サブノード）なら、親ノードもタスク化する
+  const path = findNodePath(goal.breakdown, node) || [node];
+  const parentNode = path.length > 1 ? path[path.length - 2] : null;
+  let parentTaskId = '';
+  let parentName = '';
+  if(parentNode){
+    parentName = parentNode.name || '';
+    // 親もまだタスク化されていなければ先にタスク化（再帰的にならないよう depth=0 前提）
+    if(parentNode.taskId && S.tasks.some(t=>t.id===parentNode.taskId)){
+      parentTaskId = parentNode.taskId;
+    } else {
+      S.seq.task = (S.seq.task||0)+1;
+      const pid = "T-"+String(S.seq.task).padStart(3,'0');
+      S.tasks.push({
+        id: pid, goal: goal.id, mid: parentName, act: parentName || '(無題)',
+        owner: goal.owner||"", startD:"", due: goal.due||"",
+        slot:"", pri:"", mit:false, est:"", act_min:"", status:"未着手",
+        defn:"", interrupt:"", note:`プロジェクト「${goal.name}」より自動生成（親タスク）`, time:"",
+        parentTaskId:""
+      });
+      parentNode.taskId = pid;
+      parentTaskId = pid;
+    }
+  }
   S.seq.task = (S.seq.task||0)+1;
   const id = "T-"+String(S.seq.task).padStart(3,'0');
-  const path = findNodePath(goal.breakdown, node);
-  const mid = path.length>1 ? path[0].name : "";
   S.tasks.push({
-    id, goal:goal.id, mid, act:node.name||"(無題)",
-    owner:goal.owner||"", startD:"", due:goal.due||"",
+    id, goal: goal.id, mid: parentName, act: node.name||"(無題)",
+    owner: goal.owner||"", startD:"", due: goal.due||"",
     slot:"", pri:"", mit:false, est:"", act_min:"", status:"未着手",
-    defn:"", interrupt:"", note:`プロジェクト「${goal.name}」より自動生成`, time:""
+    defn:"", interrupt:"", note:`プロジェクト「${goal.name}」より自動生成${parentTaskId?'（サブタスク）':''}`,
+    time:"", parentTaskId: parentTaskId
   });
   node.taskId = id;
   save(); renderAll();
-  toast(`タスク「${id}」を作成しました`);
+  const msg = parentTaskId
+    ? `タスク「${id}」を作成（親：${parentTaskId}）`
+    : `タスク「${id}」を作成しました`;
+  toast(msg);
 }
 function findNodePath(arr, target, path=[]){
   for(const n of arr){
@@ -3243,15 +3341,28 @@ function makeTaskBlock(t, allDay){
   const va = S.ui.viewAsMember||'';
   const isOthersTask = !!(va && t.owner && t.owner !== va);
   if(isOthersTask) cls += ' faded';
+  // 親子関係でクラスを付与
+  if(t.parentTaskId) cls += ' is-sub';
+  if(S.tasks.some(x => x.parentTaskId === t.id)) cls += ' has-children';
   div.className = cls;
   div.dataset.taskId = t.id;
   // 自分以外のタスクはドラッグ不可
   div.draggable = !isOthersTask;
   const r = taskRange(t);
   const tm = (r && !r.allDay) ? `${pad2(r.start.getHours())}:${pad2(r.start.getMinutes())}-${pad2(r.end.getHours())}:${pad2(r.end.getMinutes())}` : '終日';
-  div.innerHTML = `<div class="t">${escapeHtml(t.act||t.mid||'(無題)')}</div>`+
+  // 親子関係チップ
+  const parentTask = t.parentTaskId ? S.tasks.find(x=>x.id===t.parentTaskId) : null;
+  const childTasks = S.tasks.filter(x=>x.parentTaskId===t.id);
+  const isChild = !!parentTask;
+  const isParent = childTasks.length > 0;
+  const pcChip = isChild
+    ? `<span class="pc-chip child" title="サブタスク（親：${escapeHtml(parentTask.act||parentTask.id)}）">└子</span>`
+    : (isParent ? `<span class="pc-chip parent" title="親タスク（サブ ${childTasks.length} 件）">親${childTasks.length}</span>` : '');
+  div.innerHTML = `<div class="t">${pcChip}${escapeHtml(t.act||t.mid||'(無題)')}</div>`+
     (allDay?'':`<div class="s">${tm} ・ ${escapeHtml(t.owner)}</div>`);
-  div.title = `[タスク] ${t.id} ${t.act}\n担当：${t.owner}\n${tm}\n見積：${t.est||'-'}分 / ステータス：${t.status}${t.weight?'\nウェイト：'+t.weight:''}\n（ドラッグ：時刻変更／右クリック：詳細表示）`;
+  const parentLine = isChild ? `\n親タスク：${parentTask.id} ${parentTask.act||''}` : '';
+  const childrenLine = isParent ? `\nサブタスク：${childTasks.length} 件` : '';
+  div.title = `[タスク] ${t.id} ${t.act}\n担当：${t.owner}\n${tm}\n見積：${t.est||'-'}分 / ステータス：${t.status}${parentLine}${childrenLine}${t.weight?'\nウェイト：'+t.weight:''}\n（ドラッグ：時刻変更／右クリック：詳細表示）`;
   // IDで都度最新タスクを引く（同期での陳腐化対策）
   const taskIdBlock = t.id;
   const getCurT = ()=> S.tasks.find(x=>x.id===taskIdBlock) || t;
@@ -3812,13 +3923,20 @@ function renderSideTasks(){
     const goalName = t.goal ? (S.goals.find(g=>g.id===t.goal)||{}).name : '';
     const estVal = Math.min(90, Number(t.est)||0);
     const autoW = computeTaskWeight(t);
+    // 親子情報
+    const parentT = t.parentTaskId ? S.tasks.find(x=>x.id===t.parentTaskId) : null;
+    const childTs = S.tasks.filter(x=>x.parentTaskId===t.id);
+    const pcChip = parentT
+      ? `<span class="pc-chip child" title="親：${escapeHtml(parentT.act||parentT.id)}">└子</span>`
+      : (childTs.length ? `<span class="pc-chip parent" title="サブ ${childTs.length} 件">親${childTs.length}</span>` : '');
     el.innerHTML = `
       <div style="display:flex;align-items:flex-start;gap:5px">
         <input type="checkbox" class="chk" ${t.status==='完了'?'checked':''} title="完了">
         <div style="flex:1;min-width:0">
-          <div class="ttl">${escapeHtml(t.act||t.mid||'(無題)')}</div>
+          <div class="ttl">${pcChip}${escapeHtml(t.act||t.mid||'(無題)')}</div>
           <div class="meta">
             ${escapeHtml(t.owner||'-')} ${gdLabel}
+            ${parentT?`・<span class="parent-link" title="親タスクを表示">親：${escapeHtml((parentT.act||parentT.id).slice(0,18))}</span>`:''}
             ${t.goal?`・<span class="goal-link" data-goalid="${escapeHtml(t.goal)}" title="このプロジェクトのタスク一覧を開く">${escapeHtml(t.goal)}${goalName?' '+escapeHtml(goalName.slice(0,12)):''}</span>`:''}
           </div>
           <div class="est-slider">
