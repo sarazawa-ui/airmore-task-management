@@ -1113,9 +1113,9 @@ header.app-header{padding:10px 22px}
         <div class="help">あなたが1日に作業に充てられる最大時間。8時間 = 480分。</div>
       </div>
       <div class="field">
-        <label>1日の予備時間／余剰時間（分）</label>
+        <label>1日の雑務対応時間（分）</label>
         <input type="number" id="cfgBufferMin" min="0" step="15" placeholder="90">
-        <div class="help">メール対応・突発対応・休憩などに確保する時間。Googleカレンダー予定 + デイリータスクの合計が「実働可能 − 予備時間」を超える割り振りを警告します。</div>
+        <div class="help">メール対応・突発対応・休憩など、計画外の雑務に確保する時間。<strong>自分のタスク</strong> + Googleカレンダー予定の合計が「実働可能 − 雑務対応時間」を超える場合に警告します。</div>
       </div>
       <div class="field">
         <label><input type="checkbox" id="cfgEnforceCap"> 上限超過時はタスク配置をブロック</label>
@@ -2094,8 +2094,10 @@ function renderTree(g){
       if(inp.type==='number' || inp.type==='range') t[f] = inp.value===''?'':Number(inp.value);
       else t[f] = inp.value;
       save(true,`タスク編集：${t.id}/${f}`);
-      // status/est変更時はテーブルを再描画（進捗バー更新のため）
-      if(f === 'status' || f === 'est'){
+      // status変更時のみ全体再描画（進捗バー再計算）
+      // est（スライダー）は連続操作時にDOMが破壊されるとUI状態が壊れるため、
+      // 進捗バーの再計算を行わない（次回のrenderAll時に反映される）
+      if(f === 'status'){
         renderGoals();
       }
       renderCalendar(); renderSideTasks(); renderDashboard();
@@ -2443,8 +2445,14 @@ function renderDailySummary(){
   const avail = (Number(S.ui.workMin)||0)-(Number(S.ui.bufferMin)||0);
   document.getElementById('availMin').textContent = avail;
   const target = td.value;
-  const est = S.tasks.filter(t=>t.startD===target && t.status!=="完了" && t.status!=="中止")
-                      .reduce((s,t)=>s+(Number(t.est)||0),0);
+  const myName = (_currentUser && _currentUser.name) || '';
+  // 雑務対応時間アラートは自分のタスクのみで計算
+  const est = S.tasks.filter(t=>
+      t.startD===target
+      && t.status!=="完了"
+      && t.status!=="中止"
+      && (!myName || !t.owner || t.owner === myName)
+    ).reduce((s,t)=>s+(Number(t.est)||0),0);
   document.getElementById('estTotal').textContent = est;
   const j = document.getElementById('workJudge');
   if(est>avail){ j.className="judge over"; j.textContent="⚠オーバー("+(est-avail)+"分超過)"; }
@@ -3657,7 +3665,8 @@ function renderSideTasks(){
         const cur = getCurTask(); if(!cur) return;
         const v = Number(rng.value);
         cur.est = v;
-        save(); renderSideTasks(); renderCalendar(); renderDashboard(); renderGoals();
+        // スライダー連続操作時のDOM破壊を避けるため、sidebar/goalsの再描画はスキップ
+        save(); renderCalendar(); renderDashboard();
       });
       rng.addEventListener('click',e=>e.stopPropagation());
     }
@@ -3868,20 +3877,23 @@ async function sendCompletionEmail(t){
     toast("通知先のメンバー（自分以外）が登録されていません");
     return;
   }
-  const goalName = t.goal ? (S.goals.find(g=>g.id===t.goal)||{}).name||'' : '';
-  const subject = `[完了通知] ${t.act||t.mid||'タスク'}`;
+  const goalObj = t.goal ? S.goals.find(g=>g.id===t.goal) : null;
+  const goalName = goalObj ? (goalObj.name||t.goal) : '';
+  const taskName = t.act || t.mid || '(無題)';
+  const wsName = S.wsName || S.profile?.companyName || 'ワークスペース';
+  // プロジェクト進捗（％）— このタスク完了反映後の状態で計算
+  const prog = goalObj ? computeGoalProgress(goalObj) : null;
+  const subject = `✅️完了通知✅️‐${taskName}`;
   const lines = [
     `${_currentUser.name} さんがタスクを完了しました。`,
     '',
-    `■ タスク：${t.act||t.mid||'(無題)'}`,
-    `■ ID：${t.id}`,
+    `■ プロジェクト：${goalName || '(未紐付)'}`,
+    `■ タスク：${taskName}`,
+    `■ 期日：${t.due || '(未設定)'}`,
+    `■ プロジェクト進捗：${prog ? prog.value+'％' : '-'}`,
+    '',
+    `— Hittatsu | ${wsName} より自動送信`
   ];
-  if(t.goal) lines.push(`■ 紐付プロジェクト：${t.goal}${goalName?' '+goalName:''}`);
-  if(t.due) lines.push(`■ 期日：${t.due}`);
-  if(t.est) lines.push(`■ 所要：${t.est}分`);
-  if(t.act_min) lines.push(`■ 実績：${t.act_min}分`);
-  if(t.defn) lines.push(`■ 成果物：${t.defn}`);
-  lines.push('', `— ${S.profile?.companyName||'タスク管理アプリ'} より自動送信`);
   const body = lines.join('\r\n');
 
   // RFC 2822 message with UTF-8 base64
@@ -3936,20 +3948,20 @@ async function sendReminderEmail(t){
     console.warn(`Reminder skipped: ${t.id} - owner "${t.owner}" has no email`);
     return false;
   }
-  const goalName = t.goal ? (S.goals.find(g=>g.id===t.goal)||{}).name||'' : '';
-  const subject = `[10分前リマインド] ${t.act||t.mid||'タスク'}`;
+  const goalName = t.goal ? ((S.goals.find(g=>g.id===t.goal)||{}).name || t.goal) : '';
+  const taskName = t.act || t.mid || '(無題)';
+  const wsName = S.wsName || S.profile?.companyName || 'ワークスペース';
+  const subject = `⚠️10分前リマインド⚠️‐${taskName}`;
   const lines = [
-    `${t.time||''} 開始予定のタスクの 10分前リマインドです。`,
+    `「${taskName}」開始の 10分前リマインドです。`,
     '',
-    `■ タスク：${t.act||t.mid||'(無題)'}`,
-    `■ ID：${t.id}`,
-    `■ 開始時刻：${t.time||''}`,
+    `■ 紐付プロジェクト：${goalName || '(未紐付)'}`,
+    `■ タスク：${taskName}`,
+    `■ 開始時刻：${t.time || '(未設定)'}`,
+    `■ 所要：${t.est ? t.est+'分' : '(未設定)'}`,
+    '',
+    `— Hittatsu | ${wsName} より自動送信`
   ];
-  if(t.goal) lines.push(`■ 紐付プロジェクト：${t.goal}${goalName?' '+goalName:''}`);
-  if(t.due) lines.push(`■ 期日：${t.due}`);
-  if(t.est) lines.push(`■ 所要：${t.est}分`);
-  if(t.defn) lines.push(`■ 成果物：${t.defn}`);
-  lines.push('', `— ${S.profile?.companyName||'タスク管理アプリ'} より自動送信`);
   const body = lines.join('\r\n');
 
   const subjEncoded = '=?UTF-8?B?'+btoa(unescape(encodeURIComponent(subject)))+'?=';
@@ -5466,11 +5478,13 @@ function saveDisplaySettings(){
 // Compute used minutes on a given day (events + tasks excluding the dropped task)
 function dayUsedMinutes(dateStr, excludeTaskId){
   let mins = 0;
-  // Sum tasks scheduled that day (with time or via slot inference)
+  // 自分のタスクのみカウント（他メンバーのタスクは自分の稼働には影響しないため）
+  const myName = (_currentUser && _currentUser.name) || '';
   S.tasks.forEach(t=>{
     if(t.id === excludeTaskId) return;
     if(t.startD !== dateStr) return;
     if(t.status === '完了' || t.status === '中止') return;
+    if(myName && t.owner && t.owner !== myName) return;
     const r = taskRange(t);
     if(!r || r.allDay) return;
     mins += (r.end - r.start) / 60000;
