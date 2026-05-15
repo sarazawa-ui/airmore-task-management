@@ -234,10 +234,17 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 /* Google Drive link cell */
 #tblGoals td.drive-cell{padding:4px 6px}
 #tblGoals td.drive-cell .drive-row{display:flex;align-items:center;gap:4px}
+#tblGoals td.drive-cell .drive-link{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--primary);text-decoration:underline;font-size:11.5px;padding:5px 4px}
+#tblGoals td.drive-cell .drive-link:hover{color:var(--primary-dark)}
 #tblGoals td.drive-cell input[type=url]{flex:1;min-width:0;font-size:11.5px;padding:5px 7px;border:1px solid var(--border);border-radius:4px;font-family:inherit;background:#fff}
 #tblGoals td.drive-cell input[type=url]:focus{border-color:var(--primary);outline:none}
-#tblGoals td.drive-cell .drive-open{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:var(--primary-soft);border:1px solid var(--primary-light);border-radius:5px;color:var(--primary-dark);text-decoration:none;font-weight:700;font-size:13px;transition:all .12s}
-#tblGoals td.drive-cell .drive-open:hover{background:var(--primary);color:#fff;border-color:var(--primary)}
+#tblGoals td.drive-cell .drive-edit{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:var(--primary-soft);border:1px solid var(--primary-light);border-radius:5px;color:var(--primary-dark);cursor:pointer;font-size:13px;transition:all .12s;font-family:inherit}
+#tblGoals td.drive-cell .drive-edit:hover{background:var(--primary);color:#fff;border-color:var(--primary)}
+/* Mode-based visibility */
+#tblGoals td.drive-cell .drive-row[data-mode="view"] input[type=url]{display:none}
+#tblGoals td.drive-cell .drive-row[data-mode="edit"] .drive-link{display:none}
+/* 未設定（URLなし）の link はクリック無効化 */
+#tblGoals td.drive-cell .drive-link[href="#"]{color:var(--muted);text-decoration:none;font-style:italic;pointer-events:none}
 /* Project completion definition card (above daily tasks in tree view) */
 .proj-defn-card{padding:10px 12px;background:#FFFBEA;border:1px solid #FFE082;border-left:4px solid #FFA000;border-radius:8px;margin-bottom:10px}
 .proj-defn-card .lbl{font-size:11.5px;font-weight:700;color:#7E5109;margin-bottom:4px;display:flex;align-items:center;gap:5px}
@@ -1450,6 +1457,22 @@ function computeGoalProgress(g){
   return {value: Math.round(doneMin/totalMin*100), source:'auto', total:ts.length, done: ts.filter(t=>t.status==='完了').length, totalMin, doneMin};
 }
 function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]); }
+// Googleドライブ等のURLを短く整形（フルパスは title 属性で）
+function driveLabel(url){
+  if(!url) return '';
+  try{
+    const u = new URL(url);
+    // drive.google.com の場合はファイル名抽出は不可なので、シンプルにホスト+短縮パス
+    let path = u.pathname.replace(/\/+$/,'');
+    // /file/d/<id>/view → /file
+    if(/\/file\/d\//.test(path)) path = '/file';
+    else if(/\/drive\/folders\//.test(path)) path = '/folder';
+    else if(path.length > 24) path = path.slice(0,22)+'…';
+    return u.hostname.replace(/^www\./,'') + path;
+  }catch(e){
+    return url.length > 32 ? url.slice(0,30)+'…' : url;
+  }
+}
 
 function alertOf(t){
   if(!t.due) return {label:"",cls:""};
@@ -1889,9 +1912,10 @@ function renderGoals(){
       <td class="formula"><div class="progress-auto">${prog.value}%<small>${progSrc}</small></div><div class="progress" style="width:90%;margin:4px auto 0"><span style="width:${prog.value}%"></span></div></td>
       <td class="input"><select data-f="status">${statusOptions(g.status)}</select></td>
       <td class="input drive-cell">
-        <div class="drive-row">
-          <input type="url" data-f="driveUrl" value="${escapeHtml(g.driveUrl||'')}" placeholder="https://drive.google.com/..." title="Googleドライブのフォルダ/ファイルURL">
-          ${g.driveUrl ? `<a href="${escapeHtml(g.driveUrl)}" target="_blank" rel="noopener" class="drive-open" title="新規タブで開く">↗</a>` : ''}
+        <div class="drive-row" data-mode="${g.driveUrl?'view':'edit'}">
+          <a href="${escapeHtml(g.driveUrl||'#')}" target="_blank" rel="noopener" class="drive-link" title="${escapeHtml(g.driveUrl||'')}">${escapeHtml(driveLabel(g.driveUrl||''))||'未設定'}</a>
+          <input type="url" data-f="driveUrl" value="${escapeHtml(g.driveUrl||'')}" placeholder="https://drive.google.com/..." title="GoogleドライブのフォルダURL">
+          <button type="button" class="drive-edit" title="リンクを編集">✎</button>
         </div>
       </td>
       <td class="center"><button class="expand-btn ${g.expanded?'open':''}" data-toggle="${i}">${g.expanded?'▼ 閉じる':'▶ タスク'}<br><small>${countLinkedTasks(g)}件</small></button></td>
@@ -1905,31 +1929,54 @@ function renderGoals(){
         if(!cur){ console.warn(`Goal ${goalId} not found`); return; }
         cur[el.dataset.f] = el.type==='number' ? Number(el.value) : el.value;
         save(); renderDashboard(); renderSideTasks(); renderCalendar();
-        // driveUrl 変更時：↗ ボタンを表示/非表示する（行は再描画しない）
+        // driveUrl 変更時：リンクラベルを更新して view モードへ
         if(el.dataset.f === 'driveUrl'){
           const cell = el.closest('.drive-cell');
-          if(cell){
-            const existing = cell.querySelector('.drive-open');
-            const url = (cur.driveUrl||'').trim();
-            if(url){
-              if(existing){ existing.setAttribute('href', url); }
-              else {
-                const a = document.createElement('a');
-                a.href = url;
-                a.target = '_blank';
-                a.rel = 'noopener';
-                a.className = 'drive-open';
-                a.title = '新規タブで開く';
-                a.textContent = '↗';
-                cell.querySelector('.drive-row').appendChild(a);
-              }
-            } else if(existing){
-              existing.remove();
-            }
+          const row = cell.querySelector('.drive-row');
+          const link = row.querySelector('.drive-link');
+          const btn = row.querySelector('.drive-edit');
+          const v = (cur.driveUrl||'').trim();
+          if(link){
+            link.textContent = v ? driveLabel(v) : '未設定';
+            link.setAttribute('href', v || '#');
+            link.setAttribute('title', v || '');
           }
+          row.dataset.mode = 'view';
+          if(btn){ btn.textContent = '✎'; btn.title = 'リンクを編集'; }
         }
       });
     });
+    // Drive URL の編集 / 保存ボタン（view ⇄ edit を data-mode で切替）
+    const driveBtn = tr.querySelector('.drive-cell .drive-edit');
+    if(driveBtn){
+      driveBtn.addEventListener('click', ()=>{
+        const row = tr.querySelector('.drive-cell .drive-row');
+        const link = row.querySelector('.drive-link');
+        const input = row.querySelector('input[data-f="driveUrl"]');
+        const cur = getCurGoal(); if(!cur) return;
+        if(row.dataset.mode === 'view'){
+          // 編集モードへ
+          row.dataset.mode = 'edit';
+          driveBtn.textContent = '💾';
+          driveBtn.title = '保存';
+          if(input){ input.focus(); input.select(); }
+        } else {
+          // view モードへ：input 値を反映
+          const v = input ? input.value.trim() : '';
+          cur.driveUrl = v;
+          save(); renderDashboard(); renderSideTasks(); renderCalendar();
+          // リンクラベル / href 更新
+          if(link){
+            link.textContent = v ? driveLabel(v) : '未設定';
+            link.setAttribute('href', v || '#');
+            link.setAttribute('title', v || '');
+          }
+          row.dataset.mode = 'view';
+          driveBtn.textContent = '✎';
+          driveBtn.title = 'リンクを編集';
+        }
+      });
+    }
     tr.querySelector('.del-btn').onclick = ()=>{
       const cur = getCurGoal() || g;
       const linkedTaskCount = S.tasks.filter(t => t.goal === cur.id).length;
@@ -1950,7 +1997,12 @@ function renderGoals(){
     tr.querySelector('[data-toggle]').onclick = ()=>{
       const cur = getCurGoal();
       if(!cur){ console.warn(`Goal ${goalId} not found`); return; }
-      cur.expanded = !cur.expanded;
+      const willOpen = !cur.expanded;
+      // 単一展開：自分以外をすべて閉じる
+      if(willOpen){
+        S.goals.forEach(x => { if(x.id !== cur.id) x.expanded = false; });
+      }
+      cur.expanded = willOpen;
       save();
       renderGoals();
     };
