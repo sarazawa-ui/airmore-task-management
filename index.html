@@ -173,6 +173,8 @@ tr.done td input,tr.done td select,tr.done td textarea{color:#B2BABB;text-decora
 .cal-now-line{position:absolute;left:0;right:0;height:2px;background:#E74C3C;z-index:4;pointer-events:none;box-shadow:0 0 4px rgba(231,76,60,.4)}
 .cal-now-line::before{content:"";position:absolute;left:-4px;top:-4px;width:10px;height:10px;border-radius:50%;background:#E74C3C}
 .cal-block{position:absolute;left:3px;right:3px;border-radius:6px;padding:4px 7px;font-size:10.5px;line-height:1.3;overflow:hidden;cursor:pointer;box-shadow:0 1px 2px rgba(52,73,94,.08);border-left:3px solid;z-index:2;transition:all .12s}
+/* 「自分」として選択中ユーザーのタスクは前面（他メンバーのタスクと重なった場合に隠れないように） */
+.cal-block.task.mine{z-index:5;box-shadow:0 2px 6px rgba(52,152,219,.25)}
 .cal-block:hover{z-index:6;box-shadow:0 4px 12px rgba(52,73,94,.18);overflow:visible;transform:translateX(1px)}
 .cal-block.task{background:#FEF5E7;border-left-color:#F39C12;color:#7E5109}
 .cal-block.task.mit{background:#FCF3CF;border-left-color:#D4AC0D;color:#7D6608;font-weight:700}
@@ -3395,9 +3397,12 @@ function makeTaskBlock(t, allDay){
   else if(t.due && diffDays(t.due,todayStr())<0 && t.status!=='中止') cls += ' late';
   if(allDay) cls += ' allday';
   // Fade other team members' tasks based on viewAsMember
-  const va = S.ui.viewAsMember||'';
+  // 「自分」として viewAsMember を選択中、または未選択時はログインユーザー名を「自分」とみなす
+  const va = S.ui.viewAsMember || (_currentUser && _currentUser.name) || '';
   const isOthersTask = !!(va && t.owner && t.owner !== va);
+  const isMyTask = !!(va && t.owner && t.owner === va);
   if(isOthersTask) cls += ' faded';
+  if(isMyTask) cls += ' mine';
   // 親子関係でクラスを付与
   if(t.parentTaskId) cls += ' is-sub';
   if(S.tasks.some(x => x.parentTaskId === t.id)) cls += ' has-children';
