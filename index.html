@@ -185,7 +185,10 @@ tr.done td input,tr.done td select,tr.done td textarea{color:#B2BABB;text-decora
 .cal-block.task{background:#FEF5E7;border-left-color:#F39C12;color:#7E5109}
 .cal-block.task.mit{background:#FCF3CF;border-left-color:#D4AC0D;color:#7D6608;font-weight:700}
 .cal-block.task.done{background:#F4F6F7;border-left-color:#BDC3C7;color:#909497;text-decoration:line-through}
-.cal-block.task.late{background:#FADBD8;border-left-color:#E74C3C;color:#943126}
+/* 統一: 期日 N 日前で 3 段階の警告色 */
+.cal-block.task.due-1w{background:#FEF9E7;border-left-color:#F1C40F;color:#7E5109}     /* 1週内：薄黄 */
+.cal-block.task.due-3d{background:#FCE5CD;border-left-color:#E67E22;color:#7E5109}     /* 3日前：オレンジ */
+.cal-block.task.due-overdue{background:#FADBD8;border-left-color:#E74C3C;color:#943126} /* 期限切れ：赤 */
 .cal-block.event{background:var(--primary-light);border-left-color:var(--primary);color:var(--primary-dark)}
 .cal-block.event.allday{position:static;display:block;margin:0;font-size:10px;padding:3px 7px;border-radius:10px;max-width:100%;width:auto;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cal-block.task.allday{position:static;display:block;margin:0;font-size:10px;padding:3px 7px;background:#FCF3CF;border-left-color:#D4AC0D;border-radius:10px;max-width:100%;width:auto;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -316,6 +319,11 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .pc-tree{color:#aaa;flex:0 0 auto;font-family:'SF Mono','Consolas',monospace;font-size:11px;margin-right:2px}
 .pc-row{display:flex;align-items:center;gap:0;width:100%}
 .link-row-d1 > td.input:nth-child(2){background:linear-gradient(90deg,#FFF8DC 0,transparent 30px)}
+/* プロジェクト紐づきタスク行：期日 N 日前で 3 段階の警告色（行全体） */
+.link-row.due-1w > td{background:#FEF9E7 !important}
+.link-row.due-3d > td{background:#FCE5CD !important}
+.link-row.due-overdue > td{background:#FADBD8 !important}
+.link-row.due-overdue > td:not(.center):not(:first-child){color:#943126}
 .side-task .parent-link{color:#E67E22;font-weight:600}
 .cal-block.task.has-children{border-left-width:5px}
 .cal-block.task.is-sub{border-left-style:dashed}
@@ -355,8 +363,10 @@ body > main:has(#view-calendar.active){overflow:hidden}
 .side-task[draggable=true]:active{cursor:grabbing}
 .side-task.mit{background:#FCF3CF;border-left-color:#D4AC0D}
 .side-task.done{background:#F4F6F7;border-left-color:#BDC3C7;opacity:.7;text-decoration:line-through}
-.side-task.late{background:#FADBD8;border-left-color:#E74C3C}
-.side-task.due-soon{background:#FADBD8;border-left-color:#E74C3C}
+/* 統一: 期日 N 日前で 3 段階の警告色 */
+.side-task.due-1w{background:#FEF9E7;border-left-color:#F1C40F}     /* 1週内：薄黄 */
+.side-task.due-3d{background:#FCE5CD;border-left-color:#E67E22}     /* 3日前：オレンジ */
+.side-task.due-overdue{background:#FADBD8;border-left-color:#E74C3C} /* 期限切れ：赤 */
 .side-task .ttl{font-weight:600;line-height:1.4;color:var(--text)}
 .side-task .meta{font-size:10.5px;color:var(--text-soft);margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .side-task .row{display:flex;gap:5px;margin-top:6px;align-items:center}
@@ -375,7 +385,9 @@ body > main:has(#view-calendar.active){overflow:hidden}
 .side-task:hover{box-shadow:var(--shadow);transform:translateY(-1px);background:var(--primary-soft);border-color:var(--primary-light)}
 /* 完了 / 期日超過などのスタイル付き行でも、ホバーでわかるよう同色系を上書き */
 .side-task.done:hover{background:#E8EBED}
-.side-task.late:hover,.side-task.due-soon:hover{background:#F5B7B1}
+.side-task.due-1w:hover{background:#FCF3CF}
+.side-task.due-3d:hover{background:#F8D7A3}
+.side-task.due-overdue:hover{background:#F5B7B1}
 .side-task.mit:hover{background:#F9E79F}
 .side-task .goal-link{color:var(--primary);cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
 .side-task .goal-link:hover{color:var(--primary-dark);text-decoration:underline}
@@ -1695,13 +1707,14 @@ function openTaskPickerAt(dateStr, totalMin, allDay){
     </tr></thead><tbody>`;
     available.forEach(t => {
       const scheduled = t.startD ? `${t.startD}${t.time?' '+t.time:''}` : '<em style="color:var(--muted)">未割当</em>';
-      // 期日が近い／超過しているタスクは行背景を赤に
+      // 期日 N 日前で 3 段階の警告色（行全体の背景）
       let rowBg = '';
       let dueDisp = t.due || '<span style="color:#bbb">-</span>';
       if(t.due){
         const dd = diffDays(t.due, todayStr());
-        if(dd < 0){ rowBg = 'background:#FADBD8'; dueDisp = `<b style="color:#C0392B">${t.due}（${-dd}日超過）</b>`; }
-        else if(dd <= 7){ rowBg = 'background:#FADBD8'; dueDisp = `<b style="color:#C0392B">${t.due}（あと${dd}日）</b>`; }
+        if(dd < 0){ rowBg = 'background:#FADBD8'; dueDisp = `<b style="color:#943126">${t.due}（${-dd}日超過）</b>`; }
+        else if(dd <= 3){ rowBg = 'background:#FCE5CD'; dueDisp = `<b style="color:#7E5109">${t.due}（あと${dd}日）</b>`; }
+        else if(dd <= 7){ rowBg = 'background:#FEF9E7'; dueDisp = `<b style="color:#7E5109">${t.due}（あと${dd}日）</b>`; }
       }
       html += `<tr style="cursor:pointer;${rowBg}" data-pick-task="${escapeHtml(t.id)}">
         <td class="center">${escapeHtml(t.id)}</td>
@@ -2353,7 +2366,8 @@ function renderTree(g){
         ? (hasChildren ? '<span class="pc-badge parent" title="親タスク">親</span>' : '')
         : '<span class="pc-tree" aria-hidden="true">└</span><span class="pc-badge child" title="サブタスク">子</span>';
       const orphanTag = orphan ? '<span class="pc-badge orphan" title="親タスクが削除されています">親なし</span>' : '';
-      html += `<tr data-tid="${escapeHtml(t.id)}" class="link-row link-row-d${depth}" style="${done?'opacity:.55;':''}">
+      const dueCls = done ? '' : taskDueClass(t);
+      html += `<tr data-tid="${escapeHtml(t.id)}" class="link-row link-row-d${depth}${dueCls?' '+dueCls:''}" style="${done?'opacity:.55;':''}">
         <td class="center"><input type="checkbox" data-tf="done" ${done?'checked':''}></td>
         <td class="input">
           <div class="pc-row" style="padding-left:${indent}px">
@@ -2729,6 +2743,19 @@ const TASK_COLS = [
 //   7〜13     : 2週内    (gd-yellow)
 //   14〜20    : (タグなし／通常)
 //   21+       : 余裕     (gd-green)
+// ===== タスク自身の期日（due）から色クラスを決定（統一ルール） =====
+// 期限切れ(<0日)→赤  期限3日内(0〜3日)→オレンジ  1週内(4〜7日)→薄黄  それ以外→なし
+// 完了/中止のタスクは無色（取り消し線・グレーが別途適用される）
+function taskDueClass(t){
+  if(!t || !t.due) return '';
+  if(t.status === '完了' || t.status === '中止') return '';
+  const d = diffDays(t.due, todayStr());
+  if(d < 0) return 'due-overdue';
+  if(d <= 3) return 'due-3d';
+  if(d <= 7) return 'due-1w';
+  return '';
+}
+
 function goalDeadlineClass(t){
   if(!t.goal) return '';
   const g = S.goals.find(x=>x.id===t.goal);
@@ -3439,7 +3466,10 @@ function makeTaskBlock(t, allDay){
   const div = document.createElement('div');
   let cls = 'cal-block task';
   if(t.status==='完了') cls += ' done';
-  else if(t.due && diffDays(t.due,todayStr())<0 && t.status!=='中止') cls += ' late';
+  else {
+    const dc = taskDueClass(t);
+    if(dc) cls += ' ' + dc;
+  }
   if(allDay) cls += ' allday';
   // Fade other team members' tasks based on viewAsMember
   // 「自分」として viewAsMember を選択中、または未選択時はログインユーザー名を「自分」とみなす
@@ -4049,10 +4079,9 @@ function renderSideTasks(){
     const el = document.createElement('div');
     let cls = 'side-task';
     if(t.status==='完了') cls += ' done';
-    else if(t.due && t.status!=='中止'){
-      const dd = diffDays(t.due, todayStr());
-      if(dd < 0) cls += ' late';            // 期日超過
-      else if(dd <= 7) cls += ' due-soon';   // 期日1週間以内
+    else {
+      const dc = taskDueClass(t);
+      if(dc) cls += ' ' + dc;
     }
     if(t._expanded) cls += ' expanded';
     el.className = cls;
@@ -6850,7 +6879,7 @@ function _renderPersonalViewFromRows(allRowsIn){
       if(due && r.status !== '完了'){
         const d = diffDays(due, todayStr());
         if(d < 0){ dueColor = '#C0392B'; dueStr = `${due}（${-d}日超過）`; }
-        else if(d === 0){ dueColor = '#C0392B'; dueStr = `${due}（本日）`; }
+        else if(d <= 3){ dueColor = '#E67E22'; dueStr = `${due}（あと${d}日）`; }
         else if(d <= 7){ dueColor = '#B7950B'; dueStr = `${due}（あと${d}日）`; }
       }
       const projDisp = r.projectName
