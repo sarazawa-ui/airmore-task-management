@@ -1132,6 +1132,22 @@ header.app-header{padding:10px 22px}
       </div>
       <button class="btn" onclick="saveProfile()">💾 保存</button>
 
+      <div class="field" style="margin-top:22px">
+        <label>ワークスペースID</label>
+        <input type="text" id="cfgWorkspaceId" readonly style="font-family:Menlo,Consolas,monospace;background:var(--formula)">
+      </div>
+      <div class="field">
+        <label>招待URL（このリンクをチームに共有）</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <input type="text" id="cfgInviteUrl" readonly style="flex:1;min-width:240px;font-family:Menlo,Consolas,monospace;font-size:11px;background:var(--formula)">
+          <button class="btn sm" onclick="copyFirebaseInviteUrl()">📋 コピー</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn ghost" onclick="manualRegisterMember()">🔄 メンバー登録を再実行</button>
+        <button class="btn ghost" onclick="leaveWorkspace()">🚪 ワークスペース離脱</button>
+      </div>
+
       <h4 style="font-size:13.5px;color:var(--primary-dark);margin:26px 0 8px;border-top:1px solid var(--border);padding-top:18px">👥 参加メンバー</h4>
       <div class="member-list" id="memberList"></div>
       <p class="help" style="font-size:11px;color:#666;margin-top:8px">※ 各メンバーがGoogleでログインすると、ここに自動追加されます（最初にログインした方がオーナー）。</p>
@@ -1277,25 +1293,12 @@ header.app-header{padding:10px 22px}
         <div class="help">通常はデフォルト設定のままで動作します。別のFirebaseプロジェクトに接続したい場合のみ上書きしてください。<br>Firebase Console → プロジェクト設定 → 全般 → 「マイアプリ」 → ウェブアプリの設定 → SDK 設定と構成 → 「構成」をコピー</div>
         <button class="btn sm ghost" onclick="resetToDefaultFirebaseConfig()" style="margin-top:6px">🔄 デフォルト設定に戻す</button>
       </div>
-      <div class="field">
-        <label>ワークスペースID</label>
-        <input type="text" id="cfgWorkspaceId" readonly style="font-family:Menlo,Consolas,monospace;background:var(--formula)">
-      </div>
-      <div class="field">
-        <label>招待URL（このリンクをチームに共有）</label>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <input type="text" id="cfgInviteUrl" readonly style="flex:1;min-width:240px;font-family:Menlo,Consolas,monospace;font-size:11px;background:var(--formula)">
-          <button class="btn sm" onclick="copyFirebaseInviteUrl()">📋 コピー</button>
-        </div>
-      </div>
       <div style="display:flex;gap:8px;margin-top:18px;flex-wrap:wrap">
         <button class="btn" onclick="saveFirebaseConfigUI()">💾 設定を保存・接続</button>
-        <button class="btn ghost" onclick="manualRegisterMember()">🔄 メンバー登録を再実行</button>
-        <button class="btn ghost" onclick="leaveWorkspace()">🚪 ワークスペース離脱</button>
       </div>
 
       <div style="margin-top:18px;padding:10px 14px;background:#EBF5FB;border:1px solid var(--primary-light);border-radius:7px;font-size:11.5px;color:var(--text-soft)">
-        👥 参加メンバー一覧は <strong>「🏢 ワークスペース情報」</strong> ペインに移動しました。
+        🆔 ワークスペースID・招待URL・👥 参加メンバー一覧・🚪 離脱／メンバー登録再実行は <strong>「🏢 ワークスペース情報」</strong> ペインに移動しました。
       </div>
       <div style="margin-top:18px;padding:14px;background:#FFF8DC;border:1px solid #FFD966;border-radius:7px;font-size:11.5px;line-height:1.6">
         <strong style="color:#5a4600">⚙ Firestore セキュリティルール（必須）：</strong><br>
@@ -6079,7 +6082,8 @@ function closeSettingsModal(){
 function switchSettingsPane(pane){
   document.querySelectorAll('.settings-nav button').forEach(b=>b.classList.toggle('active', b.dataset.pane===pane));
   document.querySelectorAll('.settings-pane').forEach(p=>p.classList.toggle('active', p.id==='pane-'+pane));
-  if(pane==='workspace'){ renderProfileForm(); renderMemberPane(); }
+  // ワークスペース情報ペインは ID/招待URL も表示するので renderFirebaseSettings も呼ぶ
+  if(pane==='workspace'){ renderProfileForm(); renderMemberPane(); renderFirebaseSettings(); }
   else if(pane==='profile') renderProfileForm();
   else if(pane==='history') renderHistory();
   else if(pane==='master') renderMaster();
