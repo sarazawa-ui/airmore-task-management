@@ -1107,7 +1107,7 @@ header.app-header{padding:10px 22px}
     <div class="settings-layout">
     <div class="settings-nav">
       <div class="label">ワークスペース設定</div>
-      <button class="active" data-pane="workspace">🏢 ワークスペース名</button>
+      <button class="active" data-pane="workspace">🏢 ワークスペース情報</button>
       <button data-pane="master">📋 マスタ管理</button>
       <button data-pane="firebase">☁️ クラウド同期</button>
       <button data-pane="history">📜 編集履歴</button>
@@ -1122,7 +1122,7 @@ header.app-header{padding:10px 22px}
 
   <!-- Workspace pane -->
   <div class="settings-pane active" id="pane-workspace">
-    <h3>🏢 ワークスペース設定</h3>
+    <h3>🏢 ワークスペース情報</h3>
     <div id="wsInfoBanner" style="background:#EBF5FB;border:1px solid var(--primary-light);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--text-soft);margin-bottom:14px"></div>
     <div class="profile-form">
       <div class="field">
@@ -1131,6 +1131,11 @@ header.app-header{padding:10px 22px}
         <div class="help">ヘッダーのワークスペース切替メニューや「マイタスク横断」ビューに表示される識別名です。参加メンバー全員に共有されます。</div>
       </div>
       <button class="btn" onclick="saveProfile()">💾 保存</button>
+
+      <h4 style="font-size:13.5px;color:var(--primary-dark);margin:26px 0 8px;border-top:1px solid var(--border);padding-top:18px">👥 参加メンバー</h4>
+      <div class="member-list" id="memberList"></div>
+      <p class="help" style="font-size:11px;color:#666;margin-top:8px">※ 各メンバーがGoogleでログインすると、ここに自動追加されます（最初にログインした方がオーナー）。</p>
+
       <div id="wsDangerZone" style="display:none;margin-top:24px;padding-top:18px;border-top:2px solid #FADBD8">
         <h4 style="color:#C0392B;margin:0 0 8px">⚠ 危険な操作（オーナー専用）</h4>
         <div style="color:var(--text-soft);font-size:12px;margin-bottom:10px">
@@ -1289,9 +1294,9 @@ header.app-header{padding:10px 22px}
         <button class="btn ghost" onclick="leaveWorkspace()">🚪 ワークスペース離脱</button>
       </div>
 
-      <h3 style="font-size:14px;color:var(--header);margin:24px 0 8px;border-top:1px solid var(--border);padding-top:18px">👥 参加メンバー</h3>
-      <div class="member-list" id="memberList"></div>
-      <p class="help" style="font-size:11px;color:#666;margin-top:8px">※ 各メンバーがGoogleでログインすると、ここに自動追加されます（最初にログインした方がオーナー）。</p>
+      <div style="margin-top:18px;padding:10px 14px;background:#EBF5FB;border:1px solid var(--primary-light);border-radius:7px;font-size:11.5px;color:var(--text-soft)">
+        👥 参加メンバー一覧は <strong>「🏢 ワークスペース情報」</strong> ペインに移動しました。
+      </div>
       <div style="margin-top:18px;padding:14px;background:#FFF8DC;border:1px solid #FFD966;border-radius:7px;font-size:11.5px;line-height:1.6">
         <strong style="color:#5a4600">⚙ Firestore セキュリティルール（必須）：</strong><br>
         Firebase Console → Firestore Database → ルールタブ で下記を貼り付けて「公開」してください。<br>
@@ -6074,11 +6079,12 @@ function closeSettingsModal(){
 function switchSettingsPane(pane){
   document.querySelectorAll('.settings-nav button').forEach(b=>b.classList.toggle('active', b.dataset.pane===pane));
   document.querySelectorAll('.settings-pane').forEach(p=>p.classList.toggle('active', p.id==='pane-'+pane));
-  if(pane==='workspace' || pane==='profile') renderProfileForm();
+  if(pane==='workspace'){ renderProfileForm(); renderMemberPane(); }
+  else if(pane==='profile') renderProfileForm();
   else if(pane==='history') renderHistory();
   else if(pane==='master') renderMaster();
   else if(pane==='display') renderDisplaySettings();
-  else if(pane==='firebase'){ renderFirebaseSettings(); renderMemberPane(); }
+  else if(pane==='firebase') renderFirebaseSettings();
 }
 document.addEventListener('click', e=>{
   if(e.target.matches('.settings-nav button')){
