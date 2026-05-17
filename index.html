@@ -2299,6 +2299,78 @@ function newNode(name=""){
   S.seq.node = (S.seq.node||0)+1;
   return {id:"N"+S.seq.node, name, children:[], taskId:null};
 }
+// プロジェクト単位でデイリータスクを CSV エクスポート（Excel で開ける UTF-8 BOM 付き）
+function exportProjectTasksCSV(goalId){
+  const goal = S.goals.find(g => g.id === goalId);
+  if(!goal){ toast('プロジェクトが見つかりません'); return; }
+  const linked = S.tasks.filter(t => t.goal === goalId);
+  if(linked.length === 0){ toast('エクスポート対象のタスクがありません'); return; }
+  // 親→子の順に並べ替え
+  const childByParent = {};
+  const parents = [];
+  linked.forEach(t => {
+    if(t.parentTaskId) (childByParent[t.parentTaskId] = childByParent[t.parentTaskId] || []).push(t);
+    else parents.push(t);
+  });
+  const ordered = [];
+  parents.forEach(p => {
+    ordered.push({task:p, depth:0});
+    (childByParent[p.id]||[]).forEach(c => ordered.push({task:c, depth:1}));
+    delete childByParent[p.id];
+  });
+  Object.keys(childByParent).forEach(pid => childByParent[pid].forEach(c => ordered.push({task:c, depth:0})));
+
+  const taskById = {};
+  S.tasks.forEach(t => { taskById[t.id] = t; });
+  const headers = [
+    'タスクID','階層','親タスクID','親タスク名','アクション','担当者',
+    '開始日','時刻','期日','ステータス','所要(分)','実績(分)',
+    '中項目(mid)','成果物(defn)','備考(note)'
+  ];
+  const csvEscape = (v) => {
+    const s = (v==null) ? '' : String(v);
+    // CSV: " → ""、カンマ/改行/" を含むなら "..." で囲む
+    const needsQuote = /[",\r\n]/.test(s);
+    const esc = s.replace(/"/g, '""');
+    return needsQuote ? `"${esc}"` : esc;
+  };
+  const lines = [headers.map(csvEscape).join(',')];
+  ordered.forEach(({task:t, depth})=>{
+    const parent = t.parentTaskId ? taskById[t.parentTaskId] : null;
+    const row = [
+      t.id,
+      depth===0 ? '親' : 'サブ',
+      t.parentTaskId || '',
+      parent ? (parent.act || parent.mid || '') : '',
+      t.act || t.mid || '',
+      t.owner || '',
+      t.startD || '',
+      t.time || '',
+      t.due || '',
+      t.status || '',
+      t.est ?? '',
+      t.act_min ?? '',
+      t.mid || '',
+      t.defn || '',
+      t.note || ''
+    ];
+    lines.push(row.map(csvEscape).join(','));
+  });
+  // UTF-8 BOM を先頭に付けて Excel が文字化けしないようにする
+  const csv = '﻿' + lines.join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+  const safeName = (goal.name || goal.id || 'project').replace(/[\\/:*?"<>|]/g,'_').slice(0,40);
+  const fname = `${safeName}_tasks_${todayStr()}.csv`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 100);
+  toast(`📊 ${linked.length}件のタスクを ${fname} に出力しました`);
+  logHistory('export', `${goal.id} のタスクを CSV 出力（${linked.length}件）`);
+}
+
 function renderTree(g){
   const root = document.getElementById('tree-'+g.id); if(!root) return;
   root.innerHTML = '';
@@ -2322,9 +2394,12 @@ function renderTree(g){
   const linked = S.tasks.filter(t=>t.goal===g.id);
   const linkedSection = document.createElement('div');
   linkedSection.style.cssText = 'padding:8px 12px;background:#fff;border-radius:8px;margin-bottom:10px;border:1px solid var(--border)';
-  let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:12px;font-weight:700;color:var(--primary-dark)">
+  let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:12px;font-weight:700;color:var(--primary-dark);gap:6px;flex-wrap:wrap">
     <span>📋 紐づくデイリータスク（${linked.length}件 / 完了 ${linked.filter(t=>t.status==='完了').length}件）</span>
-    <button class="btn sm ghost" data-add-linked style="padding:3px 9px;font-size:11px">＋ タスク追加</button>
+    <span style="display:inline-flex;gap:6px">
+      <button class="btn sm ghost" data-export-tasks title="このプロジェクトのタスクをExcel(CSV)でダウンロード" style="padding:3px 9px;font-size:11px">📊 Excel出力</button>
+      <button class="btn sm ghost" data-add-linked style="padding:3px 9px;font-size:11px">＋ タスク追加</button>
+    </span>
   </div>`;
   if(linked.length === 0){
     html += `<div style="color:var(--muted);font-size:11.5px;font-style:italic;padding:6px">まだタスクがありません。下の「タスク追加」または分解ツリーから作成できます。</div>`;
@@ -2475,6 +2550,10 @@ function renderTree(g){
       setTimeout(()=>focusSideTaskDetail(tid), 100);
     });
   });
+  const exportBtn = linkedSection.querySelector('[data-export-tasks]');
+  if(exportBtn) exportBtn.onclick = ()=>{
+    exportProjectTasksCSV(g.id);
+  };
   const addLinked = linkedSection.querySelector('[data-add-linked]');
   if(addLinked) addLinked.onclick = ()=>{
     S.seq.task = (S.seq.task||0)+1;
