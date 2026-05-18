@@ -2423,27 +2423,31 @@ function renderTree(g){
   if(linked.length === 0){
     html += `<div style="color:var(--muted);font-size:11.5px;font-style:italic;padding:6px">まだタスクがありません。下の「タスク追加」または分解ツリーから作成できます。</div>`;
   } else {
-    // 親→子の順に並べる（親タスク直下にサブタスクを字下げ表示）
+    // 親→子→孫…と再帰的に DFS で並べる（最大5階層など、任意の深さに対応）
+    const taskById = {};
     const childByParent = {};
-    const parents = [];
     linked.forEach(t=>{
+      taskById[t.id] = t;
       if(t.parentTaskId){
         (childByParent[t.parentTaskId] = childByParent[t.parentTaskId] || []).push(t);
-      } else {
-        parents.push(t);
       }
     });
+    // ルート：parentTaskId が空 OR 参照先が同じプロジェクトに無い
+    const rootTasks = linked.filter(t => !t.parentTaskId || !taskById[t.parentTaskId]);
     const ordered = [];
-    parents.forEach(p=>{
-      const kids = childByParent[p.id] || [];
-      ordered.push({task:p, depth:0, hasChildren:kids.length>0});
-      kids.forEach(c=> ordered.push({task:c, depth:1, hasChildren:false}));
-      delete childByParent[p.id];
-    });
-    // 孤児（親が削除された子タスク）
-    Object.keys(childByParent).forEach(pid=>{
-      childByParent[pid].forEach(c=> ordered.push({task:c, depth:0, hasChildren:false, orphan:true}));
-    });
+    const visited = new Set();
+    function pushSubtree(t, depth){
+      if(!t || visited.has(t.id)) return;
+      visited.add(t.id);
+      const kids = childByParent[t.id] || [];
+      // 親が同プロジェクト内に無い場合は孤児として表示するが、子は通常配下に置く
+      const isOrphan = !!(t.parentTaskId && !taskById[t.parentTaskId]);
+      ordered.push({task:t, depth, hasChildren: kids.length>0, orphan: isOrphan});
+      kids.forEach(c => pushSubtree(c, depth+1));
+    }
+    rootTasks.forEach(r => pushSubtree(r, 0));
+    // ループ参照や未到達の安全網
+    linked.forEach(t => { if(!visited.has(t.id)) ordered.push({task:t, depth:0, hasChildren:false, orphan:true}); });
     html += `<table style="font-size:11.5px;width:100%"><thead><tr>
       <th style="width:34px"></th>
       <th style="text-align:left">アクション</th>
@@ -2766,45 +2770,47 @@ function promoteNodeToTask(goal, node){
   if(node.taskId && S.tasks.some(t=>t.id===node.taskId)){
     if(!confirm("既にデイリータスク化されています。再生成しますか？")) return;
   }
-  // 親ノード解析：自分が depth=1（サブノード）なら、親ノードもタスク化する
+  // 分解ツリーの祖先チェーン全体を辿り、各祖先をタスク化（未作成なら）して
+  // parentTaskId で繋ぐ。これで深い階層（2階層目以下）のタスク化でも
+  // 親子チェーンが保たれ、「親なし」表記にならない
   const path = findNodePath(goal.breakdown, node) || [node];
-  const parentNode = path.length > 1 ? path[path.length - 2] : null;
-  let parentTaskId = '';
-  let parentName = '';
-  if(parentNode){
-    parentName = parentNode.name || '';
-    // 親もまだタスク化されていなければ先にタスク化（再帰的にならないよう depth=0 前提）
-    if(parentNode.taskId && S.tasks.some(t=>t.id===parentNode.taskId)){
-      parentTaskId = parentNode.taskId;
-    } else {
-      S.seq.task = (S.seq.task||0)+1;
-      const pid = "T-"+String(S.seq.task).padStart(3,'0');
-      S.tasks.push({
-        id: pid, goal: goal.id, mid: parentName, act: parentName || '(無題)',
-        owner: goal.owner||"", startD:"", due: goal.due||"",
-        slot:"", pri:"", mit:false, est:"", act_min:"", status:"未着手",
-        defn:"", interrupt:"", note:"", time:"",
-        parentTaskId:""
-      });
-      parentNode.taskId = pid;
-      parentTaskId = pid;
+  let parentTaskId = '';      // 直前の祖先タスクID
+  let parentName   = '';
+  let newCreated   = 0;
+  for(let i = 0; i < path.length; i++){
+    const cur = path[i];
+    const curName = cur.name || '(無題)';
+    const isTarget = (i === path.length - 1);
+    // 既存タスクがあれば、parentTaskId だけ最新チェーンに更新
+    if(cur.taskId && S.tasks.some(t => t.id === cur.taskId)){
+      const t = S.tasks.find(x => x.id === cur.taskId);
+      if(t.parentTaskId !== parentTaskId){
+        t.parentTaskId = parentTaskId;
+      }
+      parentTaskId = cur.taskId;
+      parentName = curName;
+      continue;
     }
+    // 未作成 → 新規タスク化
+    S.seq.task = (S.seq.task||0) + 1;
+    const id = "T-" + String(S.seq.task).padStart(3,'0');
+    S.tasks.push({
+      id, goal: goal.id, mid: parentName, act: curName,
+      owner: goal.owner||"", startD:"", due: goal.due||"",
+      slot:"", pri:"", mit:false, est:"", act_min:"", status:"未着手",
+      defn:"", interrupt:"", note:"", time:"",
+      parentTaskId: parentTaskId
+    });
+    cur.taskId = id;
+    parentTaskId = id;
+    parentName = curName;
+    newCreated++;
   }
-  S.seq.task = (S.seq.task||0)+1;
-  const id = "T-"+String(S.seq.task).padStart(3,'0');
-  S.tasks.push({
-    id, goal: goal.id, mid: parentName, act: node.name||"(無題)",
-    owner: goal.owner||"", startD:"", due: goal.due||"",
-    slot:"", pri:"", mit:false, est:"", act_min:"", status:"未着手",
-    defn:"", interrupt:"", note:"",
-    time:"", parentTaskId: parentTaskId
-  });
-  node.taskId = id;
   save(); renderAll();
-  const msg = parentTaskId
-    ? `タスク「${id}」を作成（親：${parentTaskId}）`
-    : `タスク「${id}」を作成しました`;
-  toast(msg);
+  const finalId = path[path.length - 1].taskId;
+  const finalTask = S.tasks.find(t => t.id === finalId);
+  const parentMsg = (finalTask && finalTask.parentTaskId) ? `（親：${finalTask.parentTaskId}）` : '';
+  toast(`タスク「${finalId}」を作成${parentMsg}` + (newCreated > 1 ? ` ・親系列も同時作成（${newCreated}件）` : ''));
 }
 function findNodePath(arr, target, path=[]){
   for(const n of arr){
