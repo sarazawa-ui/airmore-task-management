@@ -126,6 +126,15 @@ tr.done td input,tr.done td select,tr.done td textarea{color:#B2BABB;text-decora
 .kpt-box h4{margin:0;padding:8px 12px;background:var(--section);color:var(--header);font-size:13px}
 .kpt-box textarea{width:100%;border:none;padding:10px;min-height:160px;font:inherit;resize:vertical;outline:none;background:var(--input)}
 .master-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+/* Tree preset list */
+.tree-preset-list{display:flex;flex-direction:column;gap:8px}
+.tree-preset-card{border:1px solid var(--border);border-radius:7px;padding:8px 10px;background:#fff}
+.tree-preset-card .row1{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.tree-preset-card .row1 input.preset-name{flex:1;padding:4px 7px;border:1px solid var(--border);border-radius:4px;font:inherit;font-size:12.5px;font-weight:600}
+.tree-preset-card textarea.preset-items{width:100%;min-height:60px;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:11.5px;line-height:1.5;resize:vertical;background:#FCFDFE}
+.tree-preset-card .preset-actions{display:flex;gap:5px;margin-top:5px;justify-content:flex-end}
+.tree-preset-card .preset-actions button{font-size:11px;padding:3px 9px}
+.tree-preset-card .preset-count{font-size:10.5px;color:var(--muted);font-weight:600}
 .master-col h4{background:var(--section);color:var(--header);padding:6px 10px;margin:0 0 0 0;border-radius:4px 4px 0 0}
 .master-col ul{list-style:none;padding:0;margin:0;background:#fff;border:1px solid var(--border);border-top:none;border-radius:0 0 4px 4px}
 .master-col li{padding:6px 8px;border-bottom:1px solid #eee;display:flex;gap:6px;align-items:center}
@@ -1284,6 +1293,16 @@ header.app-header{padding:10px 22px}
       </div>
     </div>
     <p class="help" style="font-size:11px;color:#666;margin-top:8px">※ Googleでログインしたメンバーは「メンバー・招待」タブで自動管理。ここの「追加メンバー」はGoogleアカウントを持たないゲスト枠として使えます。</p>
+
+    <h4 style="margin-top:24px;padding-top:18px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">🌳 分解ツリーのプリセット</h4>
+    <div class="help" style="font-size:11.5px;line-height:1.6;margin:6px 0 10px">
+      プロジェクトの分解ツリーで「よく使う項目の組み合わせ」を登録できます。1行に1項目を入力してください。プロジェクトタブで分解ツリーを展開した際、プルダウンから選んで一括追加できます。
+    </div>
+    <div id="lstTreePresets" class="tree-preset-list"></div>
+    <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
+      <input type="text" id="newPresetName" placeholder="プリセット名（例：標準キックオフ）" style="flex:1;min-width:160px;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font:inherit">
+      <button class="btn sm" onclick="addTreePreset()">＋ プリセット追加</button>
+    </div>
   </div>
 
   <!-- Cloud sync (Firebase) pane -->
@@ -2598,14 +2617,47 @@ function renderTree(g){
     root.appendChild(ul);
   }
   const addBtn = document.createElement('div');
-  addBtn.style.padding = '4px 16px 8px';
-  addBtn.innerHTML = `<button style="font-size:11px;padding:4px 12px;background:var(--primary);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit">＋ 分解項目を追加</button>`;
-  addBtn.querySelector('button').onclick = ()=>{
+  addBtn.style.cssText = 'padding:6px 16px 8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+  const presets = Array.isArray(S.treePresets) ? S.treePresets : [];
+  const presetOptions = presets.length
+    ? `<select class="preset-pick" style="padding:5px 8px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:11px;background:#fff">
+         <option value="">📚 プリセットから追加…</option>
+         ${presets.map(p=>`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name||'(無名)')}（${(p.items||[]).length}項目）</option>`).join('')}
+       </select>`
+    : `<span style="font-size:11px;color:var(--muted)">※プリセット未登録：⚙設定 → 📋 マスタ管理 で登録できます</span>`;
+  addBtn.innerHTML = `
+    <button class="add-node-btn" style="font-size:11px;padding:4px 12px;background:var(--primary);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit">＋ 分解項目を追加</button>
+    ${presetOptions}
+  `;
+  addBtn.querySelector('.add-node-btn').onclick = ()=>{
     if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
     g.breakdown.push(newNode("新しい項目"));
     save();
     renderGoals();
   };
+  const sel = addBtn.querySelector('.preset-pick');
+  if(sel){
+    sel.addEventListener('change', ()=>{
+      const pid = sel.value;
+      if(!pid) return;
+      const p = (S.treePresets||[]).find(x=>x.id===pid);
+      if(!p || !Array.isArray(p.items) || p.items.length===0){
+        toast('このプリセットには項目がありません');
+        sel.value = ''; return;
+      }
+      if(!confirm(`プリセット「${p.name}」の ${p.items.length} 項目を分解ツリーに追加しますか？`)){
+        sel.value = ''; return;
+      }
+      const cur = S.goals.find(x=>x.id===g.id); if(!cur){ sel.value=''; return; }
+      cur.breakdown = cur.breakdown || [];
+      p.items.forEach(name => cur.breakdown.push(newNode(name)));
+      // 追加が見えるよう、ツリーセクションを開く
+      cur._treeCollapsed = false;
+      save(true, `プリセット「${p.name}」を ${cur.id} に適用（${p.items.length}項目）`);
+      renderGoals();
+      toast(`✅ ${p.items.length}項目を追加しました`);
+    });
+  }
   root.appendChild(addBtn);
 }
 function renderNode(goal, node, parentArr, depth){
@@ -3294,6 +3346,82 @@ function renderMaster(){
   });
   renderSimpleList('lstStatuses', S.statuses, v=>{S.statuses=v;save();renderAll();});
   renderSimpleList('lstAreas', S.areas, v=>{S.areas=v;save();renderAll();});
+  renderTreePresetsList();
+}
+
+// ===== 分解ツリーのプリセット マスタ =====
+function _genPresetId(){
+  return 'P-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,6);
+}
+function renderTreePresetsList(){
+  const host = document.getElementById('lstTreePresets');
+  if(!host) return;
+  host.innerHTML = '';
+  if(!Array.isArray(S.treePresets)) S.treePresets = [];
+  if(S.treePresets.length === 0){
+    host.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:11.5px;background:#FAFBFC;border:1px dashed var(--border);border-radius:6px;text-align:center">プリセットがまだ登録されていません。下の入力欄から追加してください。</div>';
+    return;
+  }
+  S.treePresets.forEach((p, idx)=>{
+    if(!p.id) p.id = _genPresetId();
+    const itemsText = Array.isArray(p.items) ? p.items.join('\n') : '';
+    const card = document.createElement('div');
+    card.className = 'tree-preset-card';
+    card.innerHTML = `
+      <div class="row1">
+        <input type="text" class="preset-name" data-pf="name" value="${escapeHtml(p.name||'')}" placeholder="プリセット名">
+        <span class="preset-count">${(p.items||[]).length}項目</span>
+      </div>
+      <textarea class="preset-items" data-pf="items" placeholder="1行に1項目（例：&#10;キックオフ会議の準備&#10;議事録テンプレ作成&#10;参加者リスト確定）">${escapeHtml(itemsText)}</textarea>
+      <div class="preset-actions">
+        <button class="btn sm ghost" data-act="dup">📋 複製</button>
+        <button class="btn sm ghost" data-act="del" style="color:#c0392b">✕ 削除</button>
+      </div>`;
+    const presetId = p.id;
+    const getCur = ()=> S.treePresets.find(x=>x.id===presetId) || p;
+    card.querySelector('[data-pf="name"]').addEventListener('change', e=>{
+      const cur = getCur();
+      cur.name = e.target.value.trim();
+      save(true, `プリセット名を更新：${cur.name}`);
+    });
+    card.querySelector('[data-pf="items"]').addEventListener('change', e=>{
+      const cur = getCur();
+      cur.items = e.target.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+      save(true, `プリセット「${cur.name}」の項目を更新`);
+      // 件数表示のみ更新（フォーカス維持）
+      const cnt = card.querySelector('.preset-count');
+      if(cnt) cnt.textContent = cur.items.length + '項目';
+    });
+    card.querySelector('[data-act="dup"]').onclick = ()=>{
+      const cur = getCur();
+      const copy = JSON.parse(JSON.stringify(cur));
+      copy.id = _genPresetId();
+      copy.name = (cur.name||'') + ' (コピー)';
+      S.treePresets.push(copy);
+      save(true, `プリセット複製：${copy.name}`);
+      renderTreePresetsList();
+    };
+    card.querySelector('[data-act="del"]').onclick = ()=>{
+      if(!confirm(`プリセット「${p.name||'(無名)'}」を削除しますか？`)) return;
+      const i = S.treePresets.findIndex(x=>x.id===presetId);
+      if(i>=0) S.treePresets.splice(i,1);
+      save(true, `プリセット削除：${p.name||''}`);
+      renderTreePresetsList();
+      renderGoals(); // ツリー側のプルダウンも更新
+    };
+    host.appendChild(card);
+  });
+}
+function addTreePreset(){
+  const nameEl = document.getElementById('newPresetName');
+  const name = (nameEl?.value || '').trim();
+  if(!name){ alert('プリセット名を入力してください'); nameEl?.focus(); return; }
+  if(!Array.isArray(S.treePresets)) S.treePresets = [];
+  S.treePresets.push({ id:_genPresetId(), name, items: [] });
+  if(nameEl) nameEl.value = '';
+  save(true, `プリセット追加：${name}`);
+  renderTreePresetsList();
+  renderGoals();
 }
 function addArea(){ const v=document.getElementById('newArea').value.trim(); if(v){S.areas.push(v);document.getElementById('newArea').value="";save();renderAll();}}
 function renderSimpleList(id, arr, setter){
@@ -5164,7 +5292,7 @@ function serializeWorkspace(){
   // events（カレンダー予定）はユーザー個別のため共有しない
   // 各ユーザーのGoogleカレンダー予定はそのユーザーのlocalStorageにのみ保持
   // 'profile'（会社名・ロゴ・メモ）はユーザー共通のためローカルにのみ保持
-  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs'];
+  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs','treePresets'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
   // goals.expanded はUI状態（個人別）のため同期から除外
@@ -6907,6 +7035,7 @@ function ensureDefaults(){
   if(!S.authMembers) S.authMembers = [];
   if(!S.history) S.history = [];
   if(!S.userPrefs) S.userPrefs = {};
+  if(!Array.isArray(S.treePresets)) S.treePresets = [];
   // 旧 __local__ キーがあれば _local_ に移行（Firestoreフィールド名規則対応）
   if(S.userPrefs.__local__){
     S.userPrefs._local_ = Object.assign({}, S.userPrefs._local_||{}, S.userPrefs.__local__);
