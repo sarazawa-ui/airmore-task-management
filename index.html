@@ -6268,6 +6268,8 @@ function openSettingsModal(pane){
 }
 function closeSettingsModal(){
   document.getElementById('settingsModal').classList.remove('show');
+  // 未保存ドラフトは破棄（次回開いたときは S の確定値で再表示）
+  _clearProfileDraft();
 }
 function switchSettingsPane(pane){
   document.querySelectorAll('.settings-nav button').forEach(b=>b.classList.toggle('active', b.dataset.pane===pane));
@@ -6359,12 +6361,35 @@ function checkCapacityForDrop(dateStr, taskId, durMin){
 }
 
 // ============ Profile ============
+// 設定モーダル内の未保存ドラフト（保存ボタン押下 or モーダル閉鎖時にクリア）
+// 入力済みの内容が他要因（snapshot 適用後の再描画、ペイン切替）で消えるのを防止する
+const _profileDraft = { wsName: null, companyName: null, companyMemo: null };
+function _bindProfileDraft(){
+  const fields = [
+    {id:'wsNameInput', key:'wsName'},
+    {id:'companyName', key:'companyName'},
+    {id:'companyMemo', key:'companyMemo'},
+  ];
+  fields.forEach(f=>{
+    const el = document.getElementById(f.id);
+    if(!el || el._draftBound) return;
+    el._draftBound = true;
+    el.addEventListener('input', ()=>{ _profileDraft[f.key] = el.value; });
+  });
+}
+function _clearProfileDraft(){
+  _profileDraft.wsName = null;
+  _profileDraft.companyName = null;
+  _profileDraft.companyMemo = null;
+}
 function renderProfileForm(){
   const p = S.profile||{};
   const wsInput = document.getElementById('wsNameInput');
-  if(wsInput) wsInput.value = S.wsName || p.companyName || '';
-  document.getElementById('companyName').value = p.companyName||'';
-  document.getElementById('companyMemo').value = p.companyMemo||'';
+  // ドラフトがあれば優先（未保存の入力を保持）。なければ S から復元
+  if(wsInput) wsInput.value = (_profileDraft.wsName !== null) ? _profileDraft.wsName : (S.wsName || p.companyName || '');
+  document.getElementById('companyName').value = (_profileDraft.companyName !== null) ? _profileDraft.companyName : (p.companyName||'');
+  document.getElementById('companyMemo').value = (_profileDraft.companyMemo !== null) ? _profileDraft.companyMemo : (p.companyMemo||'');
+  _bindProfileDraft();
   const prev = document.getElementById('logoPreview');
   if(p.companyLogo) prev.innerHTML = `<img src="${p.companyLogo}" alt="">`;
   else prev.textContent = 'ロゴなし';
@@ -6409,6 +6434,8 @@ function saveProfile(){
     if(typeof _origSave === 'function') _origSave();
     else localStorage.setItem(LS_KEY, JSON.stringify(S));
   }
+  // 保存できたのでドラフトをクリア（次回モーダル展開時は S から再ロード）
+  _clearProfileDraft();
   applyProfileToHeader();
   if(typeof refreshWorkspaceSwitcher === 'function') refreshWorkspaceSwitcher();
   toast("保存しました");
