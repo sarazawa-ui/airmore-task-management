@@ -2609,7 +2609,7 @@ function renderTree(g){
   if(g.breakdown.length===0){
     const empty = document.createElement('div');
     empty.className = 'tree-empty';
-    empty.textContent = 'タスクを階層的に分解して整理できます（最大2階層）。';
+    empty.textContent = 'タスクを階層的に分解して整理できます（最大5階層）。';
     root.appendChild(empty);
   } else {
     const ul = document.createElement('ul');
@@ -2667,8 +2667,8 @@ function renderNode(goal, node, parentArr, depth){
   const hasChildren = !!(node.children && node.children.length);
   const collapsed = hasChildren && node.collapsed === true;
   const toggleIcon = hasChildren ? (collapsed ? '▸' : '▾') : '•';
-  // 最大2階層：depth=0 は親、depth=1 はサブ。サブ階層では「＋ サブ」を表示しない
-  const canAddSub = depth < 1;
+  // 最大5階層（depth: 0,1,2,3,4）。最深部では「＋ サブ」を表示しない
+  const canAddSub = depth < 4;
   li.innerHTML = `
     <div class="tree-node${depth>0?' depth-sub':''}">
       <span class="toggle${hasChildren?' clickable':''}" title="${hasChildren?(collapsed?'子要素を展開':'子要素を折りたたみ'):''}">${toggleIcon}</span>
