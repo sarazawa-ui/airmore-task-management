@@ -7253,9 +7253,52 @@ if(_currentUser){
     }, 500);
   }
   setTimeout(()=>{ try { googleFetchEvents(true); } catch(e){} }, 600);
+  // ★ 招待 URL（?ws=...）処理：既ログイン状態でも案内する
+  setTimeout(()=>{ try { handleInviteUrlIfPresent(); } catch(e){ console.warn(e); } }, 800);
 } else {
   // If invite hash but no session, show invite banner on login
   hideApp();
+}
+
+// 既ログイン状態で招待 URL を踏んだ場合：当該ワークスペースへ切替するか確認
+async function handleInviteUrlIfPresent(){
+  const inviteWs = readWsFromUrl();
+  if(!inviteWs) return;
+  // 同じワークスペースなら何もしない（URL だけ掃除）
+  if(inviteWs === S.workspaceId){
+    _cleanInviteUrl();
+    return;
+  }
+  // Firebase が準備できるまで少し待つ
+  let tries = 0;
+  while((!_firebaseReady || !firebase.auth || !firebase.auth().currentUser) && tries < 20){
+    await new Promise(r => setTimeout(r, 250));
+    tries++;
+  }
+  if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser){
+    toast('クラウド同期が初期化されていないため、招待ワークスペースに参加できません。再ログインしてください。');
+    return;
+  }
+  const curName = S.wsName || S.workspaceId || '(現在のワークスペース)';
+  const msg = `🔗 招待ワークスペース「${inviteWs}」への参加リンクを開きました。\n\n現在：${curName}\n\nこのワークスペースに切り替えますか？\n（現在のワークスペースのデータはクラウドに保管されており、いつでも切り替えで戻れます）`;
+  if(!confirm(msg)){
+    _cleanInviteUrl();
+    return;
+  }
+  try{
+    await switchWorkspace(inviteWs);
+  }catch(e){
+    console.error('Invite join failed:', e);
+    alert('招待ワークスペースへの参加に失敗しました：' + (e.message || e));
+  }
+  _cleanInviteUrl();
+}
+function _cleanInviteUrl(){
+  try{
+    const url = new URL(window.location);
+    url.searchParams.delete('ws');
+    history.replaceState(null, '', url.pathname + (url.search ? url.search : '') + url.hash);
+  }catch(e){}
 }
 // Refresh now-line every minute
 setInterval(()=>{ if(document.getElementById('view-calendar').classList.contains('active')) renderCalendar(); }, 60000);
