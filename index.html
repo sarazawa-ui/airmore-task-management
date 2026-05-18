@@ -5034,7 +5034,11 @@ function _pruneOldPending(){
     _pendingDeletions[k].forEach((ts, id)=>{ if(now - ts > PENDING_ITEM_TTL) _pendingDeletions[k].delete(id); });
   });
 }
-// snapshot 適用時：ローカルで直近追加した項目を温存し、ローカルで削除した項目を再出現させない
+// snapshot 適用時：ローカル直近操作（追加・編集・削除）を温存して remote の巻き戻しを防ぐ
+// - 追加：remote に未反映ならローカル版を追加
+// - 編集：remote にも存在するが TTL 内なら remote 側を「ローカル版で上書き」（古い snapshot に
+//        ローカル編集が潰されるオシレーションを根絶）
+// - 削除：remote にあってもローカルから既に消えているなら remote 側から除去
 function _mergePendingItems(remoteArr, kind){
   _pruneOldPending();
   const pendingAdd = _pendingItems[kind];
@@ -5044,11 +5048,18 @@ function _mergePendingItems(remoteArr, kind){
   if(pendingDel.size){
     result = result.filter(x => !x || !pendingDel.has(x.id));
   }
-  // 2) ローカル追加が remote に未反映なら追加
+  // 2) ローカル直近編集/追加で remote 側を上書き
   if(pendingAdd.size){
-    const remoteIds = new Set(result.map(x => x && x.id).filter(Boolean));
+    const idxMap = new Map();
+    result.forEach((item, i)=>{ if(item && item.id) idxMap.set(item.id, i); });
     pendingAdd.forEach((v, id)=>{
-      if(!remoteIds.has(id)) result.push(v.snapshot);
+      if(idxMap.has(id)){
+        // 両方にある → ローカル版（最近 save した状態）で上書き
+        result[idxMap.get(id)] = v.snapshot;
+      } else {
+        // remote に未反映のローカル項目 → 追加
+        result.push(v.snapshot);
+      }
     });
   }
   return result;
