@@ -40,7 +40,7 @@ body{font-family:"Meiryo UI","Hiragino Sans","Yu Gothic UI",-apple-system,sans-s
 body > header,body > nav,body > main{flex:0 0 auto}
 /* scrollbar-gutter: stable でバー出現時のレイアウト揺れを防止 */
 body > main{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-gutter:stable;width:100%}
-header{background:#fff;color:var(--text);padding:10px 20px;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow-sm);position:sticky;top:0;z-index:10;border-bottom:1px solid var(--border)}
+header{background:#fff;color:var(--text);padding:10px 20px;display:flex;align-items:center;gap:12px;box-shadow:var(--shadow-sm);position:sticky;top:0;z-index:40;border-bottom:1px solid var(--border)}
 header h1{margin:0;font-size:15px;font-weight:600;color:var(--text)}
 header .today{font-size:12px;color:var(--muted);margin-left:auto}
 nav{display:flex;align-items:center;background:#fff;padding:0 12px;flex-wrap:wrap;border-bottom:1px solid var(--border);box-shadow:var(--shadow-sm)}
@@ -4996,6 +4996,7 @@ let _isRemoteUpdate = false;
 let _pendingLocalChanges = false; // ローカルに未同期の変更があるか
 let _deferredSnapshot = null;     // 未同期中に届いたスナップショット
 let _lastLocalChange = 0;         // 直近のローカル変更時刻（ms）
+let _lastSuccessfulWriteAt = 0;   // 直近の Firestore write 成功時刻（ms）
 let _snapshotApplyTimer = null;   // クールダウン後の遅延適用タイマー
 let _writeVersion = 0;            // 書込バージョン（race condition 検出用）
 const SYNC_COOLDOWN_MS = 2500;    // ローカル変更後この時間はスナップショットを適用しない（連続操作の中間状態が古いsnapshotで巻き戻る現象を防止）
@@ -5281,6 +5282,12 @@ function applySnapshotData(data, wsId){
     _deferredSnapshot = data;
     return;
   }
+  // ★ 強い防御：直近のローカル変更が「まだ Firestore に書込確認されていない」場合は適用しない
+  //   （クォータ超過や書込遅延中に、古い snapshot で巻き戻る現象を完全に防ぐ）
+  if(_lastLocalChange > 0 && _lastLocalChange > _lastSuccessfulWriteAt){
+    _deferredSnapshot = data;
+    return;
+  }
   const _since = Date.now() - _lastLocalChange;
   if(_since < SYNC_COOLDOWN_MS){
     _deferredSnapshot = data;
@@ -5422,14 +5429,20 @@ function syncToFirestore(){
       const ws = serializeWorkspace();
       await firebase.firestore().doc(`workspaces/${S.workspaceId}`).set(ws, {merge:true});
       bumpFbUsage('write', 1);
+      _lastSuccessfulWriteAt = Date.now();
       // 自分の write が「最新」だった場合のみ pending フラグをクリア
       if(myVersion === _writeVersion){
         _pendingLocalChanges = false;
+        // 書込確認後：保留中の snapshot を再適用（このタイミングなら巻き戻らない）
+        const d = _deferredSnapshot;
         _deferredSnapshot = null;
+        if(d){
+          setTimeout(()=>{
+            try{ applySnapshotData(d, S.workspaceId); }catch(e){ console.warn('drain deferred snapshot failed:', e); }
+          }, 50);
+        }
       }
-      // 書き込み成功時は常に 'synced' に戻す（後続 write があってもそれが新たに 'syncing' を立てる）
-      // 「自分の最新書込以外」を 'syncing' のまま放置すると、後続 debounce が更に上書きされた場合
-      // 永遠に 'syncing' が解除されないため、ここでは常に成功シグナルを出す
+      // 書き込み成功時は常に 'synced' に戻す
       updateSyncStatus('synced');
     }catch(err){
       // エラー時：最新の write 担当ならフラグクリア
@@ -5474,6 +5487,8 @@ setInterval(()=>{
     console.warn('[sync] watchdog: force-clearing stuck syncing state');
     _pendingLocalChanges = false;
     _deferredSnapshot = null;
+    // strict guard も解除（書込が hung していても snapshot は適用可能にする）
+    _lastSuccessfulWriteAt = Date.now();
     updateSyncStatus('synced');
   }
 }, 1500);
