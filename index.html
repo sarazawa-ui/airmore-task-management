@@ -1516,7 +1516,14 @@ document.querySelectorAll('nav button').forEach(b=>{
 
 // ============ HELPERS ============
 function memberOptions(sel=""){
-  return '<option value=""></option>'+S.members.filter(m=>m.name).map(m=>`<option ${m.name===sel?'selected':''}>${escapeHtml(m.name)}</option>`).join('');
+  // authMembers（一度ログインしたユーザー）と members（マスタ追加メンバー）の和集合を生成。
+  // 名前で uniq、authMembers を優先。一度ログインしたメンバーは消えない。
+  const seen = new Set();
+  const names = [];
+  (S.authMembers||[]).forEach(am => { if(am && am.name && !seen.has(am.name)){ seen.add(am.name); names.push(am.name); }});
+  (S.members||[]).forEach(m => { if(m && m.name && !seen.has(m.name)){ seen.add(m.name); names.push(m.name); }});
+  if(sel && !seen.has(sel)) names.push(sel); // 既存タスクの担当者が一覧にない場合も保持
+  return '<option value=""></option>' + names.map(n=>`<option ${n===sel?'selected':''}>${escapeHtml(n)}</option>`).join('');
 }
 function statusOptions(sel=""){
   return '<option value=""></option>'+S.statuses.map(s=>`<option ${s===sel?'selected':''}>${escapeHtml(s)}</option>`).join('');
@@ -2502,7 +2509,8 @@ function renderTree(g){
       const becameDone = e.target.checked;
       if(becameDone){ t._prevStatus = t.status; t.status='完了'; }
       else t.status = (t._prevStatus && t._prevStatus!=='完了') ? t._prevStatus : '未着手';
-      save(true,`タスク完了切替：${t.id}`);
+      const parentChanged = applyParentAutoComplete(t.id);
+      save(true,`タスク完了切替：${t.id}` + (parentChanged.length?`（親タスクも完了：${parentChanged.join(',')}）`:''));
       renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
       if(becameDone) maybeNotifyOnComplete(t);
     });
@@ -2527,10 +2535,9 @@ function renderTree(g){
       const f = inp.dataset.tf;
       if(inp.type==='number' || inp.type==='range') t[f] = inp.value===''?'':Number(inp.value);
       else t[f] = inp.value;
+      // status 変更時：親タスクの自動完了を判定
+      if(f === 'status') applyParentAutoComplete(t.id);
       save(true,`タスク編集：${t.id}/${f}`);
-      // status変更時のみ全体再描画（進捗バー再計算）
-      // est（スライダー）は連続操作時にDOMが破壊されるとUI状態が壊れるため、
-      // 進捗バーの再計算を行わない（次回のrenderAll時に反映される）
       if(f === 'status'){
         renderGoals();
       }
@@ -3521,6 +3528,32 @@ const SLOT_TIME = {
   "夜間(18以降)":["18:00", 120],
 };
 
+// 子タスクの状態が全て「未着手・着手中」以外（完了/中止/保留）になったら、親タスクを完了にする
+// status を変更したタスクの id を返す（複数の場合はカスケード）
+function applyParentAutoComplete(changedTaskId){
+  if(!changedTaskId) return [];
+  const changed = [];
+  // 上に向かって親を辿りながら、毎階で「全ての子が非アクティブか」を判定
+  const seen = new Set();
+  let cursor = S.tasks.find(t => t.id === changedTaskId);
+  while(cursor && cursor.parentTaskId && !seen.has(cursor.parentTaskId)){
+    seen.add(cursor.parentTaskId);
+    const parent = S.tasks.find(t => t.id === cursor.parentTaskId);
+    if(!parent) break;
+    if(parent.status === '完了' || parent.status === '中止'){ cursor = parent; continue; }
+    const children = S.tasks.filter(c => c.parentTaskId === parent.id);
+    if(children.length === 0){ cursor = parent; continue; }
+    const allDone = children.every(c => c.status !== '未着手' && c.status !== '着手中');
+    if(allDone){
+      parent._prevStatus = parent.status;
+      parent.status = '完了';
+      changed.push(parent.id);
+    }
+    cursor = parent;
+  }
+  return changed;
+}
+
 // タスクの startD 設定／解除に応じて status を自動更新
 // 完了 / 中止 は手動状態を尊重して変更しない
 function applyAutoStatus(t){
@@ -3686,9 +3719,8 @@ function makeTaskBlock(t, allDay){
     if(dc) cls += ' ' + dc;
   }
   if(allDay) cls += ' allday';
-  // Fade other team members' tasks based on viewAsMember
-  // 「自分」として viewAsMember を選択中、または未選択時はログインユーザー名を「自分」とみなす
-  const va = S.ui.viewAsMember || (_currentUser && _currentUser.name) || '';
+  // viewAsMember が明示的に空（全員）の場合はフェード／強調を一切しない
+  const va = S.ui.viewAsMember || '';
   const isOthersTask = !!(va && t.owner && t.owner !== va);
   const isMyTask = !!(va && t.owner && t.owner === va);
   if(isOthersTask) cls += ' faded';
@@ -3923,6 +3955,9 @@ function goToGoal(goalId){
   }, 80);
 }
 
+// サイドバー詳細展開状態の保持（snapshot apply で _expanded が消える対策）
+let _expandedSideTaskId = null;
+
 // サイドバーからカレンダー上の該当タスクへジャンプし、2秒間点滅
 function focusTaskOnCalendar(taskId){
   const t = S.tasks.find(x=>x.id===taskId);
@@ -3974,8 +4009,10 @@ function focusSideTaskDetail(taskId){
     );
     if(!inTab){ S.ui.sideTab = 'all'; }
   }
+  // 展開状態は S.tasks._expanded だと snapshot apply で消えるため、
+  // モジュール変数に保持して renderSideTasks で復元する
+  _expandedSideTaskId = t.id;
   t._expanded = true;
-  // Clear other expansions (optional - keep multiple for compare)
   S.tasks.forEach(x=>{ if(x.id!==t.id) x._expanded = false; });
   renderSideTasks();
   // Scroll & highlight
@@ -4290,6 +4327,10 @@ function renderSideTasks(){
     return;
   }
   box.innerHTML = '';
+  // 展開状態をモジュール変数から復元（snapshot 適用でも維持）
+  if(_expandedSideTaskId){
+    S.tasks.forEach(x => { x._expanded = (x.id === _expandedSideTaskId); });
+  }
   list.forEach(t=>{
     const el = document.createElement('div');
     let cls = 'side-task';
@@ -4353,6 +4394,7 @@ function renderSideTasks(){
       const becameDone = e.target.checked;
       if(becameDone){ cur._prevStatus = cur.status; cur.status='完了'; }
       else cur.status = (cur._prevStatus && cur._prevStatus!=='完了') ? cur._prevStatus : '未着手';
+      applyParentAutoComplete(cur.id);
       save(); renderSideTasks(); renderCalendar(); renderDashboard(); renderGoals();
       if(becameDone) maybeNotifyOnComplete(cur);
     });
@@ -4363,6 +4405,7 @@ function renderSideTasks(){
         const f = inp.dataset.f;
         if(inp.type==='number') cur[f] = inp.value===''?'':Number(inp.value);
         else cur[f] = inp.value;
+        if(f === 'status') applyParentAutoComplete(cur.id);
         save(); renderSideTasks(); renderCalendar(); renderDashboard(); renderGoals();
       });
       inp.addEventListener('click',e=>e.stopPropagation());
@@ -4399,6 +4442,7 @@ function renderSideTasks(){
       const wasOpen = cur._expanded;
       S.tasks.forEach(x => { x._expanded = false; });
       cur._expanded = !wasOpen;
+      _expandedSideTaskId = wasOpen ? null : cur.id;
       renderSideTasks();
     };
     const gl = el.querySelector('.goal-link');
@@ -5175,11 +5219,25 @@ function _pruneOldPending(){
 // - 編集：remote にも存在するが TTL 内なら remote 側を「ローカル版で上書き」（古い snapshot に
 //        ローカル編集が潰されるオシレーションを根絶）
 // - 削除：remote にあってもローカルから既に消えているなら remote 側から除去
+// 直近 apply 後の ID セット（リモート削除を検出するために保持）
+const _lastAppliedIds = { tasks: new Set(), goals: new Set() };
 function _mergePendingItems(remoteArr, kind){
   _pruneOldPending();
   const pendingAdd = _pendingItems[kind];
   const pendingDel = _pendingDeletions[kind];
   let result = Array.isArray(remoteArr) ? remoteArr.slice() : [];
+  const remoteIds = new Set(result.map(x => x && x.id).filter(Boolean));
+  // ★ リモート削除の検出：
+  //   前回 apply に含まれていたが、今回 remote には居ない ID は別ユーザーによる削除とみなし、
+  //   自分の pendingAdd（最近編集）から外す。これで「他のユーザーが削除した項目を、
+  //   自分のローカル編集 pending が復活させてしまう」現象を防止。
+  if(_lastAppliedIds[kind].size){
+    _lastAppliedIds[kind].forEach(id => {
+      if(!remoteIds.has(id) && !pendingDel.has(id)){
+        pendingAdd.delete(id);
+      }
+    });
+  }
   // 1) 直近のローカル削除を尊重（remote に居てもまだローカル未確認なら除去）
   if(pendingDel.size){
     result = result.filter(x => !x || !pendingDel.has(x.id));
@@ -5198,6 +5256,8 @@ function _mergePendingItems(remoteArr, kind){
       }
     });
   }
+  // 次回比較のため最新セットを記録
+  _lastAppliedIds[kind] = new Set(result.map(x => x && x.id).filter(Boolean));
   return result;
 }
 
@@ -5484,11 +5544,28 @@ function applySnapshotData(data, wsId){
   }
   _isRemoteUpdate = true;
   // events（カレンダー予定）は個人別、profile（会社名・ロゴ）はユーザー共通のため、Firestoreデータで上書きしない
+  // メンバー系（authMembers / memberEmails / members）は両者を email/name で uniq マージ
+  //   → 一度ログインしたメンバーが、別ユーザーの wholesale 書込で消えるのを防ぐ
+  const _mergeMembersUniq = (a, b, keyFn) => {
+    const seen = new Set();
+    const out = [];
+    [...(a||[]), ...(b||[])].forEach(x => {
+      if(x == null) return;
+      const k = keyFn(x);
+      if(k != null && seen.has(k)) return;
+      if(k != null) seen.add(k);
+      out.push(x);
+    });
+    return out;
+  };
   Object.keys(data).forEach(k=>{
     if(k === 'createdAt' || k === 'events' || k === 'profile') return;
     // 直近書込中のローカル追加アイテムを温存（snapshot に未反映の場合を補正）
     if(k === 'tasks'){ S.tasks = _mergePendingItems(data.tasks, 'tasks'); return; }
     if(k === 'goals'){ S.goals = _mergePendingItems(data.goals, 'goals'); return; }
+    if(k === 'memberEmails'){ S.memberEmails = _mergeMembersUniq(S.memberEmails, data.memberEmails, e => e); return; }
+    if(k === 'authMembers'){  S.authMembers  = _mergeMembersUniq(S.authMembers,  data.authMembers,  m => m && m.email); return; }
+    if(k === 'members'){      S.members      = _mergeMembersUniq(S.members,      data.members,      m => m && m.name); return; }
     S[k] = data[k];
   });
   // goals の expanded 状態を復元（Firestoreデータには含まれないため）
@@ -6405,6 +6482,7 @@ function saveEditingTask(){
     if(inp.type==='number') t[f] = inp.value===''?'':Number(inp.value);
     else t[f] = inp.value;
   });
+  applyParentAutoComplete(t.id);
   save(true,`タスク編集：${t.id}`);
   renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
   closeTaskEditModal();
