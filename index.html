@@ -5428,11 +5428,36 @@ function _tombstoneSetFor(kind){
 // - 削除：remote にあってもローカルから既に消えているなら remote 側から除去
 // 直近 apply 後の ID セット（リモート削除を検出するために保持）
 const _lastAppliedIds = { tasks: new Set(), goals: new Set() };
+
+// ワークスペース切替時に呼ぶ：別 WS のキャッシュ／pending／ハッシュが新WSに混入するのを防止
+function _resetWorkspaceLocalCaches(){
+  _pendingItems.tasks.clear(); _pendingItems.goals.clear();
+  _pendingDeletions.tasks.clear(); _pendingDeletions.goals.clear();
+  _lastAppliedIds.tasks.clear(); _lastAppliedIds.goals.clear();
+  _appliedItemHashes.tasks.clear(); _appliedItemHashes.goals.clear();
+  _lastLocalChange = 0;
+  _lastSuccessfulWriteAt = 0;
+  _deferredSnapshot = null;
+  _pendingLocalChanges = false;
+  if(_snapshotApplyTimer){ clearTimeout(_snapshotApplyTimer); _snapshotApplyTimer = null; }
+  if(_saveDebounce){ clearTimeout(_saveDebounce); _saveDebounce = null; }
+}
 function _mergePendingItems(remoteArr, kind){
   _pruneOldPending();
   const pendingAdd = _pendingItems[kind];
   const pendingDel = _pendingDeletions[kind];
   let result = Array.isArray(remoteArr) ? remoteArr.slice() : [];
+  // 安全弁：ローカルに多数の項目があるのに remote が空 / 著しく少ない場合、
+  // バグや事故による一括消去の可能性が高いので、apply を中断してローカル保護＋警告
+  const localCount = ((kind === 'tasks' ? S.tasks : S.goals) || []).length;
+  if(localCount >= 3 && result.length === 0 && pendingDel.size === 0){
+    console.warn(`[hittatsu] aborted apply: remote ${kind} is empty but local has ${localCount} items. Keeping local data to prevent accidental wipe.`);
+    if(!window._hittatsuBulkWipeWarned){
+      window._hittatsuBulkWipeWarned = true;
+      setTimeout(()=>{ try{ toast(`⚠ サーバ側の${kind === 'tasks' ? 'タスク' : 'プロジェクト'}が空になりました。ローカルデータで保護しています。`); }catch(e){} }, 100);
+    }
+    return (kind === 'tasks' ? S.tasks : S.goals).slice();
+  }
   const remoteIds = new Set(result.map(x => x && x.id).filter(Boolean));
   // ★ リモート削除の検出：
   //   前回 apply に含まれていたが、今回 remote には居ない ID は別ユーザーによる削除とみなし、
@@ -5602,6 +5627,10 @@ function serializeWorkspace(){
 
 async function joinOrCreateWorkspace(targetWsId){
   if(!_firebaseReady){ alert("Firebaseが初期化されていません"); return false; }
+  // 別 WS のキャッシュが混入するのを防ぐ：ターゲットWSが現在の WS と違う場合のみリセット
+  if(targetWsId && targetWsId !== S.workspaceId){
+    _resetWorkspaceLocalCaches();
+  }
   const db = firebase.firestore();
   let wsId = targetWsId;
   if(wsId){
@@ -7449,6 +7478,13 @@ function ensureDefaults(){
   if(!Array.isArray(S.treePresets)) S.treePresets = [];
   if(!Array.isArray(S._tombstones)) S._tombstones = [];
   if(!S.board || typeof S.board !== 'object') S.board = { text:'', updatedAt:0, updatedBy:'' };
+  // 重要：tasks / goals が配列でない場合のフォールバック（undefined 由来のクラッシュ防止）
+  if(!Array.isArray(S.tasks)) S.tasks = [];
+  if(!Array.isArray(S.goals)) S.goals = [];
+  if(!Array.isArray(S.members)) S.members = [];
+  if(!Array.isArray(S.statuses)) S.statuses = [...(DEFAULT_STATE.statuses||[])];
+  if(!Array.isArray(S.priorities)) S.priorities = [...(DEFAULT_STATE.priorities||[])];
+  if(!Array.isArray(S.slots)) S.slots = [...(DEFAULT_STATE.slots||[])];
   // Tombstones の TTL 越え枝刈り
   {
     const now = Date.now();
