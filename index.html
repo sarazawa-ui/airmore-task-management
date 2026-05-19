@@ -1888,6 +1888,7 @@ function showKpiTasksPopup(title, tasks){
         if(!t) return;
         if(!confirm(`タスク「${t.id} ${t.act||''}」を削除しますか？`)) return;
         S.tasks.splice(S.tasks.indexOf(t),1);
+        _addTombstone('tasks', tid);
         save(true,`タスク削除：${tid}`);
         renderAll();
         // Refresh popup with updated tasks
@@ -2245,10 +2246,14 @@ function renderGoals(){
       }
       if(!confirm(msg)) return;
       const beforeCount = S.tasks.length;
+      const removedTaskIds = S.tasks.filter(t => t.goal === cur.id).map(t => t.id);
       S.tasks = S.tasks.filter(t => t.goal !== cur.id);
       const removedCount = beforeCount - S.tasks.length;
       const idx = S.goals.findIndex(x => x.id === cur.id);
       if(idx >= 0) S.goals.splice(idx, 1);
+      // 明示削除：Tombstone を立てて他クライアントでの復活を防止
+      _addTombstone('goals', cur.id);
+      removedTaskIds.forEach(id => _addTombstone('tasks', id));
       save(true, `プロジェクト削除：${cur.id}${removedCount?`（タスク${removedCount}件含む）`:''}`);
       renderAll();
       toast(`プロジェクト ${cur.id} を削除${removedCount?`（タスク${removedCount}件も削除）`:''}`);
@@ -2669,6 +2674,7 @@ function renderTree(g){
       const t = S.tasks.find(x=>x.id===tid); if(!t) return;
       if(!confirm(`タスク「${t.id} ${t.act||''}」を削除しますか？`)) return;
       S.tasks.splice(S.tasks.indexOf(t),1);
+      _addTombstone('tasks', tid);
       save(true,`タスク削除：${tid}`);
       renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
     });
@@ -3181,7 +3187,7 @@ function renderTasks(){
       });
     });
     tr.querySelector('.del-btn').onclick = ()=>{
-      if(confirm(`タスク「${t.id} ${t.act}」を削除しますか？`)){ S.tasks.splice(i,1); save(); renderAll(); }
+      if(confirm(`タスク「${t.id} ${t.act}」を削除しますか？`)){ const _tid = t.id; S.tasks.splice(i,1); _addTombstone('tasks', _tid); save(); renderAll(); }
     };
     tb.appendChild(tr);
   });
@@ -4570,6 +4576,7 @@ function renderSideTasks(){
       if(!confirm(`「${cur.id} ${cur.act||''}」を削除しますか？`)) return;
       const idx = S.tasks.findIndex(x=>x.id===cur.id);
       if(idx>=0) S.tasks.splice(idx,1);
+      _addTombstone('tasks', cur.id);
       save(); renderAll();
     };
     // Disable drag when interacting with form controls (slider, inputs, etc.)
@@ -5952,6 +5959,43 @@ function syncToFirestore(){
 }
 let _quotaToastedAt = 0;
 
+// ===== 緊急復旧用ユーティリティ（DevTools のコンソールから呼ぶ） =====
+// すべての Tombstone を消去して再書込。プロジェクト・タスクが Tombstone で
+// 見えなくなっている場合に、別ユーザーの localStorage からエクスポート → 取り込みする
+// 前段として呼んでください。
+window._hittatsuDebugClearTombstones = async function(){
+  if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser){
+    alert('Firebase に接続されていません'); return;
+  }
+  if(!S.workspaceId){ alert('ワークスペース未参加'); return; }
+  const tombs = (S._tombstones||[]);
+  if(!confirm(`Tombstone を ${tombs.length} 件すべて消去します。続行しますか？\n（消去後は別ユーザーの localStorage や JSON バックアップから取り込み直す前提です）`)) return;
+  S._tombstones = [];
+  // pending も全クリア
+  _pendingItems.tasks.clear(); _pendingItems.goals.clear();
+  _pendingDeletions.tasks.clear(); _pendingDeletions.goals.clear();
+  _lastAppliedIds.tasks.clear(); _lastAppliedIds.goals.clear();
+  // Firestore に直接 _tombstones=[] を書き込む（save() 経由だと再生成される恐れがあるため）
+  try{
+    await firebase.firestore().doc(`workspaces/${S.workspaceId}`).set({ _tombstones: [] }, {merge:true});
+    toast('🩹 Tombstone を消去しました。次にバックアップから取り込んでください。');
+    console.log('[hittatsu] tombstones cleared on workspace:', S.workspaceId);
+  }catch(e){
+    alert('Tombstone 消去失敗：' + (e.message||e));
+  }
+};
+// localStorage に保存されている現在の S を JSON でダウンロード（バックアップ）
+window._hittatsuDebugExportLocal = function(){
+  const json = JSON.stringify(S, null, 2);
+  const blob = new Blob([json], {type:'application/json;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `hittatsu_local_${S.workspaceId||'unknown'}_${todayStr()}.json`;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 200);
+  console.log('[hittatsu] localStorage S exported');
+};
+
 // 安全弁：syncing 状態が長時間続いている場合は自動で 'synced' に戻す
 // （write が完了しているのに version 不整合などで取り残された／await が hang したケースの保険）
 setInterval(()=>{
@@ -6718,7 +6762,9 @@ function deleteEditingTask(){
   const t = S.tasks.find(x=>x.id===_editingTaskId);
   if(!t){ closeTaskEditModal(); return; }
   if(!confirm(`タスク「${t.id} ${t.act||''}」を削除しますか？`)) return;
+  const _tid = t.id;
   S.tasks.splice(S.tasks.indexOf(t),1);
+  _addTombstone('tasks', _tid);
   save(true,`タスク削除：${t.id}`);
   renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
   closeTaskEditModal();
@@ -7297,12 +7343,13 @@ save = function(withLog, desc){
     _stampLocalModAt();
     const curTaskIds = new Set((S.tasks||[]).map(t => t && t.id).filter(Boolean));
     const curGoalIds = new Set((S.goals||[]).map(g => g && g.id).filter(Boolean));
-    // ② 「pendingに居たが今のSから消えた項目」「lastApplied に居たが今のSから消えた項目」
-    //    どちらも削除として扱い、Tombstone を立てる（永続削除）
-    _pendingItems.tasks.forEach((v, id)=>{ if(!curTaskIds.has(id)){ _markPendingDeletion('tasks', id); _addTombstone('tasks', id); }});
-    _pendingItems.goals.forEach((v, id)=>{ if(!curGoalIds.has(id)){ _markPendingDeletion('goals', id); _addTombstone('goals', id); }});
-    _lastAppliedIds.tasks.forEach(id => { if(!curTaskIds.has(id)){ _markPendingDeletion('tasks', id); _addTombstone('tasks', id); }});
-    _lastAppliedIds.goals.forEach(id => { if(!curGoalIds.has(id)){ _markPendingDeletion('goals', id); _addTombstone('goals', id); }});
+    // ② 「pending に居たが今の S から消えた項目」のみ削除として扱う（このセッションで明示的に
+    //    削除操作を行ったケースに限定）。
+    //    かつて使用していた _lastAppliedIds による検出は、S.goals が一時的に空配列になった
+    //    瞬間に全項目を Tombstone へ叩き込む致命的バグの原因となるため廃止。
+    //    永続的な Tombstone はそれぞれの削除ハンドラから明示的に _addTombstone() を呼ぶ。
+    _pendingItems.tasks.forEach((v, id)=>{ if(!curTaskIds.has(id)) _markPendingDeletion('tasks', id); });
+    _pendingItems.goals.forEach((v, id)=>{ if(!curGoalIds.has(id)) _markPendingDeletion('goals', id); });
     (S.tasks||[]).forEach(t => _markPendingItem('tasks', t));
     (S.goals||[]).forEach(g => _markPendingItem('goals', g));
   }catch(e){ console.warn('pending mark failed:', e); }
