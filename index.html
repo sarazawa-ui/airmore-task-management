@@ -5214,6 +5214,89 @@ function _pruneOldPending(){
     _pendingDeletions[k].forEach((ts, id)=>{ if(now - ts > PENDING_ITEM_TTL) _pendingDeletions[k].delete(id); });
   });
 }
+
+// ===== Per-item timestamp Last-Write-Wins (_modAt) =====
+// 各 task / goal に最終編集時刻 _modAt を持たせ、同一 ID の競合は _modAt の新しい方を採用。
+// 削除は S._tombstones に { kind, id, at } を残し、他クライアントが消去された項目を復活させない。
+const TOMBSTONE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7日
+// 直近 apply の正規化ハッシュ。save 時に「ローカルで変更があったか」を判定して _modAt を打つために使う。
+const _appliedItemHashes = { tasks: new Map(), goals: new Map() };
+// 比較用：UI 状態系のメタフィールドを除外したハッシュ
+function _hashItem(item){
+  if(!item) return '';
+  const out = {};
+  Object.keys(item).forEach(k => {
+    if(k === '_modAt' || k === '_expanded' || k === '_prevStatus' || k === '_treeCollapsed' || k === 'expanded') return;
+    out[k] = item[k];
+  });
+  try{ return JSON.stringify(out); }catch(_){ return ''; }
+}
+// save 直前に呼ぶ：ローカルで真に変更があったアイテムに _modAt = now を打つ
+function _stampLocalModAt(){
+  const now = Date.now();
+  ['tasks','goals'].forEach(kind=>{
+    const arr = S[kind] || [];
+    const hashes = _appliedItemHashes[kind];
+    arr.forEach(item => {
+      if(!item || !item.id) return;
+      const h = _hashItem(item);
+      if(hashes.get(item.id) !== h){
+        item._modAt = now;
+      }
+    });
+  });
+}
+// merge 結果適用後に呼ぶ：「これが remote-aligned な値」のハッシュを記録
+function _recordAppliedHashes(arr, kind){
+  if(!Array.isArray(arr)) return;
+  const m = _appliedItemHashes[kind];
+  m.clear();
+  arr.forEach(item => {
+    if(item && item.id) m.set(item.id, _hashItem(item));
+  });
+}
+// _modAt の比較（未設定は最古扱い）
+function _newerByModAt(a, b){
+  const am = (a && Number(a._modAt)) || 0;
+  const bm = (b && Number(b._modAt)) || 0;
+  return am >= bm ? a : b;
+}
+
+// Tombstones: ローカルとリモートをマージ、TTL 超過は枝刈り
+function _mergeTombstones(remoteList){
+  if(!Array.isArray(S._tombstones)) S._tombstones = [];
+  const now = Date.now();
+  const map = new Map();
+  // 既存ローカル
+  S._tombstones.forEach(t => {
+    if(!t || !t.id || !t.kind) return;
+    if(now - (Number(t.at)||0) > TOMBSTONE_TTL_MS) return;
+    map.set(t.kind+':'+t.id, t);
+  });
+  // リモート（snapshot から）
+  (remoteList||[]).forEach(t => {
+    if(!t || !t.id || !t.kind) return;
+    if(now - (Number(t.at)||0) > TOMBSTONE_TTL_MS) return;
+    const k = t.kind+':'+t.id;
+    const prev = map.get(k);
+    if(!prev || (Number(t.at)||0) > (Number(prev.at)||0)) map.set(k, t);
+  });
+  S._tombstones = Array.from(map.values());
+  return S._tombstones;
+}
+function _addTombstone(kind, id){
+  if(!id || !kind) return;
+  if(!Array.isArray(S._tombstones)) S._tombstones = [];
+  S._tombstones.push({ kind, id, at: Date.now() });
+  // 即座にプルーン
+  const now = Date.now();
+  S._tombstones = S._tombstones.filter(t => t && (now - (Number(t.at)||0) <= TOMBSTONE_TTL_MS));
+}
+function _tombstoneSetFor(kind){
+  const s = new Set();
+  (S._tombstones||[]).forEach(t => { if(t && t.kind === kind && t.id) s.add(t.id); });
+  return s;
+}
 // snapshot 適用時：ローカル直近操作（追加・編集・削除）を温存して remote の巻き戻しを防ぐ
 // - 追加：remote に未反映ならローカル版を追加
 // - 編集：remote にも存在するが TTL 内なら remote 側を「ローカル版で上書き」（古い snapshot に
@@ -5229,8 +5312,7 @@ function _mergePendingItems(remoteArr, kind){
   const remoteIds = new Set(result.map(x => x && x.id).filter(Boolean));
   // ★ リモート削除の検出：
   //   前回 apply に含まれていたが、今回 remote には居ない ID は別ユーザーによる削除とみなし、
-  //   自分の pendingAdd（最近編集）から外す。これで「他のユーザーが削除した項目を、
-  //   自分のローカル編集 pending が復活させてしまう」現象を防止。
+  //   自分の pendingAdd（最近編集）から外す
   if(_lastAppliedIds[kind].size){
     _lastAppliedIds[kind].forEach(id => {
       if(!remoteIds.has(id) && !pendingDel.has(id)){
@@ -5238,26 +5320,35 @@ function _mergePendingItems(remoteArr, kind){
       }
     });
   }
-  // 1) 直近のローカル削除を尊重（remote に居てもまだローカル未確認なら除去）
+  // 0) Tombstones：恒久的な削除記録に該当する項目を除去（remote/pendingAdd の両方から）
+  const tombs = _tombstoneSetFor(kind);
+  if(tombs.size){
+    result = result.filter(x => !x || !tombs.has(x.id));
+    tombs.forEach(id => pendingAdd.delete(id));
+  }
+  // 1) 直近のローカル削除を尊重
   if(pendingDel.size){
     result = result.filter(x => !x || !pendingDel.has(x.id));
   }
-  // 2) ローカル直近編集/追加で remote 側を上書き
+  // 2) ローカル pending と remote のマージ — 両方にある場合は _modAt 比較（per-item LWW）
   if(pendingAdd.size){
     const idxMap = new Map();
     result.forEach((item, i)=>{ if(item && item.id) idxMap.set(item.id, i); });
     pendingAdd.forEach((v, id)=>{
+      const local = v.snapshot;
       if(idxMap.has(id)){
-        // 両方にある → ローカル版（最近 save した状態）で上書き
-        result[idxMap.get(id)] = v.snapshot;
+        // 両方にある → _modAt が新しい方を採用
+        const i = idxMap.get(id);
+        result[i] = _newerByModAt(local, result[i]);
       } else {
         // remote に未反映のローカル項目 → 追加
-        result.push(v.snapshot);
+        result.push(local);
       }
     });
   }
   // 次回比較のため最新セットを記録
   _lastAppliedIds[kind] = new Set(result.map(x => x && x.id).filter(Boolean));
+  _recordAppliedHashes(result, kind);
   return result;
 }
 
@@ -5360,7 +5451,7 @@ function serializeWorkspace(){
   // events（カレンダー予定）はユーザー個別のため共有しない
   // 各ユーザーのGoogleカレンダー予定はそのユーザーのlocalStorageにのみ保持
   // 'profile'（会社名・ロゴ・メモ）はユーザー共通のためローカルにのみ保持
-  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs','treePresets'];
+  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs','treePresets','_tombstones'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
   // goals.expanded はUI状態（個人別）のため同期から除外
@@ -5558,8 +5649,10 @@ function applySnapshotData(data, wsId){
     });
     return out;
   };
+  // Tombstones を先に統合してから tasks/goals マージ（merge内で参照するため）
+  if(Array.isArray(data._tombstones)) _mergeTombstones(data._tombstones);
   Object.keys(data).forEach(k=>{
-    if(k === 'createdAt' || k === 'events' || k === 'profile') return;
+    if(k === 'createdAt' || k === 'events' || k === 'profile' || k === '_tombstones') return;
     // 直近書込中のローカル追加アイテムを温存（snapshot に未反映の場合を補正）
     if(k === 'tasks'){ S.tasks = _mergePendingItems(data.tasks, 'tasks'); return; }
     if(k === 'goals'){ S.goals = _mergePendingItems(data.goals, 'goals'); return; }
@@ -5658,6 +5751,8 @@ function syncToFirestore(){
       await db.runTransaction(async tx => {
         const remoteSnap = await tx.get(ref);
         const remote = remoteSnap.exists ? (remoteSnap.data() || {}) : {};
+        // 先に Tombstones を統合（merge 内で参照するため）
+        if(Array.isArray(remote._tombstones)) _mergeTombstones(remote._tombstones);
         const out = serializeWorkspace();
         // tasks / goals は remote 起点でローカル pending（追加/編集/削除）をマージ
         try{
@@ -5666,6 +5761,8 @@ function syncToFirestore(){
         try{
           out.goals = _mergePendingItems(Array.isArray(remote.goals) ? remote.goals : [], 'goals');
         }catch(e){ console.warn('merge goals failed:', e); }
+        // Tombstones も保存する
+        out._tombstones = Array.isArray(S._tombstones) ? S._tombstones : [];
         // メンバー系（memberEmails / authMembers / members）も remote 側の追加を残す
         const _mergeUniqArr = (a, b, keyFn) => {
           const seen = new Set();
@@ -7066,14 +7163,17 @@ const _origSave = function(){
 };
 save = function(withLog, desc){
   if(withLog && desc) logHistory('edit', desc);
-  // 書込前にローカルの全 task/goal を pending として記録
-  // さらに、前回までは pending に居たが現在の S から消えた項目を「削除待ち」として保護
-  // （snapshot 適用時にローカル追加の消失/ローカル削除の復活を両方とも防ぐ）
   try{
+    // ① 真にローカルで変更された項目に _modAt を打つ（per-item LWW のキー）
+    _stampLocalModAt();
     const curTaskIds = new Set((S.tasks||[]).map(t => t && t.id).filter(Boolean));
     const curGoalIds = new Set((S.goals||[]).map(g => g && g.id).filter(Boolean));
-    _pendingItems.tasks.forEach((v, id)=>{ if(!curTaskIds.has(id)) _markPendingDeletion('tasks', id); });
-    _pendingItems.goals.forEach((v, id)=>{ if(!curGoalIds.has(id)) _markPendingDeletion('goals', id); });
+    // ② 「pendingに居たが今のSから消えた項目」「lastApplied に居たが今のSから消えた項目」
+    //    どちらも削除として扱い、Tombstone を立てる（永続削除）
+    _pendingItems.tasks.forEach((v, id)=>{ if(!curTaskIds.has(id)){ _markPendingDeletion('tasks', id); _addTombstone('tasks', id); }});
+    _pendingItems.goals.forEach((v, id)=>{ if(!curGoalIds.has(id)){ _markPendingDeletion('goals', id); _addTombstone('goals', id); }});
+    _lastAppliedIds.tasks.forEach(id => { if(!curTaskIds.has(id)){ _markPendingDeletion('tasks', id); _addTombstone('tasks', id); }});
+    _lastAppliedIds.goals.forEach(id => { if(!curGoalIds.has(id)){ _markPendingDeletion('goals', id); _addTombstone('goals', id); }});
     (S.tasks||[]).forEach(t => _markPendingItem('tasks', t));
     (S.goals||[]).forEach(g => _markPendingItem('goals', g));
   }catch(e){ console.warn('pending mark failed:', e); }
@@ -7171,6 +7271,12 @@ function ensureDefaults(){
   if(!S.history) S.history = [];
   if(!S.userPrefs) S.userPrefs = {};
   if(!Array.isArray(S.treePresets)) S.treePresets = [];
+  if(!Array.isArray(S._tombstones)) S._tombstones = [];
+  // Tombstones の TTL 越え枝刈り
+  {
+    const now = Date.now();
+    S._tombstones = S._tombstones.filter(t => t && t.id && t.kind && (now - (Number(t.at)||0) <= TOMBSTONE_TTL_MS));
+  }
   // 旧 __local__ キーがあれば _local_ に移行（Firestoreフィールド名規則対応）
   if(S.userPrefs.__local__){
     S.userPrefs._local_ = Object.assign({}, S.userPrefs._local_||{}, S.userPrefs.__local__);
