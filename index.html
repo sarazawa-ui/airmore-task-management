@@ -521,10 +521,22 @@ body > main:has(#view-calendar.active){overflow:hidden}
 .board-card .board-title{letter-spacing:.02em}
 .board-card .board-meta{font-size:11px;font-weight:500;color:#A07832;background:rgba(255,255,255,.6);padding:1px 8px;border-radius:9px;margin-left:6px}
 .board-card .board-body{font-size:13px;line-height:1.65;color:#5a4600;white-space:pre-wrap;word-break:break-word;background:rgba(255,255,255,.5);border-radius:6px;padding:8px 12px;min-height:24px}
+.board-card .board-body b,.board-card .board-body strong{font-weight:700}
+.board-card .board-body p,.board-card .board-body div{margin:0}
+.board-card .board-body ul,.board-card .board-body ol{margin:4px 0;padding-left:22px}
 .board-card .board-body:empty::before{content:"運用ルールや通達事項をここに書けます。「✎ 編集」で入力してください。";color:#A07832;font-style:italic;font-size:12px}
 .board-card .board-body a{color:#0B5394;text-decoration:underline}
-.board-card .board-editor textarea{width:100%;min-height:90px;padding:8px 10px;border:1px solid #FFD966;border-radius:6px;background:#fff;font:inherit;font-size:13px;line-height:1.6;resize:vertical;box-sizing:border-box}
-.board-card .board-editor textarea:focus{outline:none;border-color:#FFA000;box-shadow:0 0 0 2px rgba(255,160,0,.18)}
+.board-card .board-input{width:100%;min-height:90px;padding:8px 10px;border:1px solid #FFD966;border-radius:6px;background:#fff;font:inherit;font-size:13px;line-height:1.6;outline:none;box-sizing:border-box;overflow-y:auto;max-height:300px}
+.board-card .board-input:focus{border-color:#FFA000;box-shadow:0 0 0 2px rgba(255,160,0,.18)}
+.board-card .board-input:empty::before{content:attr(data-placeholder);color:#A07832;font-style:italic;white-space:pre-wrap}
+.board-card .board-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:6px 4px;margin-bottom:6px;background:rgba(255,255,255,.5);border-radius:6px;border:1px solid #FFE082}
+.board-card .board-toolbar button{background:#fff;border:1px solid var(--border);color:var(--text);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit;font-size:11.5px;line-height:1.3;transition:all .12s}
+.board-card .board-toolbar button:hover{background:var(--primary-soft);border-color:var(--primary-light)}
+.board-card .board-toolbar button:active{transform:scale(.96)}
+.board-card .board-toolbar button.color-btn{width:24px;height:24px;padding:0;border-radius:50%;color:#fff;font-size:9px;font-weight:700;line-height:1;display:inline-flex;align-items:center;justify-content:center;border-color:rgba(0,0,0,.1)}
+.board-card .board-toolbar button.color-btn[data-color=""]{background:#fff;color:#7E5109;border-color:#bbb}
+.board-card .board-toolbar .sep{display:inline-block;width:1px;height:18px;background:#FFE082;margin:0 4px}
+.board-card .board-toolbar .lbl{font-size:11px;color:#7E5109;font-weight:600;margin:0 4px 0 2px}
 .board-card .board-actions{display:flex;gap:6px;justify-content:flex-end;margin-top:8px}
 .board-card.board-empty{background:#FFFBEA;border-color:#FFE082}
 @media (max-width:768px){
@@ -945,10 +957,27 @@ header.app-header{padding:10px 22px}
     </div>
     <div class="board-body" id="boardBody"></div>
     <div class="board-editor" id="boardEditor" style="display:none">
-      <textarea id="boardInput" rows="4" placeholder="例：
+      <div class="board-toolbar" id="boardToolbar">
+        <button type="button" data-cmd="bold" title="太字 (Ctrl+B)"><b>B</b></button>
+        <span class="sep"></span>
+        <label class="lbl">サイズ：</label>
+        <button type="button" data-size="s" title="小">小</button>
+        <button type="button" data-size="m" title="標準">標準</button>
+        <button type="button" data-size="l" title="大">大</button>
+        <span class="sep"></span>
+        <label class="lbl">色：</label>
+        <button type="button" class="color-btn" data-color="" title="標準（自動）" style="background:#7E5109">標準</button>
+        <button type="button" class="color-btn" data-color="#C0392B" title="赤" style="background:#C0392B"></button>
+        <button type="button" class="color-btn" data-color="#E67E22" title="オレンジ" style="background:#E67E22"></button>
+        <button type="button" class="color-btn" data-color="#1E8449" title="緑" style="background:#1E8449"></button>
+        <button type="button" class="color-btn" data-color="#2874A6" title="青" style="background:#2874A6"></button>
+        <span class="sep"></span>
+        <button type="button" data-cmd="clear" title="書式をクリア">書式解除</button>
+      </div>
+      <div id="boardInput" class="board-input" contenteditable="true" spellcheck="false" data-placeholder="例：
 ・週次レビューは金曜 17:00
 ・タスクの担当者は自分の名前で登録
-・お問い合わせ #general"></textarea>
+・お問い合わせ #general"></div>
       <div class="board-actions">
         <button class="btn sm" id="boardSaveBtn">💾 保存</button>
         <button class="btn sm ghost" id="boardCancelBtn">キャンセル</button>
@@ -1919,7 +1948,65 @@ function onDashPeriodChange(){
   renderDashboard();
 }
 // ===== 掲示板（ダッシュボード最上部） =====
-// S.board = { text, updatedAt, updatedBy }
+// S.board = { html, updatedAt, updatedBy }
+// 旧 .text フィールドも互換のため受け付ける（プレーンテキスト → HTML 化）
+
+// 安全な HTML だけ通すサニタイザ（タグ/属性/style ホワイトリスト）
+function _sanitizeBoardHTML(html){
+  const tmp = document.createElement('div');
+  tmp.innerHTML = String(html || '');
+  const ALLOWED_TAGS = new Set(['b','strong','i','em','u','br','p','div','span','a','font','ul','ol','li']);
+  const ALLOWED_STYLE_KEYS = new Set(['color','font-size','font-weight','font-style','text-decoration']);
+  const walk = (node) => {
+    [...node.childNodes].forEach(child => {
+      if(child.nodeType === Node.COMMENT_NODE){ child.remove(); return; }
+      if(child.nodeType !== Node.ELEMENT_NODE) return;
+      const tag = child.tagName.toLowerCase();
+      if(!ALLOWED_TAGS.has(tag)){
+        // 許可されていないタグは中身だけ残して unwrap
+        const frag = document.createDocumentFragment();
+        while(child.firstChild) frag.appendChild(child.firstChild);
+        child.replaceWith(frag);
+        walk(node); // 再走査
+        return;
+      }
+      // 属性の絞り込み
+      [...child.attributes].forEach(attr => {
+        const name = attr.name.toLowerCase();
+        if(name === 'style'){
+          const safeParts = attr.value.split(';').map(s => s.trim()).filter(Boolean).filter(rule => {
+            const k = (rule.split(':')[0]||'').trim().toLowerCase();
+            return ALLOWED_STYLE_KEYS.has(k);
+          });
+          if(safeParts.length) child.setAttribute('style', safeParts.join('; '));
+          else child.removeAttribute('style');
+        } else if(tag === 'a' && name === 'href'){
+          if(!/^https?:\/\//i.test(attr.value)){ child.removeAttribute('href'); }
+          else { child.setAttribute('target','_blank'); child.setAttribute('rel','noopener'); }
+        } else if(tag === 'font' && (name === 'color' || name === 'size' || name === 'face')){
+          // legacy <font> attrs OK
+        } else {
+          child.removeAttribute(name);
+        }
+      });
+      walk(child);
+    });
+  };
+  walk(tmp);
+  return tmp.innerHTML;
+}
+
+function _boardCurrentHTML(){
+  const b = S.board || {};
+  if(b.html != null && b.html !== '') return _sanitizeBoardHTML(b.html);
+  // 互換：旧 text フィールド → HTMLエスケープ＋URLリンク化
+  if(b.text){
+    const escaped = escapeHtml(String(b.text));
+    return escaped.replace(/(https?:\/\/[^\s<>"']+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  }
+  return '';
+}
+
 function renderBoard(){
   const card = document.getElementById('boardCard');
   if(!card) return;
@@ -1928,15 +2015,11 @@ function renderBoard(){
   const editor = document.getElementById('boardEditor');
   const editBtn = document.getElementById('boardEditBtn');
   if(!body || !meta || !editor || !editBtn) return;
+  if(editor.style.display !== 'none') return; // 編集中は触らない
   const b = S.board || {};
-  // 編集モード中は本文を更新しない
-  if(editor.style.display !== 'none') return;
-  const text = (b.text || '').toString();
-  card.classList.toggle('board-empty', !text);
-  // テキストの簡易リンク化（URL を <a> に変換）：HTML エスケープ → URL を置換
-  const escaped = escapeHtml(text);
-  const linked = escaped.replace(/(https?:\/\/[^\s<>"']+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
-  body.innerHTML = linked;
+  const html = _boardCurrentHTML();
+  card.classList.toggle('board-empty', !html);
+  body.innerHTML = html;
   if(b.updatedAt){
     const dt = new Date(b.updatedAt);
     const dtStr = isNaN(dt.getTime()) ? '' : `${dt.getMonth()+1}/${dt.getDate()} ${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
@@ -1952,7 +2035,7 @@ function openBoardEditor(){
   const input = document.getElementById('boardInput');
   const editBtn = document.getElementById('boardEditBtn');
   if(!body || !editor || !input) return;
-  input.value = (S.board && S.board.text) || '';
+  input.innerHTML = _boardCurrentHTML();
   body.style.display = 'none';
   editor.style.display = '';
   if(editBtn) editBtn.style.display = 'none';
@@ -1970,28 +2053,110 @@ function closeBoardEditor(){
 function saveBoard(){
   const input = document.getElementById('boardInput');
   if(!input) return;
-  const newText = input.value;
-  if(!S.board) S.board = { text:'', updatedAt:0, updatedBy:'' };
-  const prevText = S.board.text || '';
-  if(newText === prevText){
+  const newHTML = _sanitizeBoardHTML(input.innerHTML);
+  if(!S.board) S.board = { html:'', updatedAt:0, updatedBy:'' };
+  const prevHTML = (S.board.html != null) ? S.board.html : _boardCurrentHTML();
+  if(newHTML === prevHTML){
     closeBoardEditor();
     return;
   }
-  S.board.text = newText;
+  S.board.html = newHTML;
+  if('text' in S.board) delete S.board.text; // 旧フィールドを残さない
   S.board.updatedAt = Date.now();
   S.board.updatedBy = (_currentUser && _currentUser.name) || '';
   save(true, '掲示板を更新');
   closeBoardEditor();
   toast('📢 掲示板を更新しました');
 }
+// ツールバー操作
+function _boardExec(cmd, value){
+  const input = document.getElementById('boardInput');
+  if(!input) return;
+  input.focus();
+  try{ document.execCommand(cmd, false, value); }catch(e){ console.warn(e); }
+}
+function _boardApplySize(size){
+  // execCommand('fontSize', 1〜7) は挙動ばらつき大 → CSS で span を挿入
+  const input = document.getElementById('boardInput');
+  if(!input) return;
+  input.focus();
+  const sizePx = size === 's' ? '11px' : size === 'l' ? '17px' : '14px';
+  // 選択範囲を <span style="font-size:..."> で包む
+  document.execCommand('styleWithCSS', false, true);
+  document.execCommand('fontSize', false, '4');
+  // 直近作成の font 要素を span に置換
+  const fonts = input.querySelectorAll('font[size="4"]');
+  fonts.forEach(f => {
+    const span = document.createElement('span');
+    span.style.fontSize = sizePx;
+    while(f.firstChild) span.appendChild(f.firstChild);
+    f.replaceWith(span);
+  });
+}
+function _boardApplyColor(color){
+  const input = document.getElementById('boardInput');
+  if(!input) return;
+  input.focus();
+  document.execCommand('styleWithCSS', false, true);
+  if(!color){
+    // 色解除：選択範囲の color スタイルを除去
+    document.execCommand('foreColor', false, '#000000');
+    // sanitize 時に色は残るが、ユーザーが「標準」を選んだ意図はリセット
+    // → 強制的に色クリア用の span を挿入
+    document.execCommand('removeFormat'); // 全フォーマット解除になる点に注意
+    // removeFormat は太字なども消すので、ここでは色だけのリセットは諦め、別途 '書式解除' に任せる
+    return;
+  }
+  document.execCommand('foreColor', false, color);
+}
+
 // 初回バインド：ボタン類のイベントを1度だけ取り付け
 function _bindBoardOnce(){
   const editBtn = document.getElementById('boardEditBtn');
   const saveBtn = document.getElementById('boardSaveBtn');
   const cancelBtn = document.getElementById('boardCancelBtn');
+  const toolbar = document.getElementById('boardToolbar');
+  const input = document.getElementById('boardInput');
   if(editBtn && !editBtn._bound){ editBtn._bound = true; editBtn.addEventListener('click', openBoardEditor); }
   if(saveBtn && !saveBtn._bound){ saveBtn._bound = true; saveBtn.addEventListener('click', saveBoard); }
   if(cancelBtn && !cancelBtn._bound){ cancelBtn._bound = true; cancelBtn.addEventListener('click', closeBoardEditor); }
+  if(toolbar && !toolbar._bound){
+    toolbar._bound = true;
+    toolbar.addEventListener('mousedown', (e)=>{
+      // ツールバークリックでフォーカスが外れて selection が消えるのを防ぐ
+      if(e.target.tagName === 'BUTTON') e.preventDefault();
+    });
+    toolbar.addEventListener('click', (e)=>{
+      const btn = e.target.closest('button');
+      if(!btn) return;
+      const cmd = btn.dataset.cmd;
+      const size = btn.dataset.size;
+      const color = btn.dataset.color;
+      if(cmd === 'bold'){ _boardExec('bold'); }
+      else if(cmd === 'clear'){ _boardExec('removeFormat'); }
+      else if(size){ _boardApplySize(size); }
+      else if(color !== undefined){
+        if(color) _boardApplyColor(color);
+        else _boardExec('removeFormat');
+      }
+    });
+  }
+  if(input && !input._bound){
+    input._bound = true;
+    // Ctrl+B でも太字
+    input.addEventListener('keydown', (e)=>{
+      if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b'){
+        e.preventDefault();
+        _boardExec('bold');
+      }
+    });
+    // ペーストはプレーンテキストにフォールバック（書式のコピーは許容しない）
+    input.addEventListener('paste', (e)=>{
+      e.preventDefault();
+      const text = (e.clipboardData || window.clipboardData).getData('text');
+      document.execCommand('insertText', false, text);
+    });
+  }
 }
 
 function renderDashboard(){
@@ -7477,7 +7642,7 @@ function ensureDefaults(){
   if(!S.userPrefs) S.userPrefs = {};
   if(!Array.isArray(S.treePresets)) S.treePresets = [];
   if(!Array.isArray(S._tombstones)) S._tombstones = [];
-  if(!S.board || typeof S.board !== 'object') S.board = { text:'', updatedAt:0, updatedBy:'' };
+  if(!S.board || typeof S.board !== 'object') S.board = { html:'', updatedAt:0, updatedBy:'' };
   // 重要：tasks / goals が配列でない場合のフォールバック（undefined 由来のクラッシュ防止）
   if(!Array.isArray(S.tasks)) S.tasks = [];
   if(!Array.isArray(S.goals)) S.goals = [];
