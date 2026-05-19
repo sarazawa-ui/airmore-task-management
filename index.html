@@ -641,6 +641,8 @@ header.app-header{padding:10px 22px}
 /* Members & history */
 .member-list{background:#fff;border:1px solid var(--border);border-radius:10px;padding:0;max-width:560px;overflow:hidden}
 .member-row{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border-soft)}
+.member-row.member-ghost{background:#FFFBEA}
+.member-row.member-ghost .ph{background:#F5CBA7;color:#A04000}
 .member-row:last-child{border-bottom:none}
 .member-row img,.member-row .ph{width:36px;height:36px;border-radius:50%;flex:0 0 36px}
 .member-row .ph{background:var(--primary-light);color:var(--primary-dark);display:flex;align-items:center;justify-content:center;font-weight:700}
@@ -5571,9 +5573,42 @@ function syncToFirestore(){
   updateSyncStatus('syncing');
   _saveDebounce = setTimeout(async ()=>{
     try{
-      const ws = serializeWorkspace();
-      await firebase.firestore().doc(`workspaces/${S.workspaceId}`).set(ws, {merge:true});
+      const db = firebase.firestore();
+      const ref = db.doc(`workspaces/${S.workspaceId}`);
+      // ★ トランザクションでサーバ最新値を読み込み、自分の pending 変更だけを反映して書き戻す
+      //   これにより、複数ユーザーが同時に異なる項目を編集/削除しても、双方の変更が保持される。
+      //   tasks/goals は配列ごと丸ごと置換するため、必ず remote+local をマージしてから書く。
+      await db.runTransaction(async tx => {
+        const remoteSnap = await tx.get(ref);
+        const remote = remoteSnap.exists ? (remoteSnap.data() || {}) : {};
+        const out = serializeWorkspace();
+        // tasks / goals は remote 起点でローカル pending（追加/編集/削除）をマージ
+        try{
+          out.tasks = _mergePendingItems(Array.isArray(remote.tasks) ? remote.tasks : [], 'tasks');
+        }catch(e){ console.warn('merge tasks failed:', e); }
+        try{
+          out.goals = _mergePendingItems(Array.isArray(remote.goals) ? remote.goals : [], 'goals');
+        }catch(e){ console.warn('merge goals failed:', e); }
+        // メンバー系（memberEmails / authMembers / members）も remote 側の追加を残す
+        const _mergeUniqArr = (a, b, keyFn) => {
+          const seen = new Set();
+          const out = [];
+          [...(a||[]), ...(b||[])].forEach(x => {
+            if(x == null) return;
+            const k = keyFn(x);
+            if(k != null && seen.has(k)) return;
+            if(k != null) seen.add(k);
+            out.push(x);
+          });
+          return out;
+        };
+        out.memberEmails = _mergeUniqArr(remote.memberEmails, out.memberEmails, e => e);
+        out.authMembers  = _mergeUniqArr(remote.authMembers,  out.authMembers,  m => m && m.email);
+        out.members      = _mergeUniqArr(remote.members,      out.members,      m => m && m.name);
+        tx.set(ref, out, {merge:true});
+      });
       bumpFbUsage('write', 1);
+      bumpFbUsage('read', 1);
       _lastSuccessfulWriteAt = Date.now();
       // 自分の write が「最新」だった場合のみ pending フラグをクリア
       if(myVersion === _writeVersion){
@@ -6812,7 +6847,22 @@ function clearLogo(){
 function renderMemberPane(){
   const list = document.getElementById('memberList');
   if(!list) return;
-  const am = S.authMembers||[];
+  // S.authMembers をベースに、memberEmails にしか存在しないユーザーをプレースホルダで補完
+  // （旧データや、自分のセッションでプロフィール未取得のメンバーが落ちる現象への対策）
+  let am = (S.authMembers||[]).slice();
+  const knownEmails = new Set(am.map(m => (m && m.email) || '').filter(Boolean));
+  (S.memberEmails||[]).forEach(email => {
+    if(!email || knownEmails.has(email)) return;
+    am.push({
+      email,
+      name: email.split('@')[0],
+      picture: '',
+      role: (S.ownerEmail && email === S.ownerEmail) ? 'owner' : 'member',
+      joinedAt: '',
+      _ghost: true
+    });
+    knownEmails.add(email);
+  });
   if(am.length===0){
     list.innerHTML = '<div style="padding:14px;color:#888;text-align:center">まだメンバーがいません。Googleでログインすると追加されます。</div>';
     return;
@@ -6820,13 +6870,14 @@ function renderMemberPane(){
   list.innerHTML = '';
   am.forEach(m=>{
     const row = document.createElement('div');
-    row.className = 'member-row';
+    row.className = 'member-row' + (m._ghost ? ' member-ghost' : '');
     const initial = (m.name||'?').slice(0,1);
+    const joinedDisp = m.joinedAt ? `・参加：${m.joinedAt.slice(0,10)}` : (m._ghost ? '・<span style="color:#B7950B">プロフィール未取得</span>' : '');
     row.innerHTML = `
       ${m.picture ? `<img src="${m.picture}" referrerpolicy="no-referrer" alt="">` : `<div class="ph">${escapeHtml(initial)}</div>`}
       <div class="info">
-        <div class="nm">${escapeHtml(m.name)}</div>
-        <div class="em">${escapeHtml(m.email)}・参加：${(m.joinedAt||'').slice(0,10)}</div>
+        <div class="nm">${escapeHtml(m.name)}${m._ghost?' <span style="font-size:10px;color:#B7950B;font-weight:600">(未ログイン)</span>':''}</div>
+        <div class="em">${escapeHtml(m.email)}${joinedDisp}</div>
       </div>
       <span class="role ${m.role==='owner'?'':'guest'}">${m.role==='owner'?'オーナー':'メンバー'}</span>
       ${m.role!=='owner' && _currentUser && S.authMembers.find(x=>x.email===_currentUser.email)?.role==='owner' ? `<button class="btn sm ghost" data-rm="${escapeHtml(m.email)}">削除</button>` : ''}
