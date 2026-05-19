@@ -514,6 +514,24 @@ body > main:has(#view-calendar.active){overflow:hidden}
 
 /* Dashboard period filter */
 .dash-period{background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:var(--shadow-sm)}
+/* Bulletin board (dashboard top) */
+.board-card{background:linear-gradient(135deg,#FFFBEA 0%,#FFF8DC 100%);border:1px solid #FFE082;border-left:5px solid #FFA000;border-radius:10px;padding:12px 16px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
+.board-card .board-head{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#7E5109;margin-bottom:6px;flex-wrap:wrap}
+.board-card .board-icon{font-size:16px}
+.board-card .board-title{letter-spacing:.02em}
+.board-card .board-meta{font-size:11px;font-weight:500;color:#A07832;background:rgba(255,255,255,.6);padding:1px 8px;border-radius:9px;margin-left:6px}
+.board-card .board-body{font-size:13px;line-height:1.65;color:#5a4600;white-space:pre-wrap;word-break:break-word;background:rgba(255,255,255,.5);border-radius:6px;padding:8px 12px;min-height:24px}
+.board-card .board-body:empty::before{content:"運用ルールや通達事項をここに書けます。「✎ 編集」で入力してください。";color:#A07832;font-style:italic;font-size:12px}
+.board-card .board-body a{color:#0B5394;text-decoration:underline}
+.board-card .board-editor textarea{width:100%;min-height:90px;padding:8px 10px;border:1px solid #FFD966;border-radius:6px;background:#fff;font:inherit;font-size:13px;line-height:1.6;resize:vertical;box-sizing:border-box}
+.board-card .board-editor textarea:focus{outline:none;border-color:#FFA000;box-shadow:0 0 0 2px rgba(255,160,0,.18)}
+.board-card .board-actions{display:flex;gap:6px;justify-content:flex-end;margin-top:8px}
+.board-card.board-empty{background:#FFFBEA;border-color:#FFE082}
+@media (max-width:768px){
+  .board-card{padding:10px 12px}
+  .board-card .board-head{font-size:12px}
+  .board-card .board-body{font-size:12.5px;padding:7px 10px}
+}
 .dash-period label{font-weight:600;color:var(--text-soft);font-size:12px}
 .dash-period select,.dash-period input[type=date]{padding:6px 10px;border:1px solid var(--border);border-radius:6px;font:inherit;background:#fff}
 .dash-period .range{font-size:11.5px;color:var(--muted);margin-left:auto}
@@ -916,6 +934,27 @@ header.app-header{padding:10px 22px}
 
 <!-- ============ DASHBOARD ============ -->
 <section class="view active" id="view-dashboard">
+  <!-- 掲示板：ワークスペース運用ルール・通達 -->
+  <div class="board-card" id="boardCard">
+    <div class="board-head">
+      <span class="board-icon">📢</span>
+      <span class="board-title">お知らせ・運用ルール</span>
+      <span class="board-meta" id="boardMeta"></span>
+      <span style="margin-left:auto"></span>
+      <button class="btn sm ghost" id="boardEditBtn">✎ 編集</button>
+    </div>
+    <div class="board-body" id="boardBody"></div>
+    <div class="board-editor" id="boardEditor" style="display:none">
+      <textarea id="boardInput" rows="4" placeholder="例：
+・週次レビューは金曜 17:00
+・タスクの担当者は自分の名前で登録
+・お問い合わせ #general"></textarea>
+      <div class="board-actions">
+        <button class="btn sm" id="boardSaveBtn">💾 保存</button>
+        <button class="btn sm ghost" id="boardCancelBtn">キャンセル</button>
+      </div>
+    </div>
+  </div>
   <div class="dash-period">
     <label>集計期間：</label>
     <select id="dashPeriod" onchange="onDashPeriodChange()">
@@ -1878,7 +1917,85 @@ function onDashPeriodChange(){
   });
   renderDashboard();
 }
+// ===== 掲示板（ダッシュボード最上部） =====
+// S.board = { text, updatedAt, updatedBy }
+function renderBoard(){
+  const card = document.getElementById('boardCard');
+  if(!card) return;
+  const body = document.getElementById('boardBody');
+  const meta = document.getElementById('boardMeta');
+  const editor = document.getElementById('boardEditor');
+  const editBtn = document.getElementById('boardEditBtn');
+  if(!body || !meta || !editor || !editBtn) return;
+  const b = S.board || {};
+  // 編集モード中は本文を更新しない
+  if(editor.style.display !== 'none') return;
+  const text = (b.text || '').toString();
+  card.classList.toggle('board-empty', !text);
+  // テキストの簡易リンク化（URL を <a> に変換）：HTML エスケープ → URL を置換
+  const escaped = escapeHtml(text);
+  const linked = escaped.replace(/(https?:\/\/[^\s<>"']+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  body.innerHTML = linked;
+  if(b.updatedAt){
+    const dt = new Date(b.updatedAt);
+    const dtStr = isNaN(dt.getTime()) ? '' : `${dt.getMonth()+1}/${dt.getDate()} ${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
+    meta.textContent = `${b.updatedBy ? b.updatedBy + '・' : ''}${dtStr} 更新`;
+    meta.style.display = '';
+  } else {
+    meta.style.display = 'none';
+  }
+}
+function openBoardEditor(){
+  const body = document.getElementById('boardBody');
+  const editor = document.getElementById('boardEditor');
+  const input = document.getElementById('boardInput');
+  const editBtn = document.getElementById('boardEditBtn');
+  if(!body || !editor || !input) return;
+  input.value = (S.board && S.board.text) || '';
+  body.style.display = 'none';
+  editor.style.display = '';
+  if(editBtn) editBtn.style.display = 'none';
+  setTimeout(()=>{ try{ input.focus(); }catch(e){} }, 0);
+}
+function closeBoardEditor(){
+  const body = document.getElementById('boardBody');
+  const editor = document.getElementById('boardEditor');
+  const editBtn = document.getElementById('boardEditBtn');
+  if(body) body.style.display = '';
+  if(editor) editor.style.display = 'none';
+  if(editBtn) editBtn.style.display = '';
+  renderBoard();
+}
+function saveBoard(){
+  const input = document.getElementById('boardInput');
+  if(!input) return;
+  const newText = input.value;
+  if(!S.board) S.board = { text:'', updatedAt:0, updatedBy:'' };
+  const prevText = S.board.text || '';
+  if(newText === prevText){
+    closeBoardEditor();
+    return;
+  }
+  S.board.text = newText;
+  S.board.updatedAt = Date.now();
+  S.board.updatedBy = (_currentUser && _currentUser.name) || '';
+  save(true, '掲示板を更新');
+  closeBoardEditor();
+  toast('📢 掲示板を更新しました');
+}
+// 初回バインド：ボタン類のイベントを1度だけ取り付け
+function _bindBoardOnce(){
+  const editBtn = document.getElementById('boardEditBtn');
+  const saveBtn = document.getElementById('boardSaveBtn');
+  const cancelBtn = document.getElementById('boardCancelBtn');
+  if(editBtn && !editBtn._bound){ editBtn._bound = true; editBtn.addEventListener('click', openBoardEditor); }
+  if(saveBtn && !saveBtn._bound){ saveBtn._bound = true; saveBtn.addEventListener('click', saveBoard); }
+  if(cancelBtn && !cancelBtn._bound){ cancelBtn._bound = true; cancelBtn.addEventListener('click', closeBoardEditor); }
+}
+
 function renderDashboard(){
+  _bindBoardOnce();
+  renderBoard();
   document.getElementById('todayLabel').textContent = "本日：" + new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long',day:'numeric',weekday:'short'});
   const range = getDashRange();
   const rl = document.getElementById('dashRangeLabel');
@@ -5451,7 +5568,7 @@ function serializeWorkspace(){
   // events（カレンダー予定）はユーザー個別のため共有しない
   // 各ユーザーのGoogleカレンダー予定はそのユーザーのlocalStorageにのみ保持
   // 'profile'（会社名・ロゴ・メモ）はユーザー共通のためローカルにのみ保持
-  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs','treePresets','_tombstones'];
+  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs','treePresets','_tombstones','board'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
   // goals.expanded はUI状態（個人別）のため同期から除外
@@ -5659,6 +5776,12 @@ function applySnapshotData(data, wsId){
     if(k === 'memberEmails'){ S.memberEmails = _mergeMembersUniq(S.memberEmails, data.memberEmails, e => e); return; }
     if(k === 'authMembers'){  S.authMembers  = _mergeMembersUniq(S.authMembers,  data.authMembers,  m => m && m.email); return; }
     if(k === 'members'){      S.members      = _mergeMembersUniq(S.members,      data.members,      m => m && m.name); return; }
+    if(k === 'board' && data.board && typeof data.board === 'object'){
+      const lb = S.board || {};
+      const lt = Number(lb.updatedAt||0), rt = Number(data.board.updatedAt||0);
+      S.board = (lt > rt) ? lb : data.board;
+      return;
+    }
     S[k] = data[k];
   });
   // goals の expanded 状態を復元（Firestoreデータには含まれないため）
@@ -5763,6 +5886,12 @@ function syncToFirestore(){
         }catch(e){ console.warn('merge goals failed:', e); }
         // Tombstones も保存する
         out._tombstones = Array.isArray(S._tombstones) ? S._tombstones : [];
+        // 掲示板：updatedAt が新しい方を採用（同時編集時の per-doc LWW）
+        if(remote.board && typeof remote.board === 'object'){
+          const localBoard = S.board || {};
+          const lt = Number(localBoard.updatedAt||0), rt = Number(remote.board.updatedAt||0);
+          out.board = (lt >= rt) ? localBoard : remote.board;
+        }
         // メンバー系（memberEmails / authMembers / members）も remote 側の追加を残す
         const _mergeUniqArr = (a, b, keyFn) => {
           const seen = new Set();
@@ -7272,6 +7401,7 @@ function ensureDefaults(){
   if(!S.userPrefs) S.userPrefs = {};
   if(!Array.isArray(S.treePresets)) S.treePresets = [];
   if(!Array.isArray(S._tombstones)) S._tombstones = [];
+  if(!S.board || typeof S.board !== 'object') S.board = { text:'', updatedAt:0, updatedBy:'' };
   // Tombstones の TTL 越え枝刈り
   {
     const now = Date.now();
