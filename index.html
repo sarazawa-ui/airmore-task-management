@@ -5358,13 +5358,20 @@ async function googleFetchEvents(silent){
   const url = `https://www.googleapis.com/calendar/v3/calendars/${calId}/events?timeMin=${tMin.toISOString()}&timeMax=${tMax.toISOString()}&singleEvents=true&orderBy=startTime&maxResults=500`;
   try{
     let res = await fetch(url, { headers: { Authorization: 'Bearer '+token } });
-    // 401 = トークン期限切れ → 自動的に再認証して再試行
+    // 401 = トークン期限切れ → 自動的に再認証して再試行（silent と同じモードを引き継ぐ）
     if(res.status === 401 && _firebaseReady && firebase.auth().currentUser){
-      console.log("Access token expired, attempting silent refresh...");
-      const ok = await refreshGoogleAccessToken(true);
+      console.log("Access token expired, attempting refresh (silent="+!!silent+")");
+      const ok = await refreshGoogleAccessToken(silent);
       if(ok){
         token = _currentUser?.accessToken;
         res = await fetch(url, { headers: { Authorization: 'Bearer '+token } });
+      } else if(silent){
+        // バックグラウンドで失敗 → ステータスにユーザー向けの再認証ボタン表示用ヒントを残す
+        if(status){
+          status.innerHTML = '<span style="color:#C0392B;cursor:pointer;text-decoration:underline" onclick="googleFetchEvents()">⚠ 権限切れ・ここをクリックして更新</span>';
+        }
+        console.warn('[gcal] silent refresh failed; user action required');
+        return;
       }
     }
     if(!res.ok){
