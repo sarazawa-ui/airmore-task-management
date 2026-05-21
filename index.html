@@ -5694,6 +5694,27 @@ function initFirebase(){
     }
     _firebaseReady = true;
     updateSyncStatus('offline');
+    // signInWithRedirect の戻りを処理（ポップアップ失敗時のフォールバック経由）
+    firebase.auth().getRedirectResult().then(result => {
+      if(result && result.user){
+        console.log('[login] redirect result received, user=', result.user.email);
+        let accessToken = null;
+        try{
+          const credential = firebase.auth.GoogleAuthProvider.credentialFromResult(result);
+          accessToken = credential?.accessToken || null;
+        }catch(e){ console.warn(e); }
+        _currentUser = {
+          email: result.user.email,
+          name: result.user.displayName || result.user.email,
+          picture: result.user.photoURL || "",
+          accessToken,
+          expiry: Date.now() + 3600*1000,
+          firebaseUid: result.user.uid
+        };
+        saveSession();
+        onLoggedIn().catch(e=>console.error('onLoggedIn after redirect:', e));
+      }
+    }).catch(e => console.warn('[login] redirect result error:', e));
     // Firebase Auth 状態の変化を監視
     firebase.auth().onAuthStateChanged(user=>{
       if(user){
@@ -6560,6 +6581,12 @@ function saveClientId(){
 }
 
 async function appLogin(){
+  console.log('[login] appLogin invoked. firebase=', typeof firebase, 'cfg=', !!_firebaseConfig, 'ready=', _firebaseReady);
+  // Firebase SDK 自体が読み込まれていない場合の早期エラー
+  if(typeof firebase === 'undefined'){
+    alert('Firebase SDK が読み込まれていません。\nネットワーク接続を確認してページをリロードしてください。\n（広告ブロッカー等で firebasejs がブロックされている可能性もあります）');
+    return;
+  }
   // Firebase available → use Firebase Auth (cloud sync mode)
   if(_firebaseConfig){
     if(!_firebaseReady) initFirebase();
@@ -6573,7 +6600,9 @@ async function appLogin(){
       provider.addScope('https://www.googleapis.com/auth/gmail.send');
       // 必ず同意画面を出してスコープを確実に付与
       provider.setCustomParameters({ prompt: 'consent', access_type: 'online', include_granted_scopes: 'true' });
+      console.log('[login] opening Google sign-in popup...');
       const result = await firebase.auth().signInWithPopup(provider);
+      console.log('[login] popup returned, user=', result.user?.email);
 
       // OAuth アクセストークンを複数経路で抽出
       let accessToken = null;
@@ -6607,12 +6636,31 @@ async function appLogin(){
       saveSession();
       await onLoggedIn();
     }catch(err){
-      // ユーザーがポップアップを閉じた／競合は静かに処理
       const code = err?.code || '';
-      if(code === 'auth/cancelled-popup-request' || code === 'auth/popup-closed-by-user'){
-        console.log("Login popup cancelled:", code);
+      console.warn('[login] error code=', code, 'message=', err?.message, err);
+      if(code === 'auth/cancelled-popup-request'){
+        // 多重クリック等 → 静かに無視
+        console.log("Login popup cancelled (multiple request):", code);
+      } else if(code === 'auth/popup-closed-by-user'){
+        toast('ログインがキャンセルされました');
+      } else if(code === 'auth/popup-blocked'){
+        if(confirm('ポップアップがブラウザにブロックされました。\n\n別タブで Google ログイン画面を開く方式に切り替えますか？\n（[OK] でリダイレクト方式に変更）')){
+          try{
+            const provider = new firebase.auth.GoogleAuthProvider();
+            provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
+            provider.addScope('https://www.googleapis.com/auth/gmail.send');
+            provider.setCustomParameters({ prompt: 'consent', access_type: 'online', include_granted_scopes: 'true' });
+            await firebase.auth().signInWithRedirect(provider);
+          }catch(e){ alert('リダイレクト方式も失敗しました：'+(e.message||e)); }
+        }
+      } else if(code === 'auth/unauthorized-domain'){
+        alert('このドメインは Firebase で承認されていません。\n\nFirebase Console → Authentication → Settings → Authorized domains に\n'+location.hostname+'\nを追加してください。');
+      } else if(code === 'auth/operation-not-allowed'){
+        alert('Google ログインが有効化されていません。\n\nFirebase Console → Authentication → Sign-in method → Google を有効化してください。');
+      } else if(code === 'auth/network-request-failed'){
+        alert('ネットワークエラー：Firebase に接続できません。\nインターネット接続をご確認ください。');
       } else {
-        alert("ログイン失敗：" + (err.message || code || err));
+        alert('ログイン失敗：'+(err?.message || code || err));
       }
     } finally {
       window._loginInProgress = false;
