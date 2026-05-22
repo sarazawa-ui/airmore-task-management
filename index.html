@@ -5607,6 +5607,12 @@ function _resetWorkspaceLocalCaches(){
   _pendingDeletions.tasks.clear(); _pendingDeletions.goals.clear();
   _lastAppliedIds.tasks.clear(); _lastAppliedIds.goals.clear();
   _appliedItemHashes.tasks.clear(); _appliedItemHashes.goals.clear();
+  // サブコレクション同期用キャッシュもクリア
+  if(typeof _lastSyncedTasks !== 'undefined') _lastSyncedTasks.clear();
+  if(typeof _lastSyncedGoals !== 'undefined') _lastSyncedGoals.clear();
+  // サブコレクション listener も解除（新 WS の listener が後で張られる）
+  if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
+  if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
   _lastLocalChange = 0;
   _lastSuccessfulWriteAt = 0;
   _deferredSnapshot = null;
@@ -5849,8 +5855,37 @@ async function joinOrCreateWorkspace(targetWsId){
       Object.keys(data).forEach(k=>{
         if(k === 'createdAt' || k === 'memberEmails' || k === 'ownerEmail' || k === 'events') return;
         if(k === 'profile') return; // 会社情報はローカルに保持
+        // tasks / goals は main doc から読まない（サブコレクションが正本）
+        // 旧スキーマ（_schemaVersion < 2）のみフォールバック読み込み
+        if(k === 'tasks' && Number(data._schemaVersion||0) >= SCHEMA_VERSION) return;
+        if(k === 'goals' && Number(data._schemaVersion||0) >= SCHEMA_VERSION) return;
         S[k] = data[k];
       });
+      // 新スキーマならサブコレクションからタスク/プロジェクトを取得
+      if(Number(data._schemaVersion||0) >= SCHEMA_VERSION){
+        try{
+          const tasksSnap = await db.collection(`workspaces/${wsId}/tasks`).get();
+          bumpFbUsage('read', Math.max(1, tasksSnap.size));
+          S.tasks = [];
+          _lastSyncedTasks.clear();
+          tasksSnap.forEach(d => {
+            const item = d.data();
+            S.tasks.push(item);
+            _lastSyncedTasks.set(d.id, JSON.stringify(_stripUiForSync(item)));
+          });
+          const goalsSnap = await db.collection(`workspaces/${wsId}/goals`).get();
+          bumpFbUsage('read', Math.max(1, goalsSnap.size));
+          S.goals = [];
+          _lastSyncedGoals.clear();
+          goalsSnap.forEach(d => {
+            const item = d.data();
+            S.goals.push(item);
+            _lastSyncedGoals.set(d.id, JSON.stringify(_stripUiForSync(item)));
+          });
+        }catch(e){
+          console.warn('Failed to load subcollections on join:', e);
+        }
+      }
       S.workspaceId = wsId;
       S.ownerEmail = data.ownerEmail;
       S.memberEmails = data.memberEmails || [];
@@ -5999,9 +6034,20 @@ function applySnapshotData(data, wsId){
   if(Array.isArray(data._tombstones)) _mergeTombstones(data._tombstones);
   Object.keys(data).forEach(k=>{
     if(k === 'createdAt' || k === 'events' || k === 'profile' || k === '_tombstones') return;
-    // 直近書込中のローカル追加アイテムを温存（snapshot に未反映の場合を補正）
-    if(k === 'tasks'){ S.tasks = _mergePendingItems(data.tasks, 'tasks'); return; }
-    if(k === 'goals'){ S.goals = _mergePendingItems(data.goals, 'goals'); return; }
+    // tasks / goals は main doc から読まない（サブコレクションが正本）
+    // 旧データ移行が未完了の場合のみフォールバック適用
+    if(k === 'tasks'){
+      if(Array.isArray(data.tasks) && data.tasks.length > 0 && Number(data._schemaVersion||0) < SCHEMA_VERSION){
+        S.tasks = _mergePendingItems(data.tasks, 'tasks');
+      }
+      return;
+    }
+    if(k === 'goals'){
+      if(Array.isArray(data.goals) && data.goals.length > 0 && Number(data._schemaVersion||0) < SCHEMA_VERSION){
+        S.goals = _mergePendingItems(data.goals, 'goals');
+      }
+      return;
+    }
     if(k === 'memberEmails'){ S.memberEmails = _mergeMembersUniq(S.memberEmails, data.memberEmails, e => e); return; }
     if(k === 'authMembers'){  S.authMembers  = _mergeMembersUniq(S.authMembers,  data.authMembers,  m => m && m.email); return; }
     if(k === 'members'){      S.members      = _mergeMembersUniq(S.members,      data.members,      m => m && m.name); return; }
@@ -6032,9 +6078,225 @@ function applySnapshotData(data, wsId){
   updateSyncStatus('synced');
 }
 
+// =============================================================
+// ===== サブコレクション化（per-item LWW、無競合の同期モデル）=====
+// =============================================================
+// workspaces/{wsId}                       … 主ドキュメント（wsName, profile, board, members 等）
+// workspaces/{wsId}/tasks/{taskId}        … 各タスク = 1ドキュメント
+// workspaces/{wsId}/goals/{goalId}        … 各プロジェクト = 1ドキュメント
+//
+// これにより、複数ユーザーが異なる項目を編集／削除しても完全に独立した書込となり、
+// 配列の wholesale 置換による「削除復活」「編集消失」を構造的に排除する。
+
+const SCHEMA_VERSION = 2;
+let _wsTasksUnsubscribe = null;
+let _wsGoalsUnsubscribe = null;
+// 直近サーバ確認済みの item snapshot（JSON）。書込時の diff、リモート削除検出に使用
+const _lastSyncedTasks = new Map();   // id -> JSON
+const _lastSyncedGoals = new Map();
+let _migrationDone = new Set();        // wsId のうち今セッションで migration 済み
+let _subcollectionInitialLoaded = { tasks:false, goals:false };
+
+function _stripUiForSync(item){
+  if(!item || typeof item !== 'object') return item;
+  const out = {};
+  Object.keys(item).forEach(k => {
+    if(k === '_expanded' || k === '_prevStatus' || k === '_treeCollapsed' || k === 'expanded') return;
+    out[k] = item[k];
+  });
+  return out;
+}
+
+// 旧スキーマ（main doc に tasks/goals 配列）→ サブコレクションへ移行
+// 1ワークスペースにつき1回だけ実行
+async function migrateWorkspaceToSubcollections(wsId){
+  if(!wsId || _migrationDone.has(wsId)) return false;
+  const db = firebase.firestore();
+  const ref = db.doc(`workspaces/${wsId}`);
+  let snap;
+  try{ snap = await ref.get(); }catch(e){ console.warn('migration: read failed', e); return false; }
+  if(!snap.exists){ _migrationDone.add(wsId); return false; }
+  const data = snap.data() || {};
+  if(Number(data._schemaVersion||0) >= SCHEMA_VERSION){
+    _migrationDone.add(wsId);
+    return false; // 既に移行済み
+  }
+  const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+  const goals = Array.isArray(data.goals) ? data.goals : [];
+  console.log(`[migration] starting for ${wsId}: ${tasks.length} tasks, ${goals.length} goals`);
+  // バッチ書込（500件上限なので分割）
+  const all = [];
+  tasks.forEach(t => { if(t && t.id) all.push({path:`workspaces/${wsId}/tasks/${t.id}`, data:_stripUiForSync(t)}); });
+  goals.forEach(g => { if(g && g.id) all.push({path:`workspaces/${wsId}/goals/${g.id}`, data:_stripUiForSync(g)}); });
+  const CHUNK = 400;
+  for(let i=0; i<all.length; i+=CHUNK){
+    const batch = db.batch();
+    all.slice(i, i+CHUNK).forEach(w => batch.set(db.doc(w.path), w.data));
+    await batch.commit();
+  }
+  // main doc から旧フィールドを削除＋スキーマバージョン更新
+  await ref.set({
+    tasks: firebase.firestore.FieldValue.delete(),
+    goals: firebase.firestore.FieldValue.delete(),
+    _schemaVersion: SCHEMA_VERSION
+  }, {merge:true});
+  _migrationDone.add(wsId);
+  console.log(`[migration] complete for ${wsId}`);
+  return true;
+}
+
+// サブコレクションを購読：各ドキュメントの変更を S.tasks / S.goals に反映
+function subscribeWorkspaceCollections(wsId){
+  if(_wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
+  if(_wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
+  if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
+  const db = firebase.firestore();
+  _subcollectionInitialLoaded = { tasks:false, goals:false };
+
+  const handleChanges = (qs, kind) => {
+    if(!qs) return;
+    bumpFbUsage('read', qs.docChanges().length || 1);
+    const localArr = kind === 'tasks' ? S.tasks : S.goals;
+    const lastMap = kind === 'tasks' ? _lastSyncedTasks : _lastSyncedGoals;
+    let mutated = false;
+    qs.docChanges().forEach(change => {
+      const id = change.doc.id;
+      const data = change.doc.data() || {};
+      if(change.type === 'removed'){
+        const i = localArr.findIndex(x => x && x.id === id);
+        if(i >= 0){ localArr.splice(i, 1); mutated = true; }
+        lastMap.delete(id);
+      } else {
+        // added or modified — per-item LWW（_modAt 新しい方を採用）
+        const local = localArr.find(x => x && x.id === id);
+        const localMod = Number(local && local._modAt || 0);
+        const remoteMod = Number(data._modAt || 0);
+        // ローカルに未保存の編集がある場合（_lastSyncedTasks のハッシュと現ローカルが異なる）
+        const localJson = local ? JSON.stringify(_stripUiForSync(local)) : null;
+        const localHasUnsavedEdit = local && lastMap.get(id) !== localJson;
+        if(localHasUnsavedEdit && localMod >= remoteMod){
+          // ローカル方が新しい / 同時 → 受信を破棄（自分の write 結果がじき来る）
+          return;
+        }
+        // UI ステートを保持しつつ remote データを適用
+        const preserve = {};
+        if(local){
+          if(kind === 'goals' && local.expanded) preserve.expanded = local.expanded;
+          if(kind === 'goals' && local._treeCollapsed !== undefined) preserve._treeCollapsed = local._treeCollapsed;
+          if(kind === 'tasks' && local._expanded) preserve._expanded = local._expanded;
+        }
+        const merged = Object.assign({}, data, preserve);
+        const i = localArr.findIndex(x => x && x.id === id);
+        if(i >= 0) localArr[i] = merged; else localArr.push(merged);
+        lastMap.set(id, JSON.stringify(_stripUiForSync(merged)));
+        mutated = true;
+      }
+    });
+    if(mutated && _currentUser){
+      try{
+        localStorage.setItem(LS_KEY, JSON.stringify(S));
+      }catch(e){}
+      try{ renderAll(); }catch(e){ console.warn('render after subcollection change failed:', e); }
+    }
+  };
+
+  _wsTasksUnsubscribe = db.collection(`workspaces/${wsId}/tasks`).onSnapshot(qs => {
+    if(_isRemoteUpdate) return;
+    handleChanges(qs, 'tasks');
+    _subcollectionInitialLoaded.tasks = true;
+  }, err => {
+    console.error('tasks subscribe error:', err);
+    if(err && err.code === 'resource-exhausted') updateSyncStatus('quota');
+  });
+  _wsGoalsUnsubscribe = db.collection(`workspaces/${wsId}/goals`).onSnapshot(qs => {
+    if(_isRemoteUpdate) return;
+    handleChanges(qs, 'goals');
+    _subcollectionInitialLoaded.goals = true;
+  }, err => {
+    console.error('goals subscribe error:', err);
+    if(err && err.code === 'resource-exhausted') updateSyncStatus('quota');
+  });
+}
+
+// per-doc 書込：S.tasks / S.goals を診て、変更のあったものだけ Firestore に書く
+async function syncTasksGoalsToSubcollections(wsId){
+  if(!wsId || !_firebaseReady) return 0;
+  const db = firebase.firestore();
+  const writes = [];
+  const deletes = [];
+
+  // tasks 差分
+  const curTaskIds = new Set();
+  (S.tasks||[]).forEach(t => {
+    if(!t || !t.id) return;
+    curTaskIds.add(t.id);
+    const clean = _stripUiForSync(t);
+    const json = JSON.stringify(clean);
+    if(_lastSyncedTasks.get(t.id) !== json){
+      writes.push({path:`workspaces/${wsId}/tasks/${t.id}`, data:clean, kind:'tasks', id:t.id, json});
+    }
+  });
+  // ローカルから消えたタスク → 削除
+  _lastSyncedTasks.forEach((json, id) => {
+    if(!curTaskIds.has(id)){
+      deletes.push({path:`workspaces/${wsId}/tasks/${id}`, kind:'tasks', id});
+    }
+  });
+
+  // goals 差分
+  const curGoalIds = new Set();
+  (S.goals||[]).forEach(g => {
+    if(!g || !g.id) return;
+    curGoalIds.add(g.id);
+    const clean = _stripUiForSync(g);
+    const json = JSON.stringify(clean);
+    if(_lastSyncedGoals.get(g.id) !== json){
+      writes.push({path:`workspaces/${wsId}/goals/${g.id}`, data:clean, kind:'goals', id:g.id, json});
+    }
+  });
+  _lastSyncedGoals.forEach((json, id) => {
+    if(!curGoalIds.has(id)){
+      deletes.push({path:`workspaces/${wsId}/goals/${id}`, kind:'goals', id});
+    }
+  });
+
+  const total = writes.length + deletes.length;
+  if(total === 0) return 0;
+  // 400件単位でバッチ送信
+  const ops = writes.map(w => ({type:'set', ...w})).concat(deletes.map(d => ({type:'delete', ...d})));
+  const CHUNK = 400;
+  for(let i=0; i<ops.length; i+=CHUNK){
+    const batch = db.batch();
+    ops.slice(i, i+CHUNK).forEach(op => {
+      if(op.type === 'set'){
+        batch.set(db.doc(op.path), op.data);
+      } else {
+        batch.delete(db.doc(op.path));
+      }
+    });
+    await batch.commit();
+  }
+  // 成功 → ローカルの「最後に同期した状態」を更新
+  writes.forEach(w => { (w.kind === 'tasks' ? _lastSyncedTasks : _lastSyncedGoals).set(w.id, w.json); });
+  deletes.forEach(d => { (d.kind === 'tasks' ? _lastSyncedTasks : _lastSyncedGoals).delete(d.id); });
+  bumpFbUsage('write', writes.length);
+  bumpFbUsage('delete', deletes.length);
+  return total;
+}
+
+// migration 完了 → 主ドキュメント＋サブコレクションを購読
+async function setupWorkspaceSubscriptions(wsId){
+  await migrateWorkspaceToSubcollections(wsId);
+  subscribeWorkspaceCollections(wsId);
+}
+
 function subscribeWorkspace(){
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
+  if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
+  if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
   if(!S.workspaceId || !_firebaseReady || !firebase.auth().currentUser) return;
+  // サブコレクションのセットアップ（migration + listeners）
+  setupWorkspaceSubscriptions(S.workspaceId).catch(e=>console.warn('setupWorkspaceSubscriptions failed:', e));
   const ref = firebase.firestore().doc(`workspaces/${S.workspaceId}`);
   _wsUnsubscribe = ref.onSnapshot(snap=>{
     if(!snap.exists) return;
@@ -6097,25 +6359,25 @@ function syncToFirestore(){
     try{
       const db = firebase.firestore();
       const ref = db.doc(`workspaces/${S.workspaceId}`);
-      // ★ トランザクションでサーバ最新値を読み込み、自分の pending 変更だけを反映して書き戻す
-      //   これにより、複数ユーザーが同時に異なる項目を編集/削除しても、双方の変更が保持される。
-      //   tasks/goals は配列ごと丸ごと置換するため、必ず remote+local をマージしてから書く。
+      // ① tasks / goals は per-doc 書込（サブコレクション）— 競合に強い
+      try{
+        await syncTasksGoalsToSubcollections(S.workspaceId);
+      }catch(e){
+        console.warn('subcollection sync failed:', e);
+        // フォールバック：エラーでも main doc 書込は続行（後段で全体 LWW）
+      }
+      // ② main doc：tasks/goals 以外のフィールドを transaction merge
       await db.runTransaction(async tx => {
         const remoteSnap = await tx.get(ref);
         const remote = remoteSnap.exists ? (remoteSnap.data() || {}) : {};
-        // 先に Tombstones を統合（merge 内で参照するため）
         if(Array.isArray(remote._tombstones)) _mergeTombstones(remote._tombstones);
         const out = serializeWorkspace();
-        // tasks / goals は remote 起点でローカル pending（追加/編集/削除）をマージ
-        try{
-          out.tasks = _mergePendingItems(Array.isArray(remote.tasks) ? remote.tasks : [], 'tasks');
-        }catch(e){ console.warn('merge tasks failed:', e); }
-        try{
-          out.goals = _mergePendingItems(Array.isArray(remote.goals) ? remote.goals : [], 'goals');
-        }catch(e){ console.warn('merge goals failed:', e); }
-        // Tombstones も保存する
+        // tasks/goals は main doc に書かない（サブコレクションが正本）
+        delete out.tasks;
+        delete out.goals;
         out._tombstones = Array.isArray(S._tombstones) ? S._tombstones : [];
-        // 掲示板：updatedAt が新しい方を採用（同時編集時の per-doc LWW）
+        out._schemaVersion = SCHEMA_VERSION;
+        // 掲示板：updatedAt が新しい方を採用（per-doc LWW）
         if(remote.board && typeof remote.board === 'object'){
           const localBoard = S.board || {};
           const lt = Number(localBoard.updatedAt||0), rt = Number(remote.board.updatedAt||0);
@@ -6124,15 +6386,15 @@ function syncToFirestore(){
         // メンバー系（memberEmails / authMembers / members）も remote 側の追加を残す
         const _mergeUniqArr = (a, b, keyFn) => {
           const seen = new Set();
-          const out = [];
+          const out2 = [];
           [...(a||[]), ...(b||[])].forEach(x => {
             if(x == null) return;
             const k = keyFn(x);
             if(k != null && seen.has(k)) return;
             if(k != null) seen.add(k);
-            out.push(x);
+            out2.push(x);
           });
-          return out;
+          return out2;
         };
         out.memberEmails = _mergeUniqArr(remote.memberEmails, out.memberEmails, e => e);
         out.authMembers  = _mergeUniqArr(remote.authMembers,  out.authMembers,  m => m && m.email);
@@ -6245,6 +6507,8 @@ setInterval(()=>{
 function leaveWorkspace(){
   if(!confirm("このワークスペースから離脱しますか？\n（クラウドのデータは保持されます）")) return;
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
+  if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
+  if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
   delete S.workspaceId;
   delete S.ownerEmail;
   delete S.memberEmails;
@@ -6381,6 +6645,8 @@ async function switchWorkspace(wsId){
   _personalViewCache = null;
   // unsubscribe current
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
+  if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
+  if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
   // load target
   toast('ワークスペースを切替中...');
   const ok = await joinOrCreateWorkspace(wsId);
@@ -6402,6 +6668,8 @@ async function createNewWorkspace(){
   const name = prompt('新規ワークスペースの名前を入力してください\n（例：営業チーム / プロジェクトX）');
   if(!name || !name.trim()) return;
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
+  if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
+  if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
   // Start a fresh state for the new workspace
   // 会社情報（profile）と userPrefs はユーザー共通のため保持
   const keepUserPrefs = S.userPrefs;
@@ -6488,6 +6756,8 @@ function saveFirebaseConfigUI(){
       _firebaseConfig = null;
       _firebaseReady = false;
       if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
+  if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
+  if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
       updateSyncStatus('offline');
       toast("Firebase設定をクリアしました");
       renderFirebaseSettings();
@@ -6879,6 +7149,8 @@ async function registerCurrentMember(){
 function appLogout(){
   if(!confirm("ログアウトしますか？\n（次回アクセス時に再ログインが必要になります）")) return;
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
+  if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
+  if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
   // 明示的なログアウト時のみ Firebase からもサインアウト（永続セッション解除）
   if(_firebaseReady && firebase.auth().currentUser){
     firebase.auth().signOut().catch(e=>console.warn(e));
@@ -7378,6 +7650,8 @@ async function deleteWorkspace(){
   try{
     // unsubscribe first to prevent snapshot from re-applying after delete
     if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
+  if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
+  if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
     await firebase.firestore().doc(`workspaces/${wsId}`).delete();
     bumpFbUsage('delete', 1);
     toast(`ワークスペース「${wsName}」を削除しました`);
@@ -7701,6 +7975,8 @@ function ensureDefaults(){
   // 重要：tasks / goals が配列でない場合のフォールバック（undefined 由来のクラッシュ防止）
   if(!Array.isArray(S.tasks)) S.tasks = [];
   if(!Array.isArray(S.goals)) S.goals = [];
+  // スキーマバージョン（サブコレクション方式）
+  if(typeof S._schemaVersion !== 'number') S._schemaVersion = 0;
   if(!Array.isArray(S.members)) S.members = [];
   if(!Array.isArray(S.statuses)) S.statuses = [...(DEFAULT_STATE.statuses||[])];
   if(!Array.isArray(S.priorities)) S.priorities = [...(DEFAULT_STATE.priorities||[])];
