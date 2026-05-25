@@ -3128,7 +3128,7 @@ function addGoal(){
   S.seq.goal = (S.seq.goal||0)+1;
   const id = "G-"+String(S.seq.goal).padStart(3,'0');
   _deferredSnapshot = null;
-  const newGoal = {id,name:"",area:"",owner:"",members:[],start:"",due:"",progress:0,progressManual:null,status:"未着手",defn:"",breakdown:[],expanded:true};
+  const newGoal = {id,name:"",area:"",owner:"",members:[],start:"",due:"",progress:0,progressManual:null,status:"未着手",defn:"",breakdown:[],expanded:false};
   S.goals.push(newGoal);
   save(true, `プロジェクト追加：${id}`);
   renderAll();
