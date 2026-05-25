@@ -6226,6 +6226,80 @@ function _stripUiForSync(item){
   });
   return out;
 }
+// 表示差分比較用：UI フィールド＋メタ（_modAt 等）を除いた純粋な「ユーザー可視データ」
+function _stripForCompare(item){
+  if(!item || typeof item !== 'object') return item;
+  const out = {};
+  Object.keys(item).forEach(k => {
+    if(k === '_expanded' || k === '_prevStatus' || k === '_treeCollapsed' || k === 'expanded') return;
+    if(k === '_modAt' || k === '_modBy') return;
+    out[k] = item[k];
+  });
+  return out;
+}
+
+// =============================================================
+// ===== Phase 2: 3-layer store のフィールド単位マージ =====
+// =============================================================
+// local: 画面に表示中の値（ユーザー編集が反映済みの場合あり）
+// remote: 今 snapshot で届いた値
+// lastSeen: このクライアントが直前に取得した remote 値（=「変化の基準」）
+//
+// ルール（フィールドごと）：
+//   local が lastSeen から変化していて、remote は変化していない →  local（ローカル編集を保持）
+//   それ以外 → remote（LWW で remote の最新を採用）
+// UI 専用フィールド（expanded / _expanded / _treeCollapsed / _prevStatus）はサーバに無いので
+// 常に local を保持。
+const _UI_ONLY_KEYS = new Set(['expanded', '_expanded', '_treeCollapsed', '_prevStatus']);
+function _safeJson(v){ try{ return JSON.stringify(v); }catch(e){ return ''; } }
+function _mergeFieldLevel({local, remote, lastSeenJson, kind}){
+  remote = remote || {};
+  if(!local){
+    // 完全な新着 → remote をそのまま採用（UI フィールドは存在しないので無問題）
+    return Object.assign({}, remote);
+  }
+  let lastSeen = {};
+  if(lastSeenJson){
+    try{ lastSeen = JSON.parse(lastSeenJson) || {}; }catch(e){ lastSeen = {}; }
+  }
+  const out = {};
+  const allKeys = new Set();
+  Object.keys(local).forEach(k => allKeys.add(k));
+  Object.keys(remote).forEach(k => allKeys.add(k));
+  Object.keys(lastSeen).forEach(k => allKeys.add(k));
+  let conflicts = 0;
+  allKeys.forEach(k => {
+    if(_UI_ONLY_KEYS.has(k)){
+      // UI 専用：必ず local を保持（remote には存在しない想定だが念のため）
+      if(local[k] !== undefined) out[k] = local[k];
+      return;
+    }
+    const lv = local[k];
+    const rv = remote[k];
+    const sv = lastSeen[k];
+    const lvJson = _safeJson(lv);
+    const rvJson = _safeJson(rv);
+    const svJson = _safeJson(sv);
+    const localChanged = lvJson !== svJson;
+    const remoteChanged = rvJson !== svJson;
+    if(localChanged && !remoteChanged){
+      // ローカルだけが編集した未同期フィールド → local を保持
+      if(lv !== undefined) out[k] = lv;
+      return;
+    }
+    if(localChanged && remoteChanged && lvJson !== rvJson){
+      // 両者が違う方向に編集 → LWW（remote 採用）。詳細は logSync で追える
+      conflicts++;
+    }
+    // それ以外（remote だけ変えた／変化なし／両者同じ値）→ remote を採用
+    if(rv !== undefined){ out[k] = rv; }
+    else if(lv !== undefined){ out[k] = lv; }
+  });
+  if(conflicts > 0){
+    logSync('merge.conflict', {kind, id: local.id, fields: conflicts});
+  }
+  return out;
+}
 
 // 旧スキーマ（main doc に tasks/goals 配列）→ サブコレクションへ移行
 // 1ワークスペースにつき1回だけ実行
@@ -6302,35 +6376,25 @@ function subscribeWorkspaceCollections(wsId){
         if(i >= 0){ localArr.splice(i, 1); mutated = true; }
         lastMap.delete(id);
       } else {
-        // added or modified — per-item LWW（_modAt 新しい方を採用）
+        // added or modified — per-FIELD merge（3-layer store: local vs remote vs lastSeen）
+        //   ・local が lastSeen から変えたフィールドで、remote が lastSeen から変えていなければ → local 優先
+        //   ・それ以外（remote だけ変えた／両者変えた）は remote 優先（LWW）
+        //   これにより「同時に違う項目を編集 → 片方が消える」現象が構造的に消える。
         const local = localArr.find(x => x && x.id === id);
-        const localMod = Number(local && local._modAt || 0);
-        const remoteMod = Number(data._modAt || 0);
-        // ローカルに未保存の編集がある場合（_lastSyncedTasks のハッシュと現ローカルが異なる）
-        const localJson = local ? JSON.stringify(_stripUiForSync(local)) : null;
-        const localHasUnsavedEdit = local && lastMap.get(id) !== localJson;
-        if(localHasUnsavedEdit && localMod >= remoteMod){
-          // ローカル方が新しい / 同時 → 受信を破棄（自分の write 結果がじき来る）
-          rejected++;
-          logSync('apply.reject.localNewer', {kind, id, localMod, remoteMod});
-          return;
-        }
-        // UI ステートを保持しつつ remote データを適用
-        const preserve = {};
-        if(local){
-          if(kind === 'goals' && local.expanded) preserve.expanded = local.expanded;
-          if(kind === 'goals' && local._treeCollapsed !== undefined) preserve._treeCollapsed = local._treeCollapsed;
-          if(kind === 'tasks' && local._expanded) preserve._expanded = local._expanded;
-        }
-        const merged = Object.assign({}, data, preserve);
-        // 実際にデータが変わるか比較（UI フィールドの違いだけなら無視）
-        const mergedJson = JSON.stringify(_stripUiForSync(merged));
-        const wasSameAsLocal = (localJson === mergedJson);
+        // 再描画必要性の判定は「ユーザー可視フィールド」のみで（_modAt 等のメタは除外）
+        const localVisible = local ? JSON.stringify(_stripForCompare(local)) : null;
+        const merged = _mergeFieldLevel({local, remote: data, lastSeenJson: lastMap.get(id), kind});
+        const mergedVisible = JSON.stringify(_stripForCompare(merged));
+        const wasSameAsLocal = (localVisible === mergedVisible);
         const i = localArr.findIndex(x => x && x.id === id);
         if(i >= 0) localArr[i] = merged; else localArr.push(merged);
-        lastMap.set(id, mergedJson);
-        // 既存ローカルと内容が完全一致なら mutate しない（再描画スキップ）
-        if(!wasSameAsLocal){ mutated = true; applied++; }
+        // lastSeen は「サーバから今受け取った状態」で更新（field-merge 判定の基準）
+        lastMap.set(id, JSON.stringify(data));
+        if(!wasSameAsLocal){
+          mutated = true;
+          applied++;
+          logSync('apply.merge', {kind, id});
+        }
       }
     });
     if(dedupHits || applied || rejected){
