@@ -3362,21 +3362,31 @@ function renderTasks(){
   });
 }
 function addTask(){
-  S.seq.task = (S.seq.task||0)+1;
+  // デイリータスク（プロジェクト未紐づけ）は専用連番を使用：D-001, D-002, ...
+  // プロジェクト紐づけタスク（T-）の連番には影響しない
+  S.seq.dailyTask = (S.seq.dailyTask||0)+1;
   // 他の展開中タスクをすべて閉じる
   S.tasks.forEach(x => { x._expanded = false; });
   // startD は空 → 「未割当」に分類される（カレンダーへドロップで日時設定）
-  const t = {id:"T-"+String(S.seq.task).padStart(3,'0'),goal:"",mid:"",act:"新しいタスク",owner:(_currentUser?_currentUser.name:S.ui.viewAsMember||""),startD:"",due:"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:"",time:"", _expanded:true};
+  const t = {id:"D-"+String(S.seq.dailyTask).padStart(3,'0'),goal:"",mid:"",act:"新しいタスク",owner:(_currentUser?_currentUser.name:S.ui.viewAsMember||""),startD:"",due:"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:"",time:"", _expanded:true};
   S.tasks.push(t);
-  save(true, `タスク追加：${t.id}`); renderAll();
+  save(true, `デイリータスク追加：${t.id}`); renderAll();
   toast(`${t.id} を追加しました（未割当・サイドバーで詳細編集→カレンダーにドロップで日時設定）`);
 }
 
 function duplicateTask(taskId){
   const src = S.tasks.find(t=>t.id===taskId);
   if(!src){ alert('タスクが見つかりません'); return; }
-  S.seq.task = (S.seq.task||0)+1;
-  const newId = "T-"+String(S.seq.task).padStart(3,'0');
+  // プロジェクト紐づけの有無で連番を分離（D- = デイリー、T- = プロジェクト紐づけ）
+  const isDailySrc = !src.goal;
+  let newId;
+  if(isDailySrc){
+    S.seq.dailyTask = (S.seq.dailyTask||0)+1;
+    newId = "D-"+String(S.seq.dailyTask).padStart(3,'0');
+  } else {
+    S.seq.task = (S.seq.task||0)+1;
+    newId = "T-"+String(S.seq.task).padStart(3,'0');
+  }
   // ソースを浅くコピーして新ID・初期状態にリセット
   const dup = {
     ...src,
@@ -8006,6 +8016,18 @@ function ensureDefaults(){
   if(!S.weeklyReports) S.weeklyReports = {};
   if(!S.seq) S.seq = {goal:5,task:7,node:0};
   if(!S.seq.node) S.seq.node = 0;
+  // デイリータスク（プロジェクト未紐づけ）の連番は task と分離
+  if(typeof S.seq.dailyTask !== 'number'){
+    // 既存の D- 接頭辞タスクから最大値を復元（未指定時の初期値）
+    let maxD = 0;
+    (S.tasks||[]).forEach(t => {
+      if(t && typeof t.id === 'string' && /^D-(\d+)$/.test(t.id)){
+        const n = Number(t.id.replace(/^D-/, ''));
+        if(n > maxD) maxD = n;
+      }
+    });
+    S.seq.dailyTask = maxD;
+  }
   if(!S.events) S.events = [];
   if(!S.areas) S.areas = [...DEFAULT_STATE.areas];
   if(!S.profile) S.profile = {...DEFAULT_STATE.profile};
