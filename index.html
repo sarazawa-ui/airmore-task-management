@@ -5970,14 +5970,17 @@ async function joinOrCreateWorkspace(targetWsId){
 // Firestoreから受信したスナップショットデータをローカル状態に適用
 function applySnapshotData(data, wsId){
   if(!data) return;
+  logSync('apply.start', {wsId, schemaVersion: data._schemaVersion || 0});
   // === 安全弁：呼び出し元が漏らした場合に備え、ここでも pending/cooldown を再チェック ===
   if(_pendingLocalChanges){
+    logSync('snapshot.deferred', {reason: 'pendingLocalChanges'});
     _deferredSnapshot = data;
     return;
   }
   // ★ 強い防御：直近のローカル変更が「まだ Firestore に書込確認されていない」場合は適用しない
   //   （クォータ超過や書込遅延中に、古い snapshot で巻き戻る現象を完全に防ぐ）
   if(_lastLocalChange > 0 && _lastLocalChange > _lastSuccessfulWriteAt){
+    logSync('snapshot.deferred', {reason: 'unconfirmedLocalWrite'});
     _deferredSnapshot = data;
     return;
   }
@@ -6090,7 +6093,129 @@ function applySnapshotData(data, wsId){
   loadCompanyProfile(); // 会社情報はローカル優先で再適用
   if(_currentUser){ renderAll(); }
   updateSyncStatus('synced');
+  logSync('apply.end', {wsId});
 }
+
+// =============================================================
+// ===== Phase 0: 構造化同期ログ（observability first）=====
+// =============================================================
+// 同期関連イベントをリングバッファに記録。バグ報告時に
+// window._hittatsuSyncLog() で直近 500 件を JSON で取得できる。
+// 重要イベントは console.debug にも出す（DevTools フィルタで "[sync]" 検索可）。
+const _syncLog = [];
+const SYNC_LOG_MAX = 500;
+function logSync(event, payload){
+  const entry = {
+    t: Date.now(),
+    ev: event,
+    p: payload || null
+  };
+  _syncLog.push(entry);
+  if(_syncLog.length > SYNC_LOG_MAX) _syncLog.splice(0, _syncLog.length - SYNC_LOG_MAX);
+  // 重要なイベントだけ console にも（ノイズを減らすため echo.dedup などは抑制）
+  const verbose = ['apply.start','apply.end','write.start','write.end','write.error',
+                   'outbox.flush.start','outbox.flush.end','outbox.flush.error',
+                   'isRemote.stuck','snapshot.deferred','migration.start','migration.end'];
+  if(verbose.includes(event)){
+    try{ console.debug('[sync]', event, payload || ''); }catch(e){}
+  }
+}
+// グローバル公開（バグ報告／検証用）
+window._hittatsuSyncLog = function(opts){
+  const o = opts || {};
+  const max = o.max || 100;
+  const filter = o.filter; // string or array of event names
+  let arr = _syncLog;
+  if(filter){
+    const set = new Set(Array.isArray(filter) ? filter : [filter]);
+    arr = arr.filter(e => set.has(e.ev));
+  }
+  const out = arr.slice(-max).map(e => ({
+    time: new Date(e.t).toISOString().slice(11,23),
+    event: e.ev,
+    payload: e.p
+  }));
+  console.table(out);
+  return out;
+};
+window._hittatsuSyncLogClear = function(){ _syncLog.length = 0; console.log('[sync] log cleared'); };
+
+// =============================================================
+// ===== Phase 0: Outbox（書込キュー）=====
+// =============================================================
+// 各ローカル編集は op として outbox に積まれ、単一ワーカーが順次 FS へ書く。
+// echo dedup は opId ベース（決定的）— JSON ハッシュ比較への依存を将来的に減らす。
+//
+// 現段階では既存の syncTasksGoalsToSubcollections と並走させる「shadow mode」。
+// Phase 2 でこれを正式経路に昇格させる。
+const _outbox = [];                     // {opId, kind, id, op, payload, queuedAt}
+const _outboxAckedOpIds = new Set();    // 自分の書込が echo で戻ってきた判定用
+let _outboxFlushing = false;
+let _opIdSeq = 0;
+function _nextOpId(){
+  _opIdSeq++;
+  return `op_${Date.now().toString(36)}_${_opIdSeq}`;
+}
+function outboxEnqueue(op){
+  // op = {kind:'tasks'|'goals', id, op:'upsert'|'delete', payload?}
+  const opId = _nextOpId();
+  const entry = Object.assign({opId, queuedAt: Date.now()}, op);
+  _outbox.push(entry);
+  logSync('outbox.enqueue', {opId, kind: op.kind, id: op.id, op: op.op, depth: _outbox.length});
+  return opId;
+}
+// 直近の op を取り出すユーティリティ（同一 item の連続編集は最新だけ残してまとめる）
+function _coalesceOutbox(){
+  // 後ろから走査して、同じ (kind,id) の古い op を消す
+  const seen = new Set();
+  for(let i=_outbox.length-1; i>=0; i--){
+    const k = `${_outbox[i].kind}:${_outbox[i].id}`;
+    if(seen.has(k)){ _outbox.splice(i, 1); }
+    else seen.add(k);
+  }
+}
+function outboxHasPending(kind, id){
+  return _outbox.some(e => e.kind === kind && e.id === id);
+}
+function outboxIsAckedEcho(opId){
+  if(!opId) return false;
+  return _outboxAckedOpIds.has(opId);
+}
+// Phase 0: outbox 自体の flush は実装するが、現状は dry-run（実書込は既存経路が担当）。
+// Phase 2 で実書込に切り替える。今は「キューに積む／消化する」動きの計測だけ取る。
+async function outboxFlush({dryRun = true} = {}){
+  if(_outboxFlushing) return 0;
+  _outboxFlushing = true;
+  logSync('outbox.flush.start', {depth: _outbox.length, dryRun});
+  let processed = 0;
+  try{
+    _coalesceOutbox();
+    while(_outbox.length){
+      const entry = _outbox[0];
+      if(!dryRun){
+        // Phase 2 で実装：ここで実書込（subcoll set/delete）と _outboxAckedOpIds に追加
+      }
+      _outbox.shift();
+      processed++;
+    }
+    logSync('outbox.flush.end', {processed});
+  }catch(e){
+    logSync('outbox.flush.error', {err: String(e && e.message || e), depth: _outbox.length});
+    console.warn('[outbox] flush error:', e);
+  }finally{
+    _outboxFlushing = false;
+  }
+  return processed;
+}
+// デバッグ用：outbox の現状取得
+window._hittatsuOutbox = function(){
+  return {
+    depth: _outbox.length,
+    flushing: _outboxFlushing,
+    acked: _outboxAckedOpIds.size,
+    head: _outbox.slice(0, 10)
+  };
+};
 
 // =============================================================
 // ===== サブコレクション化（per-item LWW、無競合の同期モデル）=====
@@ -6137,6 +6262,7 @@ async function migrateWorkspaceToSubcollections(wsId){
   }
   const tasks = Array.isArray(data.tasks) ? data.tasks : [];
   const goals = Array.isArray(data.goals) ? data.goals : [];
+  logSync('migration.start', {wsId, tasks: tasks.length, goals: goals.length});
   console.log(`[migration] starting for ${wsId}: ${tasks.length} tasks, ${goals.length} goals`);
   // バッチ書込（500件上限なので分割）
   const all = [];
@@ -6155,6 +6281,7 @@ async function migrateWorkspaceToSubcollections(wsId){
     _schemaVersion: SCHEMA_VERSION
   }, {merge:true});
   _migrationDone.add(wsId);
+  logSync('migration.end', {wsId});
   console.log(`[migration] complete for ${wsId}`);
   return true;
 }
@@ -6169,11 +6296,16 @@ function subscribeWorkspaceCollections(wsId){
 
   const handleChanges = (qs, kind) => {
     if(!qs) return;
-    bumpFbUsage('read', qs.docChanges().length || 1);
+    const changes = qs.docChanges();
+    bumpFbUsage('read', changes.length || 1);
+    logSync('snapshot.changes', {kind, count: changes.length});
     const localArr = kind === 'tasks' ? S.tasks : S.goals;
     const lastMap = kind === 'tasks' ? _lastSyncedTasks : _lastSyncedGoals;
     let mutated = false;
-    qs.docChanges().forEach(change => {
+    let dedupHits = 0;
+    let applied = 0;
+    let rejected = 0;
+    changes.forEach(change => {
       const id = change.doc.id;
       const data = change.doc.data() || {};
       // ★ 自分の write 結果が echo として返ってくる場合の完全 dedup
@@ -6181,6 +6313,7 @@ function subscribeWorkspaceCollections(wsId){
       //   これによって、自分の編集中の入力欄が echo で消える「入力が戻る」現象を防止
       const remoteJson = JSON.stringify(data);
       if(change.type !== 'removed' && lastMap.get(id) === remoteJson){
+        dedupHits++;
         return;
       }
       if(change.type === 'removed'){
@@ -6197,6 +6330,8 @@ function subscribeWorkspaceCollections(wsId){
         const localHasUnsavedEdit = local && lastMap.get(id) !== localJson;
         if(localHasUnsavedEdit && localMod >= remoteMod){
           // ローカル方が新しい / 同時 → 受信を破棄（自分の write 結果がじき来る）
+          rejected++;
+          logSync('apply.reject.localNewer', {kind, id, localMod, remoteMod});
           return;
         }
         // UI ステートを保持しつつ remote データを適用
@@ -6214,9 +6349,12 @@ function subscribeWorkspaceCollections(wsId){
         if(i >= 0) localArr[i] = merged; else localArr.push(merged);
         lastMap.set(id, mergedJson);
         // 既存ローカルと内容が完全一致なら mutate しない（再描画スキップ）
-        if(!wasSameAsLocal) mutated = true;
+        if(!wasSameAsLocal){ mutated = true; applied++; }
       }
     });
+    if(dedupHits || applied || rejected){
+      logSync('apply.end', {kind, dedupHits, applied, rejected, mutated});
+    }
     if(mutated && _currentUser){
       try{
         localStorage.setItem(LS_KEY, JSON.stringify(S));
@@ -6245,6 +6383,7 @@ function subscribeWorkspaceCollections(wsId){
     if(!window._isRemoteUpdateSince) window._isRemoteUpdateSince = Date.now();
     if(Date.now() - window._isRemoteUpdateSince > 1500){
       console.warn('[sync] _isRemoteUpdate stuck; force reset');
+      logSync('isRemote.stuck', {duration: Date.now() - window._isRemoteUpdateSince});
       _isRemoteUpdate = false;
       window._isRemoteUpdateSince = 0;
       return false;
@@ -6277,6 +6416,7 @@ async function syncTasksGoalsToSubcollections(wsId){
   const db = firebase.firestore();
   const writes = [];
   const deletes = [];
+  const _t0 = Date.now();
 
   // tasks 差分
   const curTaskIds = new Set();
@@ -6315,25 +6455,32 @@ async function syncTasksGoalsToSubcollections(wsId){
 
   const total = writes.length + deletes.length;
   if(total === 0) return 0;
+  logSync('write.start', {wsId, writes: writes.length, deletes: deletes.length});
   // 400件単位でバッチ送信
   const ops = writes.map(w => ({type:'set', ...w})).concat(deletes.map(d => ({type:'delete', ...d})));
   const CHUNK = 400;
-  for(let i=0; i<ops.length; i+=CHUNK){
-    const batch = db.batch();
-    ops.slice(i, i+CHUNK).forEach(op => {
-      if(op.type === 'set'){
-        batch.set(db.doc(op.path), op.data);
-      } else {
-        batch.delete(db.doc(op.path));
-      }
-    });
-    await batch.commit();
+  try{
+    for(let i=0; i<ops.length; i+=CHUNK){
+      const batch = db.batch();
+      ops.slice(i, i+CHUNK).forEach(op => {
+        if(op.type === 'set'){
+          batch.set(db.doc(op.path), op.data);
+        } else {
+          batch.delete(db.doc(op.path));
+        }
+      });
+      await batch.commit();
+    }
+  }catch(e){
+    logSync('write.error', {wsId, err: String(e && e.message || e), writes: writes.length, deletes: deletes.length});
+    throw e;
   }
   // 成功 → ローカルの「最後に同期した状態」を更新
   writes.forEach(w => { (w.kind === 'tasks' ? _lastSyncedTasks : _lastSyncedGoals).set(w.id, w.json); });
   deletes.forEach(d => { (d.kind === 'tasks' ? _lastSyncedTasks : _lastSyncedGoals).delete(d.id); });
   bumpFbUsage('write', writes.length);
   bumpFbUsage('delete', deletes.length);
+  logSync('write.end', {wsId, writes: writes.length, deletes: deletes.length, ms: Date.now() - _t0});
   return total;
 }
 
