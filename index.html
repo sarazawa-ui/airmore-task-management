@@ -8094,20 +8094,39 @@ async function renderPersonalView(){
     const snap = await firebase.firestore().collection('workspaces')
       .where('memberEmails','array-contains', email).get();
     bumpFbUsage('read', Math.max(1, snap.size));
-    snap.forEach(doc=>{
+    // 各ワークスペースから tasks / goals を取得。スキーマ v2 ならサブコレクション、
+    // 旧スキーマ（_schemaVersion < 2）なら main doc の配列をフォールバック使用。
+    const db = firebase.firestore();
+    const wsDocs = [];
+    snap.forEach(doc => wsDocs.push(doc));
+    await Promise.all(wsDocs.map(async (doc) => {
       const d = doc.data() || {};
       const wsName = d.wsName || (d.profile && d.profile.companyName) || d.name || doc.id;
-      const tasks = Array.isArray(d.tasks) ? d.tasks : [];
-      const goals = Array.isArray(d.goals) ? d.goals : [];
+      let tasks = [];
+      let goals = [];
+      if(Number(d._schemaVersion||0) >= SCHEMA_VERSION){
+        try{
+          const ts = await db.collection(`workspaces/${doc.id}/tasks`).get();
+          bumpFbUsage('read', Math.max(1, ts.size));
+          ts.forEach(t => tasks.push(t.data()));
+          const gs = await db.collection(`workspaces/${doc.id}/goals`).get();
+          bumpFbUsage('read', Math.max(1, gs.size));
+          gs.forEach(g => goals.push(g.data()));
+        }catch(e){
+          console.warn(`[personal] subcollection fetch failed for ${doc.id}:`, e);
+        }
+      } else {
+        tasks = Array.isArray(d.tasks) ? d.tasks : [];
+        goals = Array.isArray(d.goals) ? d.goals : [];
+      }
       const goalMap = {};
-      goals.forEach(g=>{ if(g && g.id) goalMap[g.id] = g.name || g.id; });
+      goals.forEach(g => { if(g && g.id) goalMap[g.id] = g.name || g.id; });
       // Identify "self" name in this workspace (authMembers maps email → name)
       let selfName = myName;
       const auth = Array.isArray(d.authMembers) ? d.authMembers.find(m=>m.email===email) : null;
       if(auth && auth.name) selfName = auth.name;
       tasks.forEach(t=>{
         if(!t) return;
-        // 着手中 / 未着手 のみ表示（完了・中止・保留 などは除外）
         const st = t.status || '未着手';
         if(st !== '着手中' && st !== '未着手') return;
         if(t.owner === selfName || t.owner === myName){
@@ -8125,7 +8144,7 @@ async function renderPersonalView(){
           });
         }
       });
-    });
+    }));
   }catch(e){
     console.error('personal view fetch failed:', e);
     content.innerHTML = `<div style="padding:18px;color:#c0392b">読込失敗：${escapeHtml(e.message||String(e))}</div>`;
