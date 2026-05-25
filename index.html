@@ -5999,31 +5999,12 @@ function applySnapshotData(data, wsId){
     }, SYNC_COOLDOWN_MS - _since + 50);
     return;
   }
-  // ユーザーが入力中なら描画を遅延（フォーカスロス・編集中断を防止）
-  const ae = document.activeElement;
-  if(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')){
+  // Phase 1: renderAll が IME 合成中の保留＋フォーカス復元を担当するため、
+  // ここでの「INPUT/TEXTAREA で defer」ガードは IME 合成中のみ最低限残す。
+  // 通常のフォーカス中描画は renderAll 側のフォーカス保存／復元で吸収される。
+  if(_imeComposing){
+    logSync('snapshot.deferred', {reason: 'imeComposing'});
     _deferredSnapshot = data;
-    // blur後に少し待ってから再試行：change → save → _pendingLocalChanges=true の流れを待つ
-    const retry = ()=>{
-      setTimeout(()=>{
-        // 未同期のローカル変更があれば、古いスナップショットは破棄
-        if(_pendingLocalChanges){
-          _deferredSnapshot = null;
-          return;
-        }
-        // クールダウン中（直近ユーザー操作直後）も適用しない
-        if(Date.now() - _lastLocalChange < SYNC_COOLDOWN_MS){
-          _deferredSnapshot = null;
-          return;
-        }
-        if(_deferredSnapshot){
-          const d = _deferredSnapshot;
-          _deferredSnapshot = null;
-          applySnapshotData(d, wsId);
-        }
-      }, 150); // change→save→_pendingLocalChanges set の時間を確保
-    };
-    ae.addEventListener('blur', retry, { once: true });
     return;
   }
   // 適用前に：goals の expanded 状態（UI状態・個人別）をローカルから保存
@@ -6359,21 +6340,9 @@ function subscribeWorkspaceCollections(wsId){
       try{
         localStorage.setItem(LS_KEY, JSON.stringify(S));
       }catch(e){}
-      // ★ 入力中なら描画を遅延（モバイル入力で IME 確定前にDOMが壊れる対策）
-      //   INPUT/TEXTAREA/SELECT のみ対象。contenteditable は誤検知が多いため対象外
-      const ae = document.activeElement;
-      const tag = ae && ae.tagName;
-      const isTypingNow = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-      if(isTypingNow){
-        // blur まで描画を保留（最大3秒で諦め）
-        const retry = ()=>{ try{ renderAll(); }catch(e){ console.warn(e); } };
-        let fired = false;
-        const fireOnce = ()=>{ if(!fired){ fired = true; retry(); } };
-        ae.addEventListener('blur', fireOnce, { once:true });
-        setTimeout(fireOnce, 3000);
-      } else {
-        try{ renderAll(); }catch(e){ console.warn('render after subcollection change failed:', e); }
-      }
+      // ★ renderAll() 自体が IME 合成中なら自動保留、フォーカスは保存／復元される（Phase 1）。
+      //   なので無条件に呼べる。
+      try{ renderAll(); }catch(e){ console.warn('render after subcollection change failed:', e); }
     }
   };
 
@@ -8216,21 +8185,108 @@ function ensureDefaults(){
     if(!('weight' in t)) t.weight = '';
   });
 }
-function renderAll(){
+// =============================================================
+// ===== Phase 1: フォーカス保存 + IME 合成中の再描画スキップ =====
+// =============================================================
+// 同期由来の renderAll() で入力欄が消えるバグの根本対策。
+// ① IME 合成中（変換中）は再描画を完全に保留 → blur or composition終了で再開
+// ② INPUT/TEXTAREA にフォーカスが当たっていれば、そのフィールドを安定キー
+//    （side-task の data-task-id + data-f / goal row の id input value + data-f）
+//    で特定 → 再描画後に同じフィールドへフォーカス＋カーソル位置復元
+let _imeComposing = false;
+let _renderDeferredByIME = false;
+document.addEventListener('compositionstart', ()=>{ _imeComposing = true; logSync('ime.start'); }, true);
+document.addEventListener('compositionend', ()=>{
+  _imeComposing = false;
+  logSync('ime.end');
+  if(_renderDeferredByIME){
+    _renderDeferredByIME = false;
+    try{ renderAll(); }catch(e){ console.warn(e); }
+  }
+}, true);
+
+function _captureFocus(){
+  const ae = document.activeElement;
+  if(!ae || ae === document.body) return null;
+  const tag = ae.tagName;
+  if(tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') return null;
+  const sideEl = ae.closest && ae.closest('#sideTasks .side-task[data-task-id]');
+  const goalRow = ae.closest && ae.closest('#tblGoals tr');
+  const fkey = ae.dataset && ae.dataset.f;
+  const cap = {
+    tag,
+    fkey: fkey || null,
+    selStart: (tag==='INPUT'||tag==='TEXTAREA') ? ae.selectionStart : null,
+    selEnd: (tag==='INPUT'||tag==='TEXTAREA') ? ae.selectionEnd : null
+  };
+  if(sideEl){
+    cap.scope = 'sideTask';
+    cap.id = sideEl.dataset.taskId;
+  } else if(goalRow){
+    const idInp = goalRow.querySelector('input[data-f="id"]');
+    if(idInp){
+      cap.scope = 'goalRow';
+      cap.id = idInp.value;
+    }
+  } else {
+    cap.scope = 'global';
+    cap.elemId = ae.id || null;
+  }
+  return cap;
+}
+function _restoreFocus(cap){
+  if(!cap) return;
+  try{
+    let target = null;
+    if(cap.scope === 'sideTask' && cap.id){
+      const host = document.querySelector(`#sideTasks .side-task[data-task-id="${CSS.escape(cap.id)}"]`);
+      if(host && cap.fkey){
+        target = host.querySelector(`[data-f="${CSS.escape(cap.fkey)}"]`);
+      }
+    } else if(cap.scope === 'goalRow' && cap.id && cap.fkey){
+      const inputs = document.querySelectorAll('#tblGoals input[data-f="id"]');
+      for(const inp of inputs){
+        if(inp.value === cap.id){
+          const tr = inp.closest('tr');
+          if(tr){ target = tr.querySelector(`[data-f="${CSS.escape(cap.fkey)}"]`); }
+          break;
+        }
+      }
+    } else if(cap.scope === 'global' && cap.elemId){
+      target = document.getElementById(cap.elemId);
+    }
+    if(target && target.tagName === cap.tag && target !== document.activeElement){
+      target.focus({preventScroll: true});
+      if(cap.selStart != null){
+        try{ target.setSelectionRange(cap.selStart, cap.selEnd); }catch(e){}
+      }
+      logSync('focus.restored', {scope: cap.scope, id: cap.id, fkey: cap.fkey});
+    }
+  }catch(e){
+    logSync('focus.restore.error', {err: String(e && e.message || e)});
+  }
+}
+
+const _origRenderAll = function _origRenderAllImpl(){
   ensureDefaults();
   if(!_currentUser){ hideApp(); return; }
   applyProfileToHeader();
   updateHeaderUserInfo();
   renderDashboard(); renderGoals(); renderTasks(); renderReview(); renderMaster();
   renderCalendar();
-  // Render settings panes
   renderProfileForm(); renderMemberPane(); renderHistory();
-  // ❗ workspace switcher と personal view は renderAll から呼ばない
-  //   （Firestoreの onSnapshot 毎に renderAll が走るため、毎回コレクションクエリが
-  //    発生して 1秒間隔の連続読込になっていた）
-  //   - switcher: ラベル更新のみで十分（中身は menu を開いたタイミングで fetch）
-  //   - personal view: ユーザーが明示的に開くまたは🔄ボタンを押した時のみ fetch
   updateWsSwitcherLabel();
+};
+function renderAll(){
+  // IME 合成中は描画を完全保留（compositionend で再開）
+  if(_imeComposing){
+    _renderDeferredByIME = true;
+    logSync('render.deferred', {reason: 'ime'});
+    return;
+  }
+  const cap = _captureFocus();
+  _origRenderAll();
+  if(cap) _restoreFocus(cap);
 }
 
 // ===== Personal cross-workspace task view =====
