@@ -6166,6 +6166,13 @@ function subscribeWorkspaceCollections(wsId){
     qs.docChanges().forEach(change => {
       const id = change.doc.id;
       const data = change.doc.data() || {};
+      // ★ 自分の write 結果が echo として返ってくる場合の完全 dedup
+      //   _lastSyncedTasks/Goals の JSON と一致したら何もしない（再描画も起こさない）
+      //   これによって、自分の編集中の入力欄が echo で消える「入力が戻る」現象を防止
+      const remoteJson = JSON.stringify(data);
+      if(change.type !== 'removed' && lastMap.get(id) === remoteJson){
+        return;
+      }
       if(change.type === 'removed'){
         const i = localArr.findIndex(x => x && x.id === id);
         if(i >= 0){ localArr.splice(i, 1); mutated = true; }
@@ -6190,17 +6197,33 @@ function subscribeWorkspaceCollections(wsId){
           if(kind === 'tasks' && local._expanded) preserve._expanded = local._expanded;
         }
         const merged = Object.assign({}, data, preserve);
+        // 実際にデータが変わるか比較（UI フィールドの違いだけなら無視）
+        const mergedJson = JSON.stringify(_stripUiForSync(merged));
+        const wasSameAsLocal = (localJson === mergedJson);
         const i = localArr.findIndex(x => x && x.id === id);
         if(i >= 0) localArr[i] = merged; else localArr.push(merged);
-        lastMap.set(id, JSON.stringify(_stripUiForSync(merged)));
-        mutated = true;
+        lastMap.set(id, mergedJson);
+        // 既存ローカルと内容が完全一致なら mutate しない（再描画スキップ）
+        if(!wasSameAsLocal) mutated = true;
       }
     });
     if(mutated && _currentUser){
       try{
         localStorage.setItem(LS_KEY, JSON.stringify(S));
       }catch(e){}
-      try{ renderAll(); }catch(e){ console.warn('render after subcollection change failed:', e); }
+      // ★ 入力中なら描画を遅延（モバイル入力で IME 確定前にDOMが壊れる対策）
+      const ae = document.activeElement;
+      const isTypingNow = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || (ae.isContentEditable));
+      if(isTypingNow){
+        // blur まで描画を保留（最大10秒で諦め）
+        const retry = ()=>{ try{ renderAll(); }catch(e){ console.warn(e); } };
+        let fired = false;
+        const fireOnce = ()=>{ if(!fired){ fired = true; retry(); } };
+        ae.addEventListener('blur', fireOnce, { once:true });
+        setTimeout(fireOnce, 10000);
+      } else {
+        try{ renderAll(); }catch(e){ console.warn('render after subcollection change failed:', e); }
+      }
     }
   };
 
