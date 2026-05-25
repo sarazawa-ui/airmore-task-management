@@ -5662,6 +5662,8 @@ function _resetWorkspaceLocalCaches(){
   _pendingDeletions.tasks.clear(); _pendingDeletions.goals.clear();
   _lastAppliedIds.tasks.clear(); _lastAppliedIds.goals.clear();
   _appliedItemHashes.tasks.clear(); _appliedItemHashes.goals.clear();
+  // ★ Tombstone もクリア：別 WS の削除記録が今の WS の同 ID 正規データを誤って抑制する事故を防ぐ
+  if(Array.isArray(S._tombstones)) S._tombstones = [];
   // サブコレクション同期用キャッシュもクリア
   if(typeof _lastSyncedTasks !== 'undefined') _lastSyncedTasks.clear();
   if(typeof _lastSyncedGoals !== 'undefined') _lastSyncedGoals.clear();
@@ -6417,40 +6419,14 @@ function subscribeWorkspaceCollections(wsId){
     let dedupHits = 0;
     let applied = 0;
     let rejected = 0;
-    // Tombstone の鮮度判定マップ：id → at（最終削除タイムスタンプ）
-    const tombAt = new Map();
-    (S._tombstones||[]).forEach(t => {
-      if(t && t.kind === kind && t.id){
-        const at = Number(t.at) || 0;
-        if(at > (tombAt.get(t.id) || 0)) tombAt.set(t.id, at);
-      }
-    });
+    // ★ サブコレクション方式では FS そのものが source of truth：
+    //   - 削除：FS から doc が消える → 'removed' イベントで自然に S からも消える
+    //   - 復活防止：明示削除時に flushPendingSync で即時 write、persistence で再送保証
+    //   よって handleChanges 内で Tombstone を見る必要はない（むしろ別 WS の古い tombstone と
+    //   ID 衝突して正規データを抑制する事故の元になる）。Tombstone は legacy main-doc path 専用とする。
     changes.forEach(change => {
       const id = change.doc.id;
       const data = change.doc.data() || {};
-      // ★ Tombstone 判定（鮮度比較）：
-      //   届いた doc の _modAt が tombstone より新しい → ID 再利用 or 新規作成。Tombstone をクリアして通常マージへ
-      //   tombstone のほうが新しい → 本当に削除されたまま。ローカル再追加だけ抑制（FS の orphan は触らない）
-      const ts = tombAt.get(id) || 0;
-      if(change.type !== 'removed' && ts > 0){
-        const remoteModAt = Number(data._modAt || 0);
-        if(remoteModAt > ts){
-          // doc が tombstone より新しい → 古い tombstone を撤去
-          S._tombstones = (S._tombstones||[]).filter(t => !(t && t.kind === kind && t.id === id && Number(t.at||0) <= ts));
-          tombAt.delete(id);
-          logSync('tombstone.cleared.stale', {kind, id, tombstoneAt: ts, remoteModAt});
-          // フォールスルー：通常のマージへ
-        } else {
-          // tombstone のほうが新しい / 同時 → 本当に削除済。ローカルに再追加しない
-          // FS の orphan 削除は行わない（前回の暴発バグの再発防止）
-          logSync('apply.skip.tombstoned', {kind, id, tombstoneAt: ts, remoteModAt});
-          // ローカルにも残っていたら（古いキャッシュ）除去
-          const idx = localArr.findIndex(x => x && x.id === id);
-          if(idx >= 0){ localArr.splice(idx, 1); mutated = true; }
-          lastMap.delete(id);
-          return;
-        }
-      }
       // ★ 自分の write 結果が echo として返ってくる場合の完全 dedup
       //   _lastSyncedTasks/Goals の JSON と一致したら何もしない（再描画も起こさない）
       //   これによって、自分の編集中の入力欄が echo で消える「入力が戻る」現象を防止
@@ -6518,19 +6494,29 @@ function subscribeWorkspaceCollections(wsId){
     if(_safeIsRemote()) return;
     window._isRemoteUpdateSince = 0;
     handleChanges(qs, 'tasks');
-    _subcollectionInitialLoaded.tasks = true;
+    if(!_subcollectionInitialLoaded.tasks){
+      logSync('subscribe.initialLoad', {kind:'tasks', count: qs.docs.length});
+      _subcollectionInitialLoaded.tasks = true;
+    }
   }, err => {
     console.error('tasks subscribe error:', err);
+    logSync('subscribe.error', {kind:'tasks', code: err && err.code, message: err && err.message});
     if(err && err.code === 'resource-exhausted') updateSyncStatus('quota');
+    if(err && err.code === 'permission-denied') updateSyncStatus('error');
   });
   _wsGoalsUnsubscribe = db.collection(`workspaces/${wsId}/goals`).onSnapshot(qs => {
     if(_safeIsRemote()) return;
     window._isRemoteUpdateSince = 0;
     handleChanges(qs, 'goals');
-    _subcollectionInitialLoaded.goals = true;
+    if(!_subcollectionInitialLoaded.goals){
+      logSync('subscribe.initialLoad', {kind:'goals', count: qs.docs.length});
+      _subcollectionInitialLoaded.goals = true;
+    }
   }, err => {
     console.error('goals subscribe error:', err);
+    logSync('subscribe.error', {kind:'goals', code: err && err.code, message: err && err.message});
     if(err && err.code === 'resource-exhausted') updateSyncStatus('quota');
+    if(err && err.code === 'permission-denied') updateSyncStatus('error');
   });
 }
 
