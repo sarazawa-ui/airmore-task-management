@@ -2884,7 +2884,9 @@ function renderTree(g){
   const addLinked = linkedSection.querySelector('[data-add-linked]');
   if(addLinked) addLinked.onclick = ()=>{
     S.seq.task = (S.seq.task||0)+1;
-    const id = "T-"+String(S.seq.task).padStart(3,'0');
+    const id = _nextUniqueId('tasks',
+      () => "T-"+String(S.seq.task).padStart(3,'0'),
+      () => { S.seq.task++; });
     const t = {id,goal:g.id,mid:"",act:"新しいタスク",owner:g.owner||"",startD:"",due:g.due||"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:"",time:""};
     S.tasks.push(t);
     save(true,`タスク追加：${id}（${g.id}）`);
@@ -3097,7 +3099,9 @@ function promoteNodeToTask(goal, node){
     }
     // 未作成 → 新規タスク化
     S.seq.task = (S.seq.task||0) + 1;
-    const id = "T-" + String(S.seq.task).padStart(3,'0');
+    const id = _nextUniqueId('tasks',
+      () => "T-"+String(S.seq.task).padStart(3,'0'),
+      () => { S.seq.task++; });
     S.tasks.push({
       id, goal: goal.id, mid: parentName, act: curName,
       owner: goal.owner||"", startD:"", due: goal.due||"",
@@ -3126,10 +3130,34 @@ function findNodePath(arr, target, path=[]){
   }
   return null;
 }
+// ID 重複ガード共通ヘルパ：既存 S 配列 + Tombstone と衝突しない ID を seq から生成
+// fn(n) は seq 値から ID 文字列を作る関数。seq 参照は呼び出し側で更新する。
+function _nextUniqueId(kind, getId, setNextSeq){
+  const exists = new Set(((kind === 'goals' ? S.goals : S.tasks)||[]).map(x => x && x.id).filter(Boolean));
+  const tombs = _tombstoneSetFor(kind);
+  let id = getId();
+  let bumps = 0;
+  while((exists.has(id) || tombs.has(id)) && bumps++ < 1000){
+    setNextSeq();
+    id = getId();
+  }
+  if(bumps > 0) logSync('seq.bumped', {kind, finalId: id, bumps});
+  return id;
+}
+
 function addGoal(){
   if(!S.seq) S.seq = {};
   S.seq.goal = (S.seq.goal||0)+1;
-  const id = "G-"+String(S.seq.goal).padStart(3,'0');
+  let id = "G-"+String(S.seq.goal).padStart(3,'0');
+  // 重複ガード：既存 S.goals または Tombstone に同 ID があれば seq を進めて衝突回避
+  const existsLocal = new Set((S.goals||[]).map(g => g && g.id).filter(Boolean));
+  const tombSet = _tombstoneSetFor('goals');
+  let guard = 0;
+  while((existsLocal.has(id) || tombSet.has(id)) && guard++ < 1000){
+    S.seq.goal++;
+    id = "G-"+String(S.seq.goal).padStart(3,'0');
+  }
+  if(guard > 0) logSync('seq.bumped', {kind:'goals', finalId: id, bumps: guard});
   _deferredSnapshot = null;
   const newGoal = {id,name:"",area:"",owner:"",members:[],start:"",due:"",progress:0,progressManual:null,status:"未着手",defn:"",breakdown:[],expanded:false};
   S.goals.push(newGoal);
@@ -3368,10 +3396,20 @@ function addTask(){
   // デイリータスク（プロジェクト未紐づけ）は専用連番を使用：D-001, D-002, ...
   // プロジェクト紐づけタスク（T-）の連番には影響しない
   S.seq.dailyTask = (S.seq.dailyTask||0)+1;
+  let newId = "D-"+String(S.seq.dailyTask).padStart(3,'0');
+  // 重複ガード：S.tasks 既存 or タスク Tombstone に同 ID があれば seq を進める
+  const existsTask = new Set((S.tasks||[]).map(x => x && x.id).filter(Boolean));
+  const tombSetT = _tombstoneSetFor('tasks');
+  let g = 0;
+  while((existsTask.has(newId) || tombSetT.has(newId)) && g++ < 1000){
+    S.seq.dailyTask++;
+    newId = "D-"+String(S.seq.dailyTask).padStart(3,'0');
+  }
+  if(g > 0) logSync('seq.bumped', {kind:'tasks(daily)', finalId: newId, bumps: g});
   // 他の展開中タスクをすべて閉じる
   S.tasks.forEach(x => { x._expanded = false; });
   // startD は空 → 「未割当」に分類される（カレンダーへドロップで日時設定）
-  const t = {id:"D-"+String(S.seq.dailyTask).padStart(3,'0'),goal:"",mid:"",act:"新しいタスク",owner:(_currentUser?_currentUser.name:S.ui.viewAsMember||""),startD:"",due:"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:"",time:"", _expanded:true};
+  const t = {id:newId,goal:"",mid:"",act:"新しいタスク",owner:(_currentUser?_currentUser.name:S.ui.viewAsMember||""),startD:"",due:"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:"",time:"", _expanded:true};
   S.tasks.push(t);
   save(true, `デイリータスク追加：${t.id}`); renderAll();
   toast(`${t.id} を追加しました（未割当・サイドバーで詳細編集→カレンダーにドロップで日時設定）`);
@@ -6379,18 +6417,39 @@ function subscribeWorkspaceCollections(wsId){
     let dedupHits = 0;
     let applied = 0;
     let rejected = 0;
-    const tombs = _tombstoneSetFor(kind);
-    const orphanDeletes = []; // tombstone 該当だが FS にまだ存在する → 即時削除
+    // Tombstone の鮮度判定マップ：id → at（最終削除タイムスタンプ）
+    const tombAt = new Map();
+    (S._tombstones||[]).forEach(t => {
+      if(t && t.kind === kind && t.id){
+        const at = Number(t.at) || 0;
+        if(at > (tombAt.get(t.id) || 0)) tombAt.set(t.id, at);
+      }
+    });
     changes.forEach(change => {
       const id = change.doc.id;
       const data = change.doc.data() || {};
-      // ★ Tombstone（明示的に削除済）に該当 → ローカルに再追加せず、FS からも消す
-      //   これにより「削除 → スナップショット echo で復活」を完全に防ぐ
-      if(change.type !== 'removed' && tombs.has(id)){
-        logSync('apply.skip.tombstoned', {kind, id});
-        orphanDeletes.push(id);
-        lastMap.delete(id);
-        return;
+      // ★ Tombstone 判定（鮮度比較）：
+      //   届いた doc の _modAt が tombstone より新しい → ID 再利用 or 新規作成。Tombstone をクリアして通常マージへ
+      //   tombstone のほうが新しい → 本当に削除されたまま。ローカル再追加だけ抑制（FS の orphan は触らない）
+      const ts = tombAt.get(id) || 0;
+      if(change.type !== 'removed' && ts > 0){
+        const remoteModAt = Number(data._modAt || 0);
+        if(remoteModAt > ts){
+          // doc が tombstone より新しい → 古い tombstone を撤去
+          S._tombstones = (S._tombstones||[]).filter(t => !(t && t.kind === kind && t.id === id && Number(t.at||0) <= ts));
+          tombAt.delete(id);
+          logSync('tombstone.cleared.stale', {kind, id, tombstoneAt: ts, remoteModAt});
+          // フォールスルー：通常のマージへ
+        } else {
+          // tombstone のほうが新しい / 同時 → 本当に削除済。ローカルに再追加しない
+          // FS の orphan 削除は行わない（前回の暴発バグの再発防止）
+          logSync('apply.skip.tombstoned', {kind, id, tombstoneAt: ts, remoteModAt});
+          // ローカルにも残っていたら（古いキャッシュ）除去
+          const idx = localArr.findIndex(x => x && x.id === id);
+          if(idx >= 0){ localArr.splice(idx, 1); mutated = true; }
+          lastMap.delete(id);
+          return;
+        }
       }
       // ★ 自分の write 結果が echo として返ってくる場合の完全 dedup
       //   _lastSyncedTasks/Goals の JSON と一致したら何もしない（再描画も起こさない）
@@ -6429,23 +6488,9 @@ function subscribeWorkspaceCollections(wsId){
     if(dedupHits || applied || rejected){
       logSync('apply.end', {kind, dedupHits, applied, rejected, mutated});
     }
-    // Tombstone に該当した「ゾンビ」ドキュメントを FS から非同期削除
-    if(orphanDeletes.length){
-      logSync('orphan.delete', {kind, count: orphanDeletes.length, ids: orphanDeletes});
-      (async () => {
-        try{
-          const dbo = firebase.firestore();
-          const batch = dbo.batch();
-          orphanDeletes.forEach(oid => batch.delete(dbo.doc(`workspaces/${wsId}/${kind}/${oid}`)));
-          await batch.commit();
-          bumpFbUsage('delete', orphanDeletes.length);
-          logSync('orphan.delete.done', {kind, count: orphanDeletes.length});
-        }catch(e){
-          logSync('orphan.delete.error', {kind, err: String(e && e.message || e)});
-          console.warn('[sync] orphan delete failed:', e);
-        }
-      })();
-    }
+    // 注：以前ここで実装していた「Tombstone に該当する FS ドキュメントの自動削除」は、
+    // 新規作成した item の ID が偶然 stale Tombstone と一致すると即座に消える致命的バグ
+    // を引き起こしたため廃止した。代わりに上の鮮度判定（_modAt vs tombstone.at）で安全に処理する。
     if(mutated && _currentUser){
       try{
         localStorage.setItem(LS_KEY, JSON.stringify(S));
