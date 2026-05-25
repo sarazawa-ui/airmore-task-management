@@ -1923,6 +1923,7 @@ function showKpiTasksPopup(title, tasks){
         S.tasks.splice(S.tasks.indexOf(t),1);
         _addTombstone('tasks', tid);
         save(true,`タスク削除：${tid}`);
+        flushPendingSync();
         renderAll();
         // Refresh popup with updated tasks
         const refreshed = tasks.filter(x=>x.id!==tid);
@@ -2424,6 +2425,7 @@ function renderGoals(){
       _addTombstone('goals', cur.id);
       removedTaskIds.forEach(id => _addTombstone('tasks', id));
       save(true, `プロジェクト削除：${cur.id}${removedCount?`（タスク${removedCount}件含む）`:''}`);
+      flushPendingSync(); // ★ 削除は即時 FS 反映（リフレッシュで復活を防ぐ）
       renderAll();
       toast(`プロジェクト ${cur.id} を削除${removedCount?`（タスク${removedCount}件も削除）`:''}`);
     };
@@ -2845,6 +2847,7 @@ function renderTree(g){
       S.tasks.splice(S.tasks.indexOf(t),1);
       _addTombstone('tasks', tid);
       save(true,`タスク削除：${tid}`);
+      flushPendingSync();
       renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
     });
   });
@@ -3356,7 +3359,7 @@ function renderTasks(){
       });
     });
     tr.querySelector('.del-btn').onclick = ()=>{
-      if(confirm(`タスク「${t.id} ${t.act}」を削除しますか？`)){ const _tid = t.id; S.tasks.splice(i,1); _addTombstone('tasks', _tid); save(); renderAll(); }
+      if(confirm(`タスク「${t.id} ${t.act}」を削除しますか？`)){ const _tid = t.id; S.tasks.splice(i,1); _addTombstone('tasks', _tid); save(); flushPendingSync(); renderAll(); }
     };
     tb.appendChild(tr);
   });
@@ -4756,7 +4759,7 @@ function renderSideTasks(){
       const idx = S.tasks.findIndex(x=>x.id===cur.id);
       if(idx>=0) S.tasks.splice(idx,1);
       _addTombstone('tasks', cur.id);
-      save(); renderAll();
+      save(); flushPendingSync(); renderAll();
     };
     // Disable drag when interacting with form controls (slider, inputs, etc.)
     el.addEventListener('mousedown',(e)=>{
@@ -5719,6 +5722,22 @@ function initFirebase(){
     if(!firebase.apps.length){
       firebase.initializeApp(_firebaseConfig);
     }
+    // ★ オフライン永続化を有効化：未送信の write が IndexedDB に保存され、
+    //   ページ再読込後も自動的に再送される。「削除直後にリフレッシュ → 復活」を構造的に防ぐ。
+    //   失敗してもアプリ自体は動くので catch のみで握りつぶす。
+    try{
+      firebase.firestore().enablePersistence({synchronizeTabs: true})
+        .then(()=> logSync('persistence.enabled'))
+        .catch(err => {
+          logSync('persistence.failed', {code: err && err.code});
+          // failed-precondition: 他のタブで既に開かれている等。動作には影響なし。
+          if(err && err.code !== 'failed-precondition' && err.code !== 'unimplemented'){
+            console.warn('[firestore] persistence not enabled:', err);
+          }
+        });
+    }catch(e){
+      logSync('persistence.error', {err: String(e && e.message || e)});
+    }
     _firebaseReady = true;
     updateSyncStatus('offline');
     // signInWithRedirect の戻りを処理（ポップアップ失敗時のフォールバック経由）
@@ -6360,9 +6379,19 @@ function subscribeWorkspaceCollections(wsId){
     let dedupHits = 0;
     let applied = 0;
     let rejected = 0;
+    const tombs = _tombstoneSetFor(kind);
+    const orphanDeletes = []; // tombstone 該当だが FS にまだ存在する → 即時削除
     changes.forEach(change => {
       const id = change.doc.id;
       const data = change.doc.data() || {};
+      // ★ Tombstone（明示的に削除済）に該当 → ローカルに再追加せず、FS からも消す
+      //   これにより「削除 → スナップショット echo で復活」を完全に防ぐ
+      if(change.type !== 'removed' && tombs.has(id)){
+        logSync('apply.skip.tombstoned', {kind, id});
+        orphanDeletes.push(id);
+        lastMap.delete(id);
+        return;
+      }
       // ★ 自分の write 結果が echo として返ってくる場合の完全 dedup
       //   _lastSyncedTasks/Goals の JSON と一致したら何もしない（再描画も起こさない）
       //   これによって、自分の編集中の入力欄が echo で消える「入力が戻る」現象を防止
@@ -6399,6 +6428,23 @@ function subscribeWorkspaceCollections(wsId){
     });
     if(dedupHits || applied || rejected){
       logSync('apply.end', {kind, dedupHits, applied, rejected, mutated});
+    }
+    // Tombstone に該当した「ゾンビ」ドキュメントを FS から非同期削除
+    if(orphanDeletes.length){
+      logSync('orphan.delete', {kind, count: orphanDeletes.length, ids: orphanDeletes});
+      (async () => {
+        try{
+          const dbo = firebase.firestore();
+          const batch = dbo.batch();
+          orphanDeletes.forEach(oid => batch.delete(dbo.doc(`workspaces/${wsId}/${kind}/${oid}`)));
+          await batch.commit();
+          bumpFbUsage('delete', orphanDeletes.length);
+          logSync('orphan.delete.done', {kind, count: orphanDeletes.length});
+        }catch(e){
+          logSync('orphan.delete.error', {kind, err: String(e && e.message || e)});
+          console.warn('[sync] orphan delete failed:', e);
+        }
+      })();
     }
     if(mutated && _currentUser){
       try{
@@ -6577,6 +6623,31 @@ function subscribeWorkspace(){
   updateSyncStatus('synced');
 }
 
+// 即時 flush 用フラグ（削除直後など、デバウンスを待たずに書込みたい時に true にする）
+let _forceImmediateSync = false;
+function flushPendingSync(){
+  _forceImmediateSync = true;
+  try{ syncToFirestore(); }finally{ _forceImmediateSync = false; }
+}
+window.flushPendingSync = flushPendingSync;
+
+// ページ離脱時に未送信書込があれば flush（特に delete 直後にリフレッシュされても確実に書く）
+window.addEventListener('beforeunload', (e) => {
+  if(_pendingLocalChanges || _saveDebounce){
+    try{
+      // デバウンスを即時実行（同期的に setTimeout を発火させる手段はないので、警告を出して
+      // ユーザーに数百ms 待ってもらう。確実性最優先）
+      if(_saveDebounce){
+        clearTimeout(_saveDebounce);
+        flushPendingSync();
+      }
+      logSync('beforeunload.flush', {pending: _pendingLocalChanges});
+    }catch(err){
+      console.warn('[sync] beforeunload flush failed:', err);
+    }
+  }
+});
+
 function syncToFirestore(){
   if(_isRemoteUpdate) return;
   if(!S.workspaceId || !_firebaseReady) return;
@@ -6588,6 +6659,7 @@ function syncToFirestore(){
   const myVersion = ++_writeVersion;
   clearTimeout(_saveDebounce);
   updateSyncStatus('syncing');
+  const _debounceMs = _forceImmediateSync ? 0 : 1500;
   _saveDebounce = setTimeout(async ()=>{
     try{
       const db = firebase.firestore();
@@ -6672,7 +6744,7 @@ function syncToFirestore(){
         }
       }
     }
-  }, 1500);  // デバウンスを 300ms → 1500ms に延長：連続操作中の書込回数を約 5分の1 に削減
+  }, _debounceMs);  // 通常 1500ms、削除など即時反映が必要な操作は 0ms
 }
 let _quotaToastedAt = 0;
 
@@ -7520,6 +7592,7 @@ function deleteEditingTask(){
   S.tasks.splice(S.tasks.indexOf(t),1);
   _addTombstone('tasks', _tid);
   save(true,`タスク削除：${t.id}`);
+  flushPendingSync();
   renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
   closeTaskEditModal();
 }
