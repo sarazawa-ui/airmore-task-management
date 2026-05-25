@@ -5856,44 +5856,44 @@ async function joinOrCreateWorkspace(targetWsId){
       const data = snap.data();
       // Pull data into local state (events はユーザー個別なので除外)
       _isRemoteUpdate = true;
-      Object.keys(data).forEach(k=>{
-        if(k === 'createdAt' || k === 'memberEmails' || k === 'ownerEmail' || k === 'events') return;
-        if(k === 'profile') return; // 会社情報はローカルに保持
-        // tasks / goals は main doc から読まない（サブコレクションが正本）
-        // 旧スキーマ（_schemaVersion < 2）のみフォールバック読み込み
-        if(k === 'tasks' && Number(data._schemaVersion||0) >= SCHEMA_VERSION) return;
-        if(k === 'goals' && Number(data._schemaVersion||0) >= SCHEMA_VERSION) return;
-        S[k] = data[k];
-      });
-      // 新スキーマならサブコレクションからタスク/プロジェクトを取得
-      if(Number(data._schemaVersion||0) >= SCHEMA_VERSION){
-        try{
-          const tasksSnap = await db.collection(`workspaces/${wsId}/tasks`).get();
-          bumpFbUsage('read', Math.max(1, tasksSnap.size));
-          S.tasks = [];
-          _lastSyncedTasks.clear();
-          tasksSnap.forEach(d => {
-            const item = d.data();
-            S.tasks.push(item);
-            _lastSyncedTasks.set(d.id, JSON.stringify(_stripUiForSync(item)));
-          });
-          const goalsSnap = await db.collection(`workspaces/${wsId}/goals`).get();
-          bumpFbUsage('read', Math.max(1, goalsSnap.size));
-          S.goals = [];
-          _lastSyncedGoals.clear();
-          goalsSnap.forEach(d => {
-            const item = d.data();
-            S.goals.push(item);
-            _lastSyncedGoals.set(d.id, JSON.stringify(_stripUiForSync(item)));
-          });
-        }catch(e){
-          console.warn('Failed to load subcollections on join:', e);
+      try{
+        Object.keys(data).forEach(k=>{
+          if(k === 'createdAt' || k === 'memberEmails' || k === 'ownerEmail' || k === 'events') return;
+          if(k === 'profile') return;
+          if(k === 'tasks' && Number(data._schemaVersion||0) >= SCHEMA_VERSION) return;
+          if(k === 'goals' && Number(data._schemaVersion||0) >= SCHEMA_VERSION) return;
+          S[k] = data[k];
+        });
+        if(Number(data._schemaVersion||0) >= SCHEMA_VERSION){
+          try{
+            const tasksSnap = await db.collection(`workspaces/${wsId}/tasks`).get();
+            bumpFbUsage('read', Math.max(1, tasksSnap.size));
+            S.tasks = [];
+            _lastSyncedTasks.clear();
+            tasksSnap.forEach(d => {
+              const item = d.data();
+              S.tasks.push(item);
+              _lastSyncedTasks.set(d.id, JSON.stringify(_stripUiForSync(item)));
+            });
+            const goalsSnap = await db.collection(`workspaces/${wsId}/goals`).get();
+            bumpFbUsage('read', Math.max(1, goalsSnap.size));
+            S.goals = [];
+            _lastSyncedGoals.clear();
+            goalsSnap.forEach(d => {
+              const item = d.data();
+              S.goals.push(item);
+              _lastSyncedGoals.set(d.id, JSON.stringify(_stripUiForSync(item)));
+            });
+          }catch(e){ console.warn('Failed to load subcollections on join:', e); }
         }
+        S.workspaceId = wsId;
+        S.ownerEmail = data.ownerEmail;
+        S.memberEmails = data.memberEmails || [];
+      } catch(e){
+        console.error('[join] apply error (state may be partial):', e);
+      } finally {
+        _isRemoteUpdate = false;
       }
-      S.workspaceId = wsId;
-      S.ownerEmail = data.ownerEmail;
-      S.memberEmails = data.memberEmails || [];
-      _isRemoteUpdate = false;
       ensureDefaults();
       loadCompanyProfile(); // 会社情報はローカル優先で再適用
       // 新規参加：自分を memberEmails / authMembers / members に追加（アトミック）
@@ -6019,62 +6019,62 @@ function applySnapshotData(data, wsId){
     S.goals.forEach(g => { if(g && g.expanded) localExpanded[g.id] = true; });
   }
   _isRemoteUpdate = true;
-  // events（カレンダー予定）は個人別、profile（会社名・ロゴ）はユーザー共通のため、Firestoreデータで上書きしない
-  // メンバー系（authMembers / memberEmails / members）は両者を email/name で uniq マージ
-  //   → 一度ログインしたメンバーが、別ユーザーの wholesale 書込で消えるのを防ぐ
-  const _mergeMembersUniq = (a, b, keyFn) => {
-    const seen = new Set();
-    const out = [];
-    [...(a||[]), ...(b||[])].forEach(x => {
-      if(x == null) return;
-      const k = keyFn(x);
-      if(k != null && seen.has(k)) return;
-      if(k != null) seen.add(k);
-      out.push(x);
-    });
-    return out;
-  };
-  // Tombstones を先に統合してから tasks/goals マージ（merge内で参照するため）
-  if(Array.isArray(data._tombstones)) _mergeTombstones(data._tombstones);
-  Object.keys(data).forEach(k=>{
-    if(k === 'createdAt' || k === 'events' || k === 'profile' || k === '_tombstones') return;
-    // tasks / goals は main doc から読まない（サブコレクションが正本）
-    // 旧データ移行が未完了の場合のみフォールバック適用
-    if(k === 'tasks'){
-      if(Array.isArray(data.tasks) && data.tasks.length > 0 && Number(data._schemaVersion||0) < SCHEMA_VERSION){
-        S.tasks = _mergePendingItems(data.tasks, 'tasks');
+  try{
+    // events（カレンダー予定）は個人別、profile（会社名・ロゴ）はユーザー共通のため、Firestoreデータで上書きしない
+    // メンバー系（authMembers / memberEmails / members）は両者を email/name で uniq マージ
+    const _mergeMembersUniq = (a, b, keyFn) => {
+      const seen = new Set();
+      const out = [];
+      [...(a||[]), ...(b||[])].forEach(x => {
+        if(x == null) return;
+        const k = keyFn(x);
+        if(k != null && seen.has(k)) return;
+        if(k != null) seen.add(k);
+        out.push(x);
+      });
+      return out;
+    };
+    if(Array.isArray(data._tombstones)) _mergeTombstones(data._tombstones);
+    Object.keys(data).forEach(k=>{
+      if(k === 'createdAt' || k === 'events' || k === 'profile' || k === '_tombstones') return;
+      if(k === 'tasks'){
+        if(Array.isArray(data.tasks) && data.tasks.length > 0 && Number(data._schemaVersion||0) < SCHEMA_VERSION){
+          S.tasks = _mergePendingItems(data.tasks, 'tasks');
+        }
+        return;
       }
-      return;
-    }
-    if(k === 'goals'){
-      if(Array.isArray(data.goals) && data.goals.length > 0 && Number(data._schemaVersion||0) < SCHEMA_VERSION){
-        S.goals = _mergePendingItems(data.goals, 'goals');
+      if(k === 'goals'){
+        if(Array.isArray(data.goals) && data.goals.length > 0 && Number(data._schemaVersion||0) < SCHEMA_VERSION){
+          S.goals = _mergePendingItems(data.goals, 'goals');
+        }
+        return;
       }
-      return;
-    }
-    if(k === 'memberEmails'){ S.memberEmails = _mergeMembersUniq(S.memberEmails, data.memberEmails, e => e); return; }
-    if(k === 'authMembers'){  S.authMembers  = _mergeMembersUniq(S.authMembers,  data.authMembers,  m => m && m.email); return; }
-    if(k === 'members'){      S.members      = _mergeMembersUniq(S.members,      data.members,      m => m && m.name); return; }
-    if(k === 'board' && data.board && typeof data.board === 'object'){
-      const lb = S.board || {};
-      const lt = Number(lb.updatedAt||0), rt = Number(data.board.updatedAt||0);
-      S.board = (lt > rt) ? lb : data.board;
-      return;
-    }
-    S[k] = data[k];
-  });
-  // goals の expanded 状態を復元（Firestoreデータには含まれないため）
-  if(Array.isArray(S.goals)){
-    S.goals.forEach(g => { if(localExpanded[g.id]) g.expanded = true; });
-  }
-  // 受信した userPrefs 内の不正キー（__local__ 等）を掃除
-  if(S.userPrefs && typeof S.userPrefs === 'object'){
-    Object.keys(S.userPrefs).forEach(k=>{
-      if(/^__.*__$/.test(k)) delete S.userPrefs[k];
+      if(k === 'memberEmails'){ S.memberEmails = _mergeMembersUniq(S.memberEmails, data.memberEmails, e => e); return; }
+      if(k === 'authMembers'){  S.authMembers  = _mergeMembersUniq(S.authMembers,  data.authMembers,  m => m && m.email); return; }
+      if(k === 'members'){      S.members      = _mergeMembersUniq(S.members,      data.members,      m => m && m.name); return; }
+      if(k === 'board' && data.board && typeof data.board === 'object'){
+        const lb = S.board || {};
+        const lt = Number(lb.updatedAt||0), rt = Number(data.board.updatedAt||0);
+        S.board = (lt > rt) ? lb : data.board;
+        return;
+      }
+      S[k] = data[k];
     });
+    if(Array.isArray(S.goals)){
+      S.goals.forEach(g => { if(localExpanded[g.id]) g.expanded = true; });
+    }
+    if(S.userPrefs && typeof S.userPrefs === 'object'){
+      Object.keys(S.userPrefs).forEach(k=>{
+        if(/^__.*__$/.test(k)) delete S.userPrefs[k];
+      });
+    }
+    if(wsId) S.workspaceId = wsId;
+  } catch(e){
+    console.error('[apply] snapshot apply error (state may be partial):', e);
+  } finally {
+    // 必ずフラグを下ろす：例外で固着すると以降の snapshot が全部止まるため
+    _isRemoteUpdate = false;
   }
-  if(wsId) S.workspaceId = wsId;
-  _isRemoteUpdate = false;
   try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
   ensureDefaults();
   loadCompanyProfile(); // 会社情報はローカル優先で再適用
@@ -6212,23 +6212,38 @@ function subscribeWorkspaceCollections(wsId){
         localStorage.setItem(LS_KEY, JSON.stringify(S));
       }catch(e){}
       // ★ 入力中なら描画を遅延（モバイル入力で IME 確定前にDOMが壊れる対策）
+      //   INPUT/TEXTAREA/SELECT のみ対象。contenteditable は誤検知が多いため対象外
       const ae = document.activeElement;
-      const isTypingNow = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT' || (ae.isContentEditable));
+      const tag = ae && ae.tagName;
+      const isTypingNow = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
       if(isTypingNow){
-        // blur まで描画を保留（最大10秒で諦め）
+        // blur まで描画を保留（最大3秒で諦め）
         const retry = ()=>{ try{ renderAll(); }catch(e){ console.warn(e); } };
         let fired = false;
         const fireOnce = ()=>{ if(!fired){ fired = true; retry(); } };
         ae.addEventListener('blur', fireOnce, { once:true });
-        setTimeout(fireOnce, 10000);
+        setTimeout(fireOnce, 3000);
       } else {
         try{ renderAll(); }catch(e){ console.warn('render after subcollection change failed:', e); }
       }
     }
   };
 
+  // _isRemoteUpdate のスタック保護：1.5秒以上 true なら強制リセット（過去のバグの安全弁）
+  const _safeIsRemote = () => {
+    if(!_isRemoteUpdate) return false;
+    if(!window._isRemoteUpdateSince) window._isRemoteUpdateSince = Date.now();
+    if(Date.now() - window._isRemoteUpdateSince > 1500){
+      console.warn('[sync] _isRemoteUpdate stuck; force reset');
+      _isRemoteUpdate = false;
+      window._isRemoteUpdateSince = 0;
+      return false;
+    }
+    return true;
+  };
   _wsTasksUnsubscribe = db.collection(`workspaces/${wsId}/tasks`).onSnapshot(qs => {
-    if(_isRemoteUpdate) return;
+    if(_safeIsRemote()) return;
+    window._isRemoteUpdateSince = 0;
     handleChanges(qs, 'tasks');
     _subcollectionInitialLoaded.tasks = true;
   }, err => {
@@ -6236,7 +6251,8 @@ function subscribeWorkspaceCollections(wsId){
     if(err && err.code === 'resource-exhausted') updateSyncStatus('quota');
   });
   _wsGoalsUnsubscribe = db.collection(`workspaces/${wsId}/goals`).onSnapshot(qs => {
-    if(_isRemoteUpdate) return;
+    if(_safeIsRemote()) return;
+    window._isRemoteUpdateSince = 0;
     handleChanges(qs, 'goals');
     _subcollectionInitialLoaded.goals = true;
   }, err => {
