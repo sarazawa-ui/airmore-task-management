@@ -5667,9 +5667,17 @@ function _resetWorkspaceLocalCaches(){
   // サブコレクション同期用キャッシュもクリア
   if(typeof _lastSyncedTasks !== 'undefined') _lastSyncedTasks.clear();
   if(typeof _lastSyncedGoals !== 'undefined') _lastSyncedGoals.clear();
+  // ★ v3: 新サブコレ用キャッシュもクリア
+  if(typeof _lastSyncedWeeklyReports !== 'undefined') _lastSyncedWeeklyReports.clear();
+  if(typeof _lastSyncedHistory !== 'undefined') _lastSyncedHistory.clear();
+  _lastBoardJson = '';
+  _lastKptJson = '';
   // サブコレクション listener も解除（新 WS の listener が後で張られる）
   if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
   if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
+  if(typeof _wsWeeklyReportsUnsubscribe !== 'undefined' && _wsWeeklyReportsUnsubscribe){ _wsWeeklyReportsUnsubscribe(); _wsWeeklyReportsUnsubscribe = null; }
+  if(typeof _wsHistoryUnsubscribe !== 'undefined' && _wsHistoryUnsubscribe){ _wsHistoryUnsubscribe(); _wsHistoryUnsubscribe = null; }
+  if(typeof _wsSharedUnsubscribe !== 'undefined' && _wsSharedUnsubscribe){ _wsSharedUnsubscribe(); _wsSharedUnsubscribe = null; }
   _lastLocalChange = 0;
   _lastSuccessfulWriteAt = 0;
   _deferredSnapshot = null;
@@ -5872,7 +5880,9 @@ function serializeWorkspace(){
   // events（カレンダー予定）はユーザー個別のため共有しない
   // 各ユーザーのGoogleカレンダー予定はそのユーザーのlocalStorageにのみ保持
   // 'profile'（会社名・ロゴ・メモ）はユーザー共通のためローカルにのみ保持
-  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','kpt','weeklyReports','seq','ui','history','userPrefs','treePresets','_tombstones','board'];
+  // ★ v3: weeklyReports / history / board / kpt はサブコレクション or 専用 doc に分離 → main doc から除外
+  //    （これらを main doc に詰めると 1 MiB 限界に到達して failed-precondition で全 write 失敗していた）
+  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','seq','ui','userPrefs','treePresets','_tombstones'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
   // goals.expanded はUI状態（個人別）のため同期から除外
@@ -6088,16 +6098,19 @@ function applySnapshotData(data, wsId){
       return out;
     };
     if(Array.isArray(data._tombstones)) _mergeTombstones(data._tombstones);
+    const remoteSchema = Number(data._schemaVersion||0);
     Object.keys(data).forEach(k=>{
       if(k === 'createdAt' || k === 'events' || k === 'profile' || k === '_tombstones') return;
+      // ★ v3: これらはサブコレ/専用 doc で別途同期されるので、main doc snapshot からは反映しない
+      if(remoteSchema >= 3 && (k === 'weeklyReports' || k === 'history' || k === 'board' || k === 'kpt')) return;
       if(k === 'tasks'){
-        if(Array.isArray(data.tasks) && data.tasks.length > 0 && Number(data._schemaVersion||0) < SCHEMA_VERSION){
+        if(Array.isArray(data.tasks) && data.tasks.length > 0 && remoteSchema < SCHEMA_VERSION){
           S.tasks = _mergePendingItems(data.tasks, 'tasks');
         }
         return;
       }
       if(k === 'goals'){
-        if(Array.isArray(data.goals) && data.goals.length > 0 && Number(data._schemaVersion||0) < SCHEMA_VERSION){
+        if(Array.isArray(data.goals) && data.goals.length > 0 && remoteSchema < SCHEMA_VERSION){
           S.goals = _mergePendingItems(data.goals, 'goals');
         }
         return;
@@ -6106,6 +6119,7 @@ function applySnapshotData(data, wsId){
       if(k === 'authMembers'){  S.authMembers  = _mergeMembersUniq(S.authMembers,  data.authMembers,  m => m && m.email); return; }
       if(k === 'members'){      S.members      = _mergeMembersUniq(S.members,      data.members,      m => m && m.name); return; }
       if(k === 'board' && data.board && typeof data.board === 'object'){
+        // v2 互換のみ：v3 では subscribeShared が担当
         const lb = S.board || {};
         const lt = Number(lb.updatedAt||0), rt = Number(data.board.updatedAt||0);
         S.board = (lt > rt) ? lb : data.board;
@@ -6267,7 +6281,9 @@ window._hittatsuOutbox = function(){
 // これにより、複数ユーザーが異なる項目を編集／削除しても完全に独立した書込となり、
 // 配列の wholesale 置換による「削除復活」「編集消失」を構造的に排除する。
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
+// v3: weeklyReports / history / board / kpt をサブコレクション or 専用 doc に分離
+//     これにより main doc サイズが激減し、1 MiB 限界 / per-doc rate limit / failed-precondition を回避
 let _wsTasksUnsubscribe = null;
 let _wsGoalsUnsubscribe = null;
 // 直近サーバ確認済みの item snapshot（JSON）。書込時の diff、リモート削除検出に使用
@@ -6358,6 +6374,332 @@ function _mergeFieldLevel({local, remote, lastSeenJson, kind}){
     logSync('merge.conflict', {kind, id: local.id, fields: conflicts});
   }
   return out;
+}
+
+// =============================================================
+// ===== v3: weeklyReports / history / board / kpt の分離 =====
+// =============================================================
+// 各データを「専用 doc または subcollection」に置き、main doc から完全に外す。
+// これにより main doc は 5KB 程度に縮小し、1 MiB / per-doc rate limit / failed-precondition を回避。
+//
+// データ配置:
+//   workspaces/{wsId}/weeklyReports/{userName}__{date}   ← 週報 1件 = 1 doc
+//   workspaces/{wsId}/history/{autoId}                   ← 履歴 1件 = 1 doc
+//   workspaces/{wsId}/shared/board                       ← 掲示板（単一 doc）
+//   workspaces/{wsId}/shared/kpt                         ← KPT（単一 doc）
+
+let _wsWeeklyReportsUnsubscribe = null;
+let _wsHistoryUnsubscribe = null;
+let _wsSharedUnsubscribe = null;
+const _lastSyncedWeeklyReports = new Map(); // "userName__date" -> JSON
+const _lastSyncedHistory = new Set();        // historyId set（履歴は append-only）
+
+function _wrKey(userName, date){
+  // Firestore doc ID 用：'/' のみ禁止、`__` は予約名チェックがあるので避ける
+  return `${(userName||'_').replace(/\//g, '∕')}|${date}`;
+}
+function _wrParseKey(key){
+  const i = key.indexOf('|');
+  if(i < 0) return null;
+  return {userName: key.slice(0, i), date: key.slice(i+1)};
+}
+
+// v2→v3 マイグレーション：main doc の weeklyReports/history/board/kpt を分離
+async function migrateV2toV3(wsId, data){
+  if(!wsId || !_firebaseReady) return false;
+  const db = firebase.firestore();
+  let migrated = 0;
+  logSync('migrate.v3.start', {wsId});
+  // ① weeklyReports：オブジェクト {userName: {date: report}} → 各 doc
+  const wr = data && data.weeklyReports;
+  if(wr && typeof wr === 'object'){
+    const batch1 = db.batch();
+    let cnt = 0;
+    Object.keys(wr).forEach(userName => {
+      const byDate = wr[userName] || {};
+      Object.keys(byDate).forEach(date => {
+        const docId = _wrKey(userName, date);
+        const payload = Object.assign({userName, date, _modAt: Date.now()}, byDate[date] || {});
+        batch1.set(db.doc(`workspaces/${wsId}/weeklyReports/${docId}`), payload);
+        cnt++;
+      });
+    });
+    if(cnt > 0){
+      try{ await batch1.commit(); migrated += cnt; logSync('migrate.v3.weeklyReports', {count: cnt}); }
+      catch(e){ console.warn('weeklyReports migration failed:', e); }
+    }
+  }
+  // ② history：配列 → 各 doc（autoId）。500件を超える場合は最新500件のみ移行
+  const hist = Array.isArray(data && data.history) ? data.history : [];
+  if(hist.length > 0){
+    const recent = hist.slice(-500);
+    let cnt = 0;
+    // 100件ずつバッチ
+    for(let i=0; i<recent.length; i+=100){
+      const batch2 = db.batch();
+      recent.slice(i, i+100).forEach(entry => {
+        if(!entry || !entry.ts) return;
+        const ref = db.collection(`workspaces/${wsId}/history`).doc();
+        batch2.set(ref, Object.assign({_modAt: Date.now()}, entry));
+        cnt++;
+      });
+      try{ await batch2.commit(); }
+      catch(e){ console.warn('history migration batch failed:', e); break; }
+    }
+    migrated += cnt;
+    logSync('migrate.v3.history', {count: cnt});
+  }
+  // ③ board：単一 doc
+  if(data && data.board && typeof data.board === 'object'){
+    try{
+      await db.doc(`workspaces/${wsId}/shared/board`).set(Object.assign({_modAt: Date.now()}, data.board));
+      migrated++;
+      logSync('migrate.v3.board');
+    }catch(e){ console.warn('board migration failed:', e); }
+  }
+  // ④ kpt：単一 doc
+  if(data && data.kpt && typeof data.kpt === 'object'){
+    try{
+      await db.doc(`workspaces/${wsId}/shared/kpt`).set(Object.assign({_modAt: Date.now()}, data.kpt));
+      migrated++;
+      logSync('migrate.v3.kpt');
+    }catch(e){ console.warn('kpt migration failed:', e); }
+  }
+  // ⑤ main doc から分離済みフィールドを削除 + _schemaVersion=3 設定
+  try{
+    await db.doc(`workspaces/${wsId}`).set({
+      weeklyReports: firebase.firestore.FieldValue.delete(),
+      history: firebase.firestore.FieldValue.delete(),
+      board: firebase.firestore.FieldValue.delete(),
+      kpt: firebase.firestore.FieldValue.delete(),
+      _schemaVersion: SCHEMA_VERSION
+    }, {merge: true});
+    logSync('migrate.v3.maindoc.cleared');
+  }catch(e){
+    console.warn('main doc cleanup failed:', e);
+    logSync('migrate.v3.error', {step: 'maindoc', err: String(e && e.message || e)});
+  }
+  logSync('migrate.v3.end', {migrated});
+  return migrated;
+}
+
+// weeklyReports サブコレクション購読 → S.weeklyReports に反映
+function subscribeWeeklyReports(wsId){
+  if(_wsWeeklyReportsUnsubscribe){ _wsWeeklyReportsUnsubscribe(); _wsWeeklyReportsUnsubscribe = null; }
+  if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
+  const db = firebase.firestore();
+  _wsWeeklyReportsUnsubscribe = db.collection(`workspaces/${wsId}/weeklyReports`).onSnapshot(qs => {
+    if(!S.weeklyReports) S.weeklyReports = {};
+    let mutated = false;
+    qs.docChanges().forEach(c => {
+      const id = c.doc.id;
+      const parsed = _wrParseKey(id);
+      if(!parsed) return;
+      const {userName, date} = parsed;
+      if(c.type === 'removed'){
+        if(S.weeklyReports[userName] && S.weeklyReports[userName][date]){
+          delete S.weeklyReports[userName][date];
+          mutated = true;
+          _lastSyncedWeeklyReports.delete(id);
+        }
+      } else {
+        const data = c.doc.data() || {};
+        const remoteJson = JSON.stringify(data);
+        if(_lastSyncedWeeklyReports.get(id) === remoteJson) return; // 自分の echo
+        if(!S.weeklyReports[userName]) S.weeklyReports[userName] = {};
+        // userName/date/_modAt を除いた中身を S に格納
+        const cleaned = {};
+        Object.keys(data).forEach(k => {
+          if(k === 'userName' || k === 'date' || k === '_modAt') return;
+          cleaned[k] = data[k];
+        });
+        S.weeklyReports[userName][date] = cleaned;
+        _lastSyncedWeeklyReports.set(id, remoteJson);
+        mutated = true;
+      }
+    });
+    if(mutated){
+      logSync('snapshot.weeklyReports', {changes: qs.docChanges().length});
+      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ if(typeof renderReview === 'function') renderReview(); }catch(e){}
+    }
+  }, err => {
+    logSync('subscribe.error', {kind:'weeklyReports', code: err && err.code});
+    console.error('weeklyReports subscribe error:', err);
+  });
+}
+
+// weeklyReports を S → FS にdiff 書込み
+async function syncWeeklyReportsToSubcoll(wsId){
+  if(!wsId || !_firebaseReady) return 0;
+  const wr = S.weeklyReports || {};
+  const db = firebase.firestore();
+  const writes = [];
+  const currentIds = new Set();
+  Object.keys(wr).forEach(userName => {
+    const byDate = wr[userName] || {};
+    Object.keys(byDate).forEach(date => {
+      const id = _wrKey(userName, date);
+      currentIds.add(id);
+      const payload = Object.assign({userName, date, _modAt: Date.now()}, byDate[date] || {});
+      const json = JSON.stringify(payload);
+      // 直前と同じ内容ならスキップ
+      const prev = _lastSyncedWeeklyReports.get(id);
+      // 既存と diff（_modAt を除いて比較）
+      const visible = JSON.stringify(Object.assign({}, payload, {_modAt: undefined}));
+      const prevVisible = prev ? JSON.stringify(Object.assign({}, JSON.parse(prev), {_modAt: undefined})) : null;
+      if(visible !== prevVisible){
+        writes.push({id, payload, json});
+      }
+    });
+  });
+  // ローカルから消えた weekly report は削除
+  const deletes = [];
+  _lastSyncedWeeklyReports.forEach((_, id) => { if(!currentIds.has(id)) deletes.push(id); });
+  if(writes.length === 0 && deletes.length === 0) return 0;
+  try{
+    const ops = [...writes.map(w => ({type:'set', ...w})), ...deletes.map(id => ({type:'delete', id}))];
+    for(let i=0; i<ops.length; i+=400){
+      const batch = db.batch();
+      ops.slice(i, i+400).forEach(op => {
+        const ref = db.doc(`workspaces/${wsId}/weeklyReports/${op.id}`);
+        if(op.type === 'set') batch.set(ref, op.payload);
+        else batch.delete(ref);
+      });
+      await batch.commit();
+    }
+    writes.forEach(w => _lastSyncedWeeklyReports.set(w.id, w.json));
+    deletes.forEach(id => _lastSyncedWeeklyReports.delete(id));
+    logSync('write.weeklyReports', {writes: writes.length, deletes: deletes.length});
+    return writes.length + deletes.length;
+  }catch(e){
+    logSync('write.weeklyReports.error', {err: String(e && e.message || e)});
+    console.warn('weeklyReports write failed:', e);
+    return 0;
+  }
+}
+
+// history は append-only：subscribeは新規追加のみ受信、書込みは新エントリだけ
+function subscribeHistory(wsId){
+  if(_wsHistoryUnsubscribe){ _wsHistoryUnsubscribe(); _wsHistoryUnsubscribe = null; }
+  if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
+  const db = firebase.firestore();
+  // 最新 500 件だけ購読（古いものは表示しない方針）
+  _wsHistoryUnsubscribe = db.collection(`workspaces/${wsId}/history`).orderBy('ts', 'desc').limit(500).onSnapshot(qs => {
+    const newEntries = [];
+    qs.docChanges().forEach(c => {
+      const id = c.doc.id;
+      if(c.type === 'added' && !_lastSyncedHistory.has(id)){
+        const data = c.doc.data() || {};
+        newEntries.push(Object.assign({_id: id}, data));
+        _lastSyncedHistory.add(id);
+      } else if(c.type === 'removed'){
+        _lastSyncedHistory.delete(id);
+      }
+    });
+    if(newEntries.length){
+      if(!Array.isArray(S.history)) S.history = [];
+      // 新規分を S.history に追加（重複を ts で除外）
+      const seenTs = new Set(S.history.map(h => h && h.ts).filter(Boolean));
+      newEntries.forEach(e => { if(e.ts && !seenTs.has(e.ts)){ S.history.push(e); seenTs.add(e.ts); }});
+      // ts 降順ソート + 500件まで
+      S.history.sort((a,b) => (b.ts||'').localeCompare(a.ts||''));
+      if(S.history.length > 500) S.history = S.history.slice(0, 500);
+      logSync('snapshot.history', {added: newEntries.length});
+      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ if(typeof renderHistory === 'function') renderHistory(); }catch(e){}
+    }
+  }, err => {
+    logSync('subscribe.error', {kind:'history', code: err && err.code});
+    console.error('history subscribe error:', err);
+  });
+}
+
+// 新しい history エントリを subcoll に append
+async function appendHistoryToSubcoll(wsId, entry){
+  if(!wsId || !_firebaseReady || !entry) return;
+  const db = firebase.firestore();
+  try{
+    await db.collection(`workspaces/${wsId}/history`).add(Object.assign({_modAt: Date.now()}, entry));
+    logSync('write.history.append');
+  }catch(e){
+    logSync('write.history.error', {err: String(e && e.message || e)});
+    console.warn('history append failed:', e);
+  }
+}
+
+// board / kpt の購読
+function subscribeShared(wsId){
+  if(_wsSharedUnsubscribe){ _wsSharedUnsubscribe(); _wsSharedUnsubscribe = null; }
+  if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
+  const db = firebase.firestore();
+  _wsSharedUnsubscribe = db.collection(`workspaces/${wsId}/shared`).onSnapshot(qs => {
+    let mutated = false;
+    qs.docChanges().forEach(c => {
+      const id = c.doc.id;
+      const data = c.doc.data() || {};
+      const cleaned = {};
+      Object.keys(data).forEach(k => { if(k !== '_modAt') cleaned[k] = data[k]; });
+      if(c.type === 'removed'){
+        if(id === 'board'){ S.board = {html:'', updatedAt:0, updatedBy:''}; _lastBoardJson = JSON.stringify(S.board); }
+        if(id === 'kpt'){ S.kpt = {keep:'',problem:'',try:'',goalComments:{}}; _lastKptJson = JSON.stringify(S.kpt); }
+        mutated = true;
+      } else {
+        if(id === 'board'){
+          // LWW: updatedAt が新しい方
+          const lt = Number((S.board||{}).updatedAt||0), rt = Number(cleaned.updatedAt||0);
+          if(rt >= lt){ S.board = cleaned; mutated = true; }
+          _lastBoardJson = JSON.stringify(S.board); // 不要な書き戻しを防ぐ
+        } else if(id === 'kpt'){
+          S.kpt = cleaned; mutated = true;
+          _lastKptJson = JSON.stringify(S.kpt); // 不要な書き戻しを防ぐ
+        }
+      }
+    });
+    if(mutated){
+      logSync('snapshot.shared', {changes: qs.docChanges().length});
+      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ if(typeof renderDashboard === 'function') renderDashboard(); }catch(e){}
+      try{ if(typeof renderReview === 'function') renderReview(); }catch(e){}
+    }
+  }, err => {
+    logSync('subscribe.error', {kind:'shared', code: err && err.code});
+    console.error('shared subscribe error:', err);
+  });
+}
+
+// shared (board/kpt) を S → FS に diff 書込み
+let _lastBoardJson = '';
+let _lastKptJson = '';
+async function syncSharedToSubcoll(wsId){
+  if(!wsId || !_firebaseReady) return 0;
+  const db = firebase.firestore();
+  let count = 0;
+  // board
+  if(S.board && typeof S.board === 'object'){
+    const cur = JSON.stringify(S.board);
+    if(cur !== _lastBoardJson){
+      try{
+        await db.doc(`workspaces/${wsId}/shared/board`).set(Object.assign({_modAt: Date.now()}, S.board));
+        _lastBoardJson = cur;
+        count++;
+        logSync('write.board');
+      }catch(e){ logSync('write.board.error', {err: String(e && e.message || e)}); }
+    }
+  }
+  // kpt
+  if(S.kpt && typeof S.kpt === 'object'){
+    const cur = JSON.stringify(S.kpt);
+    if(cur !== _lastKptJson){
+      try{
+        await db.doc(`workspaces/${wsId}/shared/kpt`).set(Object.assign({_modAt: Date.now()}, S.kpt));
+        _lastKptJson = cur;
+        count++;
+        logSync('write.kpt');
+      }catch(e){ logSync('write.kpt.error', {err: String(e && e.message || e)}); }
+    }
+  }
+  return count;
 }
 
 // 旧スキーマ（main doc に tasks/goals 配列）→ サブコレクションへ移行
@@ -6594,16 +6936,44 @@ async function syncTasksGoalsToSubcollections(wsId){
   return total;
 }
 
+// v3 移行済みワークスペース（セッション内重複実行防止）
+const _v3MigrationDone = new Set();
+
 // migration 完了 → 主ドキュメント＋サブコレクションを購読
 async function setupWorkspaceSubscriptions(wsId){
   await migrateWorkspaceToSubcollections(wsId);
+  // ★ v3 移行：main doc に weeklyReports/history/board/kpt が残っていれば分離
+  if(!_v3MigrationDone.has(wsId)){
+    try{
+      const db = firebase.firestore();
+      const snap = await db.doc(`workspaces/${wsId}`).get();
+      if(snap.exists){
+        const d = snap.data() || {};
+        const hasOldFields = d.weeklyReports || d.history || d.board || d.kpt;
+        if(Number(d._schemaVersion||0) < 3 || hasOldFields){
+          await migrateV2toV3(wsId, d);
+        }
+        _v3MigrationDone.add(wsId);
+      }
+    }catch(e){
+      console.warn('v3 migration check failed:', e);
+      logSync('migrate.v3.skipped', {err: String(e && e.message || e)});
+    }
+  }
   subscribeWorkspaceCollections(wsId);
+  subscribeWeeklyReports(wsId);
+  subscribeHistory(wsId);
+  subscribeShared(wsId);
 }
 
 function subscribeWorkspace(){
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
   if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
   if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
+  // ★ v3: 新 listener も解除
+  if(typeof _wsWeeklyReportsUnsubscribe !== 'undefined' && _wsWeeklyReportsUnsubscribe){ _wsWeeklyReportsUnsubscribe(); _wsWeeklyReportsUnsubscribe = null; }
+  if(typeof _wsHistoryUnsubscribe !== 'undefined' && _wsHistoryUnsubscribe){ _wsHistoryUnsubscribe(); _wsHistoryUnsubscribe = null; }
+  if(typeof _wsSharedUnsubscribe !== 'undefined' && _wsSharedUnsubscribe){ _wsSharedUnsubscribe(); _wsSharedUnsubscribe = null; }
   if(!S.workspaceId || !_firebaseReady || !firebase.auth().currentUser) return;
   // サブコレクションのセットアップ（migration + listeners）
   setupWorkspaceSubscriptions(S.workspaceId).catch(e=>console.warn('setupWorkspaceSubscriptions failed:', e));
@@ -6708,6 +7078,9 @@ function syncToFirestore(){
         console.warn('subcollection sync failed:', e);
         // フォールバック：エラーでも main doc 書込は続行（後段で全体 LWW）
       }
+      // ★ v3: weeklyReports / shared(board,kpt) も per-doc で書込（main doc は触らない）
+      try{ await syncWeeklyReportsToSubcoll(S.workspaceId); }catch(e){ console.warn('weeklyReports sync failed:', e); }
+      try{ await syncSharedToSubcoll(S.workspaceId); }catch(e){ console.warn('shared sync failed:', e); }
       // ② main doc：tasks/goals 以外のフィールドが実際に変わったときだけ書く
       //    （per-document 1/sec 制限への対策。タスク/プロジェクト編集の大半は main doc を触らない）
       const mainDocCandidate = serializeWorkspace();
@@ -8184,17 +8557,21 @@ function readInviteFromHash(){
 // ============ History (audit log) ============
 function logHistory(type, desc){
   if(!S.history) S.history = [];
-  S.history.push({
+  const entry = {
     ts: new Date().toISOString(),
     user: _currentUser ? _currentUser.email : 'system',
     userName: _currentUser ? _currentUser.name : 'システム',
     type, desc
-  });
+  };
+  S.history.push(entry);
   // Cap at 500
   if(S.history.length > 500) S.history = S.history.slice(-500);
-  // Persist immediately
-  if(typeof _origSave === 'function') _origSave();
-  else localStorage.setItem(LS_KEY, JSON.stringify(S));
+  // ★ v3: history subcoll に append（main doc に書かない → サイズ問題回避）
+  if(S.workspaceId && _firebaseReady && firebase.auth && firebase.auth().currentUser){
+    appendHistoryToSubcoll(S.workspaceId, entry).catch(()=>{});
+  }
+  // localStorage 書込みのみ（FS への history 書込みは subcoll 側が担当）
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
 }
 function renderHistory(){
   const tb = document.querySelector('#historyTable tbody');
