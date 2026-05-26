@@ -6526,7 +6526,8 @@ function subscribeWeeklyReports(wsId){
     if(mutated){
       logSync('snapshot.weeklyReports', {changes: qs.docChanges().length});
       try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
-      try{ if(typeof renderReview === 'function') renderReview(); }catch(e){}
+      // ★ withFocusPreserved 経由：入力中のテキストボックスを保護
+      withFocusPreserved(() => { if(typeof renderReview === 'function') renderReview(); });
     }
   }, err => {
     logSync('subscribe.error', {kind:'weeklyReports', code: err && err.code});
@@ -6612,7 +6613,7 @@ function subscribeHistory(wsId){
       if(S.history.length > 500) S.history = S.history.slice(0, 500);
       logSync('snapshot.history', {added: newEntries.length});
       try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
-      try{ if(typeof renderHistory === 'function') renderHistory(); }catch(e){}
+      withFocusPreserved(() => { if(typeof renderHistory === 'function') renderHistory(); });
     }
   }, err => {
     logSync('subscribe.error', {kind:'history', code: err && err.code});
@@ -6664,8 +6665,10 @@ function subscribeShared(wsId){
     if(mutated){
       logSync('snapshot.shared', {changes: qs.docChanges().length});
       try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
-      try{ if(typeof renderDashboard === 'function') renderDashboard(); }catch(e){}
-      try{ if(typeof renderReview === 'function') renderReview(); }catch(e){}
+      withFocusPreserved(() => {
+        if(typeof renderDashboard === 'function') renderDashboard();
+        if(typeof renderReview === 'function') renderReview();
+      });
     }
   }, err => {
     logSync('subscribe.error', {kind:'shared', code: err && err.code});
@@ -8869,6 +8872,20 @@ function renderAll(){
   _origRenderAll();
   if(cap) _restoreFocus(cap);
 }
+
+// ★ 汎用フォーカス保持ラッパ：個別 render（renderReview, renderHistory 等）にも適用する。
+//   subscribe ハンドラから直接 render を呼ぶと、入力中のテキストボックスが消えてしまうため。
+window.withFocusPreserved = function(fn){
+  if(_imeComposing){
+    // IME 中は次の composition 終了まで保留
+    _renderDeferredByIME = true;
+    return;
+  }
+  const cap = _captureFocus();
+  try { fn(); }
+  catch(e){ console.warn('[render] error in withFocusPreserved:', e); }
+  finally { if(cap) _restoreFocus(cap); }
+};
 
 // ===== Personal cross-workspace task view =====
 let _personalViewInflight = null;
