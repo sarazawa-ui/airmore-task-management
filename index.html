@@ -6654,6 +6654,12 @@ function subscribeWorkspace(){
   updateSyncStatus('synced');
 }
 
+// ★ main doc 書込みスキップ判定用：直近に成功した main-doc-relevant フィールドのハッシュ
+//    タスク/プロジェクト編集だけのときは main doc を一切書かない（per-document 1/sec 制限を回避）
+let _lastMainDocHash = '';
+let _mainDocForceWriteAt = 0;
+const MAIN_DOC_FORCE_INTERVAL_MS = 5 * 60 * 1000; // 5分に1回は強制書込（heartbeat）
+
 // 即時 flush 用フラグ（削除直後など、デバウンスを待たずに書込みたい時に true にする）
 let _forceImmediateSync = false;
 function flushPendingSync(){
@@ -6702,43 +6708,68 @@ function syncToFirestore(){
         console.warn('subcollection sync failed:', e);
         // フォールバック：エラーでも main doc 書込は続行（後段で全体 LWW）
       }
-      // ② main doc：tasks/goals 以外のフィールドを transaction merge
-      await db.runTransaction(async tx => {
-        const remoteSnap = await tx.get(ref);
-        const remote = remoteSnap.exists ? (remoteSnap.data() || {}) : {};
-        if(Array.isArray(remote._tombstones)) _mergeTombstones(remote._tombstones);
-        const out = serializeWorkspace();
-        // tasks/goals は main doc に書かない（サブコレクションが正本）
-        delete out.tasks;
-        delete out.goals;
-        out._tombstones = Array.isArray(S._tombstones) ? S._tombstones : [];
-        out._schemaVersion = SCHEMA_VERSION;
-        // 掲示板：updatedAt が新しい方を採用（per-doc LWW）
-        if(remote.board && typeof remote.board === 'object'){
-          const localBoard = S.board || {};
-          const lt = Number(localBoard.updatedAt||0), rt = Number(remote.board.updatedAt||0);
-          out.board = (lt >= rt) ? localBoard : remote.board;
-        }
-        // メンバー系（memberEmails / authMembers / members）も remote 側の追加を残す
-        const _mergeUniqArr = (a, b, keyFn) => {
-          const seen = new Set();
-          const out2 = [];
-          [...(a||[]), ...(b||[])].forEach(x => {
-            if(x == null) return;
-            const k = keyFn(x);
-            if(k != null && seen.has(k)) return;
-            if(k != null) seen.add(k);
-            out2.push(x);
-          });
-          return out2;
-        };
-        out.memberEmails = _mergeUniqArr(remote.memberEmails, out.memberEmails, e => e);
-        out.authMembers  = _mergeUniqArr(remote.authMembers,  out.authMembers,  m => m && m.email);
-        out.members      = _mergeUniqArr(remote.members,      out.members,      m => m && m.name);
-        tx.set(ref, out, {merge:true});
-      });
-      bumpFbUsage('write', 1);
-      bumpFbUsage('read', 1);
+      // ② main doc：tasks/goals 以外のフィールドが実際に変わったときだけ書く
+      //    （per-document 1/sec 制限への対策。タスク/プロジェクト編集の大半は main doc を触らない）
+      const mainDocCandidate = serializeWorkspace();
+      delete mainDocCandidate.tasks;
+      delete mainDocCandidate.goals;
+      mainDocCandidate._tombstones = Array.isArray(S._tombstones) ? S._tombstones : [];
+      mainDocCandidate._schemaVersion = SCHEMA_VERSION;
+      const mainDocHash = JSON.stringify(mainDocCandidate);
+      const sinceForce = Date.now() - _mainDocForceWriteAt;
+      const needsForce = sinceForce > MAIN_DOC_FORCE_INTERVAL_MS;
+      const mainDocChanged = (mainDocHash !== _lastMainDocHash);
+      if(!mainDocChanged && !needsForce){
+        // 変更なし → main doc 書込みを完全スキップ（読込も発生しない）
+        logSync('main.skip', {reason: 'unchanged', sinceForceMs: sinceForce});
+      } else {
+        logSync('main.write.start', {reason: mainDocChanged ? 'changed' : 'heartbeat'});
+        await db.runTransaction(async tx => {
+          const remoteSnap = await tx.get(ref);
+          const remote = remoteSnap.exists ? (remoteSnap.data() || {}) : {};
+          if(Array.isArray(remote._tombstones)) _mergeTombstones(remote._tombstones);
+          // 最新の S を再シリアライズ（transaction 内 await で間に変化があった場合に備え）
+          const out = serializeWorkspace();
+          delete out.tasks;
+          delete out.goals;
+          out._tombstones = Array.isArray(S._tombstones) ? S._tombstones : [];
+          out._schemaVersion = SCHEMA_VERSION;
+          // 掲示板：updatedAt が新しい方を採用（per-doc LWW）
+          if(remote.board && typeof remote.board === 'object'){
+            const localBoard = S.board || {};
+            const lt = Number(localBoard.updatedAt||0), rt = Number(remote.board.updatedAt||0);
+            out.board = (lt >= rt) ? localBoard : remote.board;
+          }
+          // メンバー系（memberEmails / authMembers / members）も remote 側の追加を残す
+          const _mergeUniqArr = (a, b, keyFn) => {
+            const seen = new Set();
+            const out2 = [];
+            [...(a||[]), ...(b||[])].forEach(x => {
+              if(x == null) return;
+              const k = keyFn(x);
+              if(k != null && seen.has(k)) return;
+              if(k != null) seen.add(k);
+              out2.push(x);
+            });
+            return out2;
+          };
+          out.memberEmails = _mergeUniqArr(remote.memberEmails, out.memberEmails, e => e);
+          out.authMembers  = _mergeUniqArr(remote.authMembers,  out.authMembers,  m => m && m.email);
+          out.members      = _mergeUniqArr(remote.members,      out.members,      m => m && m.name);
+          tx.set(ref, out, {merge:true});
+        });
+        // 書込み後の最新ハッシュ：transaction 内で S が変化した可能性に備えて再計算
+        const afterOut = serializeWorkspace();
+        delete afterOut.tasks;
+        delete afterOut.goals;
+        afterOut._tombstones = Array.isArray(S._tombstones) ? S._tombstones : [];
+        afterOut._schemaVersion = SCHEMA_VERSION;
+        _lastMainDocHash = JSON.stringify(afterOut);
+        _mainDocForceWriteAt = Date.now();
+        bumpFbUsage('write', 1);
+        bumpFbUsage('read', 1);
+        logSync('main.write.end');
+      }
       _lastSuccessfulWriteAt = Date.now();
       // 自分の write が「最新」だった場合のみ pending フラグをクリア
       if(myVersion === _writeVersion){
