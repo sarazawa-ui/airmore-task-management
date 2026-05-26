@@ -8921,6 +8921,7 @@ window.withFocusPreserved = function(fn){
 let _personalViewInflight = null;
 let _personalViewFetchedAt = 0;
 let _personalViewCache = null;
+let _personalWsCount = 0; // ★ 自分が参加中の WS 数（snap.size から取得）
 async function renderPersonalView(){
   const content = document.getElementById('personalContent');
   const stat = document.getElementById('personalStatus');
@@ -8947,6 +8948,7 @@ async function renderPersonalView(){
     const snap = await firebase.firestore().collection('workspaces')
       .where('memberEmails','array-contains', email).get();
     bumpFbUsage('read', Math.max(1, snap.size));
+    _personalWsCount = snap.size; // ★ 参加 WS 数を実数で更新（ステータス表示用）
     // 各ワークスペースから tasks / goals を取得。スキーマ v2 ならサブコレクション、
     // 旧スキーマ（_schemaVersion < 2）なら main doc の配列をフォールバック使用。
     const db = firebase.firestore();
@@ -9032,7 +9034,10 @@ function _renderPersonalViewFromRows(allRowsIn){
     const total = allRows.length;
     const doing = allRows.filter(r=>r.status==='着手中').length;
     const todo = allRows.filter(r=>r.status==='未着手').length;
-    stat.innerHTML = `参加ワークスペース：<b>${_myWorkspaces.length || '?'}</b> 件 / 自分の進行中タスク：<b>${total}</b>（着手中 ${doing} / 未着手 ${todo}）<span style="color:var(--muted);margin-left:8px">※完了・中止は非表示</span>`;
+    // ★ 参加 WS 数：personal view 自体で取得した実数（_personalWsCount）を最優先で使う
+    //   それが 0 のときだけ switcher が以前読み込んだ _myWorkspaces.length をフォールバック
+    const wsCount = _personalWsCount || (Array.isArray(_myWorkspaces) ? _myWorkspaces.length : 0) || (new Set(allRows.map(r => r.wsId)).size);
+    stat.innerHTML = `参加ワークスペース：<b>${wsCount}</b> 件 / 自分の進行中タスク：<b>${total}</b>（着手中 ${doing} / 未着手 ${todo}）<span style="color:var(--muted);margin-left:8px">※完了・中止は非表示</span>`;
   }
   if(allRows.length === 0){
     content.innerHTML = '<div style="padding:24px;color:var(--muted);text-align:center;background:#f8f9fa;border-radius:8px">自分が担当のタスクはありません。</div>';
