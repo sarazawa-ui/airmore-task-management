@@ -2891,8 +2891,8 @@ function renderTree(g){
     S.tasks.push(t);
     save(true,`タスク追加：${id}（${g.id}）`);
     renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
-    // 新規タスクは自動的に編集モーダルを開く
-    openTaskEditModal(id);
+    // 新規タスクは自動的に編集モーダルを開く（キャンセル時は削除）
+    openTaskEditModal(id, {isNew: true});
   };
 
   // === Breakdown tree ===
@@ -3421,7 +3421,8 @@ function addTask(){
   save(true, `デイリータスク追加：${t.id}`); renderAll();
   // ★ 追加直後に編集モーダルを開いて詳細を設定できるようにする
   //   （週間カレンダーから追加した時にもポップアップが出る）
-  try{ openTaskEditModal(newId); }catch(e){ console.warn('openTaskEditModal failed:', e); }
+  //   isNew:true → モーダルでキャンセル/✕を押すと作成したタスクが削除される
+  try{ openTaskEditModal(newId, {isNew: true}); }catch(e){ console.warn('openTaskEditModal failed:', e); }
   toast(`${t.id} を追加しました`);
 }
 
@@ -7985,8 +7986,10 @@ function applyProfileToHeader(){
 
 // ============ Task edit modal ============
 let _editingTaskId = null;
-function openTaskEditModal(taskId){
+let _editingIsNew = false; // ★ 新規追加直後のモーダルかどうか（キャンセル時に該当タスクを削除）
+function openTaskEditModal(taskId, opts){
   _editingTaskId = taskId;
+  _editingIsNew = !!(opts && opts.isNew);
   const t = S.tasks.find(x=>x.id===taskId);
   if(!t){ alert('タスクが見つかりません'); return; }
   const container = document.getElementById('taskEditFields');
@@ -8020,12 +8023,27 @@ function openTaskEditModal(taskId){
   document.getElementById('taskEditModal').classList.add('show');
 }
 function closeTaskEditModal(){
+  // ★ 新規追加直後にキャンセル/✕で閉じた場合は、追加されたタスクを削除する
+  //   （ユーザーが「やっぱ作るのやめた」と判断したケース）
+  if(_editingIsNew && _editingTaskId){
+    const idx = S.tasks.findIndex(x => x.id === _editingTaskId);
+    if(idx >= 0){
+      const _tid = S.tasks[idx].id;
+      S.tasks.splice(idx, 1);
+      _addTombstone('tasks', _tid);
+      save(true, `タスク追加キャンセル：${_tid}`);
+      flushPendingSync();
+      try{ renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard(); }catch(e){}
+      toast(`${_tid} の追加をキャンセルしました`);
+    }
+  }
   document.getElementById('taskEditModal').classList.remove('show');
   _editingTaskId = null;
+  _editingIsNew = false;
 }
 function saveEditingTask(){
   const t = S.tasks.find(x=>x.id===_editingTaskId);
-  if(!t){ closeTaskEditModal(); return; }
+  if(!t){ _editingIsNew = false; closeTaskEditModal(); return; }
   document.querySelectorAll('#taskEditFields [data-ef]').forEach(inp=>{
     const f = inp.dataset.ef;
     if(inp.type==='number') t[f] = inp.value===''?'':Number(inp.value);
@@ -8034,12 +8052,13 @@ function saveEditingTask(){
   applyParentAutoComplete(t.id);
   save(true,`タスク編集：${t.id}`);
   renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
+  _editingIsNew = false; // ★ 明示保存したので isNew をクリア（キャンセル削除を抑制）
   closeTaskEditModal();
   toast(`${t.id} を保存しました`);
 }
 function deleteEditingTask(){
   const t = S.tasks.find(x=>x.id===_editingTaskId);
-  if(!t){ closeTaskEditModal(); return; }
+  if(!t){ _editingIsNew = false; closeTaskEditModal(); return; }
   if(!confirm(`タスク「${t.id} ${t.act||''}」を削除しますか？`)) return;
   const _tid = t.id;
   S.tasks.splice(S.tasks.indexOf(t),1);
@@ -8047,6 +8066,7 @@ function deleteEditingTask(){
   save(true,`タスク削除：${t.id}`);
   flushPendingSync();
   renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
+  _editingIsNew = false; // ★ 既に削除済みなので close 内の二重削除を防ぐ
   closeTaskEditModal();
 }
 // 枠外クリックでの自動クローズは無効化（明示的な閉じる操作のみ）
