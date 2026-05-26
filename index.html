@@ -2941,7 +2941,12 @@ function renderTree(g){
   `;
   addBtn.querySelector('.add-node-btn').onclick = ()=>{
     if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
-    g.breakdown.push(newNode("新しい項目"));
+    // ★ クロージャの g は snapshot merge で別オブジェクトに置換されている可能性が
+    //   あるため、必ず S.goals から ID で最新参照を引く
+    const cur = S.goals.find(x => x.id === g.id);
+    if(!cur){ console.warn('goal not found:', g.id); return; }
+    cur.breakdown = cur.breakdown || [];
+    cur.breakdown.push(newNode("新しい項目"));
     save();
     renderGoals();
   };
@@ -3032,7 +3037,9 @@ function renderNode(goal, node, parentArr, depth){
   if(addBtn){
     addBtn.onclick = ()=>{
       if(document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
-      const curNode = getCurrentNode() || node;
+      // ★ 必ず ID 経由で最新ノードを取得（クロージャの node は古い参照の可能性）
+      const curNode = getCurrentNode();
+      if(!curNode){ console.warn('node not found:', nodeId); return; }
       curNode.children = curNode.children || [];
       curNode.children.push(newNode("新しいサブ項目"));
       save();
