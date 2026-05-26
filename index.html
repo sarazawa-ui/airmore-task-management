@@ -3419,7 +3419,10 @@ function addTask(){
   const t = {id:newId,goal:"",mid:"",act:"新しいタスク",owner:(_currentUser?_currentUser.name:S.ui.viewAsMember||""),startD:"",due:"",slot:"",pri:"",est:60,weight:"",act_min:"",status:"未着手",defn:"",interrupt:"",note:"",time:"", _expanded:true};
   S.tasks.push(t);
   save(true, `デイリータスク追加：${t.id}`); renderAll();
-  toast(`${t.id} を追加しました（未割当・サイドバーで詳細編集→カレンダーにドロップで日時設定）`);
+  // ★ 追加直後に編集モーダルを開いて詳細を設定できるようにする
+  //   （週間カレンダーから追加した時にもポップアップが出る）
+  try{ openTaskEditModal(newId); }catch(e){ console.warn('openTaskEditModal failed:', e); }
+  toast(`${t.id} を追加しました`);
 }
 
 function duplicateTask(taskId){
