@@ -3934,10 +3934,15 @@ function renderCalendar(){
   if(!tbl) return;
   const startH = Math.max(0, Math.min(23, Number(document.getElementById('calStartHour').value)||9));
   const endH = Math.max(startH+1, Math.min(24, Number(document.getElementById('calEndHour').value)||21));
-  S.ui.calStartHour = startH; S.ui.calEndHour = endH;
-  // Normalize weekStart in case it was stored from a buggy version
-  S.ui.weekStart = weekStartOf(S.ui.weekStart || todayStr());
-  save();
+  // ★ 致命的バグ修正：render の中で save() を呼んでいたため、
+  //   snapshot→renderAll→renderCalendar→save→write→snapshot→... の無限ループが
+  //   発生し、save() が秒間92回呼ばれ Firestore クォータを爆食いしていた。
+  //   UI 値が実際に変わった時だけ更新する（mutation 抑制）。save() は呼ばない。
+  //   ユーザーが calStartHour/calEndHour を変更した時の onChange 側で save() が呼ばれる。
+  const normalizedWeekStart = weekStartOf(S.ui.weekStart || todayStr());
+  if(S.ui.calStartHour !== startH) S.ui.calStartHour = startH;
+  if(S.ui.calEndHour !== endH) S.ui.calEndHour = endH;
+  if(S.ui.weekStart !== normalizedWeekStart) S.ui.weekStart = normalizedWeekStart;
   const HOUR_PX = 60;
   // タッチドラッグハンドラ用にグローバル公開
   window._calHourPx = HOUR_PX;
