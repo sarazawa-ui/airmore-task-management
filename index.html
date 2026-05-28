@@ -9083,7 +9083,7 @@ function _renderPersonalViewFromRows(allRowsIn){
       const projDisp = r.projectName
         ? `<span style="display:inline-block;padding:1px 7px;background:var(--primary-soft);border:1px solid var(--primary-light);border-radius:9px;font-size:11px;color:var(--primary-dark)">${escapeHtml(r.projectName)}</span>`
         : '<span style="color:#bbb">-</span>';
-      html += `<tr>
+      html += `<tr class="personal-task-row" data-ws="${escapeHtml(r.wsId)}" data-tid="${escapeHtml(r.id)}" style="cursor:pointer" title="クリックで週間カレンダーを開いてこのタスクの詳細を表示">
         <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)"><span style="display:inline-block;padding:2px 8px;background:${sColor};border-radius:10px;font-size:11px;font-weight:600">${escapeHtml(r.status)}</span></td>
         <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)">${escapeHtml(r.action)}</td>
         <td style="padding:6px 10px;border-bottom:1px solid var(--border-soft)">${projDisp}</td>
@@ -9093,6 +9093,52 @@ function _renderPersonalViewFromRows(allRowsIn){
     html += '</tbody></table></div></div>';
   });
   content.innerHTML = html;
+  // ★ 各タスク行クリック → 該当 WS に切替 → 週間カレンダー → タスク詳細を開く
+  content.querySelectorAll('.personal-task-row').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const wsId = tr.dataset.ws;
+      const tid = tr.dataset.tid;
+      openPersonalTask(wsId, tid);
+    });
+    // ホバーで行をハイライト
+    tr.addEventListener('mouseenter', () => { tr.style.background = '#f0f6ff'; });
+    tr.addEventListener('mouseleave', () => { tr.style.background = ''; });
+  });
+}
+
+// 指定タスクが S.tasks に現れるまで待つ（ワークスペース切替後のサブコレ読込待ち）
+function _waitForTask(taskId, timeoutMs){
+  return new Promise(resolve => {
+    const start = Date.now();
+    const check = () => {
+      if((S.tasks||[]).some(t => t && t.id === taskId)){ resolve(true); return; }
+      if(Date.now() - start > (timeoutMs||5000)){ resolve(false); return; }
+      setTimeout(check, 150);
+    };
+    check();
+  });
+}
+
+// マイタスク横断の行クリック処理：WS 切替 → 週間カレンダー → 詳細モーダル
+async function openPersonalTask(wsId, taskId){
+  try{
+    if(wsId && wsId !== S.workspaceId){
+      toast('ワークスペースを切替中...');
+      await switchWorkspace(wsId);
+      // サブコレクションのタスク読込を待つ（最大5秒）
+      await _waitForTask(taskId, 5000);
+    }
+    goToView('calendar');
+    // 描画完了を待ってから詳細を開く
+    setTimeout(() => {
+      try{ focusTaskOnCalendar(taskId); }catch(e){ /* 未配置なら無視 */ }
+      try{ openTaskEditModal(taskId); }
+      catch(e){ console.warn('openTaskEditModal failed:', e); toast('タスク詳細を開けませんでした'); }
+    }, 250);
+  }catch(e){
+    console.error('openPersonalTask failed:', e);
+    toast('タスクを開けませんでした：' + (e.message||e));
+  }
 }
 
 function refreshPersonalView(){
