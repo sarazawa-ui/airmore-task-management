@@ -2575,8 +2575,7 @@ function renderMeetings(){
           <div class="meeting-field"><label>会議名</label><input type="text" data-mf="name" value="${escapeHtml(selected.name||'')}" placeholder="例：5/26 営業定例"></div>
           <div class="meeting-field"><label>日付</label><input type="date" data-mf="date" value="${selected.date||''}"></div>
         </div>
-        <div class="meeting-field"><label>📋 アジェンダ（話す議題）</label><textarea data-mf="agenda" placeholder="・○○について&#10;・△△の方針確認" rows="3">${escapeHtml(selected.agenda||'')}</textarea></div>
-        <div class="meeting-field"><label>📝 メモ（自由記述・気付き）</label><textarea data-mf="memo" placeholder="議論中のメモ、参考情報、参加者の発言など" rows="5">${escapeHtml(selected.memo||'')}</textarea></div>
+        <div class="meeting-field"><label>📋 アジェンダ・ホワイトボード</label><textarea data-mf="agenda" placeholder="議題・議論中のメモ・気付き・参考情報など、会議中に自由に書き込んでください" rows="8">${escapeHtml(selected.agenda||'')}</textarea></div>
         <div class="meeting-field"><label>✅ 議事録 / 決定事項 / ToDo</label><textarea data-mf="minutes" placeholder="決まったこと・ToDo・宿題（後でプロジェクトやタスクに転記）" rows="5">${escapeHtml(selected.minutes||'')}</textarea></div>
       </div>
     `;
@@ -2658,7 +2657,6 @@ function addMeeting(){
     name: '',
     date: today,
     agenda: '',
-    memo: '',
     minutes: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
