@@ -277,6 +277,28 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 /* 未設定（URLなし）の link はクリック無効化 */
 #tblGoals td.drive-cell .drive-link[href="#"]{color:var(--muted);text-decoration:none;font-style:italic;pointer-events:none}
 /* Project completion definition card (above daily tasks in tree view) */
+/* 会議メモセクション */
+.meetings-wrap{margin:8px 12px 12px 12px;background:#fff;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.meetings-header{padding:9px 14px;background:var(--primary-soft);cursor:pointer;display:flex;align-items:center;gap:10px;font-weight:700;color:var(--primary-dark);user-select:none;font-size:13px}
+.meetings-header:hover{background:#cfe3f5}
+.meetings-header .m-toggle{font-size:11px;width:14px;display:inline-block;transition:transform .15s}
+.meetings-header.expanded .m-toggle{transform:rotate(90deg)}
+.meetings-count{font-size:11px;font-weight:400;color:var(--muted)}
+.meetings-body{padding:10px 14px;border-top:1px solid var(--border);background:#fafbfc;display:none}
+.meetings-header.expanded + .meetings-body{display:block}
+.meeting-add-row{margin-bottom:10px;display:flex;gap:8px;align-items:center}
+.meeting-card{background:#fff;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;overflow:hidden}
+.meeting-card-head{padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:10px;font-size:13px;user-select:none}
+.meeting-card-head:hover{background:#f5f8fb}
+.meeting-card.expanded .meeting-card-head{border-bottom:1px solid var(--border);background:#eff6fc}
+.meeting-card-body{padding:12px;display:none;background:#fff}
+.meeting-card.expanded .meeting-card-body{display:block}
+.meeting-field{margin-bottom:10px}
+.meeting-field label{display:block;font-size:11px;color:var(--muted);font-weight:600;margin-bottom:3px}
+.meeting-field input[type="text"],.meeting-field input[type="date"],.meeting-field textarea{width:100%;padding:6px 9px;border:1px solid var(--border);border-radius:5px;font:inherit;background:#fff;box-sizing:border-box}
+.meeting-field textarea{resize:vertical;min-height:60px;line-height:1.5}
+.meeting-field-row{display:grid;grid-template-columns:1fr 180px;gap:10px}
+.meeting-actions{display:flex;gap:8px;justify-content:flex-end;border-top:1px solid var(--border);padding-top:10px;margin-top:8px}
 .proj-defn-card{padding:10px 12px;background:#FFFBEA;border:1px solid #FFE082;border-left:4px solid #FFA000;border-radius:8px;margin-bottom:10px}
 .proj-defn-card .lbl{font-size:11.5px;font-weight:700;color:#7E5109;margin-bottom:4px;display:flex;align-items:center;gap:5px}
 .proj-defn-card textarea{width:100%;min-height:48px;border:1px solid #FFE082;border-radius:5px;padding:7px 9px;font-family:inherit;font-size:12.5px;line-height:1.5;background:#fff;resize:vertical}
@@ -1032,6 +1054,23 @@ header.app-header{padding:10px 22px}
 
 <!-- ============ PROJECTS ============ -->
 <section class="view" id="view-goals">
+  <!-- 会議メモセクション（通常は折りたたみ、使用時のみ展開） -->
+  <div class="meetings-wrap" id="meetingsSection">
+    <div class="meetings-header" id="meetingsHeader" onclick="toggleMeetingsSection()">
+      <span class="m-toggle">▶</span>
+      <span>📝 会議メモ</span>
+      <span class="meetings-count" id="meetingsCount">0件</span>
+      <span style="flex:1"></span>
+      <span style="font-size:11px;font-weight:400;color:var(--muted)">アジェンダ・議事録・ToDo整理用</span>
+    </div>
+    <div class="meetings-body" id="meetingsBody">
+      <div class="meeting-add-row">
+        <button class="btn sm" onclick="addMeeting()">＋ 新規会議メモ</button>
+        <span style="color:var(--muted);font-size:11px">プロジェクトやタスクを決める前の議論・検討メモを保存できます</span>
+      </div>
+      <div id="meetingsList"></div>
+    </div>
+  </div>
   <div class="toolbar">
     <button class="btn" onclick="addGoal()">＋ プロジェクト追加</button>
     <div class="project-filter">
@@ -2467,6 +2506,141 @@ function renderGoals(){
     if(hidden > 0) parts.push(`${hidden}件 非表示`);
     hint.textContent = parts.length ? `（${parts.join(' / ')}）` : '';
   }
+  // ★ 会議メモも描画（プロジェクトタブ上部の折りたたみセクション）
+  try{ renderMeetings(); }catch(e){ console.warn('renderMeetings failed:', e); }
+}
+
+// ============ 会議メモ ============
+function renderMeetings(){
+  const list = document.getElementById('meetingsList');
+  const countEl = document.getElementById('meetingsCount');
+  const header = document.getElementById('meetingsHeader');
+  if(!list || !header) return;
+  if(!Array.isArray(S.meetings)) S.meetings = [];
+  // 折りたたみ状態の復元
+  const expanded = !!(S.ui && S.ui.meetingsExpanded);
+  header.classList.toggle('expanded', expanded);
+  header.querySelector('.m-toggle').textContent = expanded ? '▼' : '▶';
+  // 件数表示
+  if(countEl) countEl.textContent = `${S.meetings.length}件`;
+  // 日付降順ソート
+  const sorted = S.meetings.slice().sort((a,b) => (b.date||'').localeCompare(a.date||'') || (b.createdAt||'').localeCompare(a.createdAt||''));
+  if(sorted.length === 0){
+    list.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px">まだ会議メモはありません。上の「＋ 新規会議メモ」から追加してください。</div>';
+    return;
+  }
+  list.innerHTML = sorted.map(m => `
+    <div class="meeting-card${m._uiExpanded?' expanded':''}" data-mid="${escapeHtml(m.id)}">
+      <div class="meeting-card-head">
+        <span class="m-toggle" style="display:inline-block;width:14px;transition:transform .15s${m._uiExpanded?';transform:rotate(90deg)':''}">▶</span>
+        <span style="font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.name || '(無題)')}</span>
+        <span style="color:var(--muted);font-size:11px;white-space:nowrap">${escapeHtml(m.date || '')}</span>
+        ${m.createdBy ? `<span style="color:var(--muted);font-size:11px;white-space:nowrap">by ${escapeHtml(m.createdBy)}</span>` : ''}
+      </div>
+      <div class="meeting-card-body">
+        <div class="meeting-field-row">
+          <div class="meeting-field"><label>会議名</label><input type="text" data-mf="name" value="${escapeHtml(m.name||'')}" placeholder="例：5/26 営業定例"></div>
+          <div class="meeting-field"><label>日付</label><input type="date" data-mf="date" value="${m.date||''}"></div>
+        </div>
+        <div class="meeting-field"><label>📋 アジェンダ（話す議題）</label><textarea data-mf="agenda" placeholder="・○○について&#10;・△△の方針確認">${escapeHtml(m.agenda||'')}</textarea></div>
+        <div class="meeting-field"><label>📝 メモ（自由記述・気付き）</label><textarea data-mf="memo" placeholder="議論中のメモ、参考情報、参加者の発言など" rows="4">${escapeHtml(m.memo||'')}</textarea></div>
+        <div class="meeting-field"><label>✅ 議事録 / 決定事項 / ToDo</label><textarea data-mf="minutes" placeholder="決まったこと・ToDo・宿題（後でプロジェクトやタスクに転記）" rows="4">${escapeHtml(m.minutes||'')}</textarea></div>
+        <div class="meeting-actions">
+          <button class="btn sm danger" data-meeting-del="${escapeHtml(m.id)}">🗑 削除</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+  // イベントワイヤ
+  list.querySelectorAll('.meeting-card-head').forEach(head => {
+    head.addEventListener('click', e => {
+      if(e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') return;
+      const card = head.closest('.meeting-card');
+      const mid = card.dataset.mid;
+      const m = (S.meetings||[]).find(x => x.id === mid);
+      if(!m) return;
+      m._uiExpanded = !m._uiExpanded;
+      renderMeetings();
+    });
+  });
+  list.querySelectorAll('[data-mf]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const card = inp.closest('.meeting-card');
+      const mid = card.dataset.mid;
+      const m = (S.meetings||[]).find(x => x.id === mid);
+      if(!m) return;
+      m[inp.dataset.mf] = inp.value;
+      m.updatedAt = new Date().toISOString();
+      save(true, `会議メモ更新：${m.name||m.id}`);
+    });
+    inp.addEventListener('click', e => e.stopPropagation());
+  });
+  list.querySelectorAll('[data-meeting-del]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const mid = btn.dataset.meetingDel;
+      const m = (S.meetings||[]).find(x => x.id === mid);
+      if(!m) return;
+      if(!confirm(`会議メモ「${m.name||'(無題)'}」を削除しますか？`)) return;
+      S.meetings = S.meetings.filter(x => x.id !== mid);
+      _addTombstone('meetings', mid);
+      save(true, `会議メモ削除：${m.name||mid}`);
+      flushPendingSync();
+      renderMeetings();
+    });
+  });
+}
+
+function toggleMeetingsSection(){
+  const header = document.getElementById('meetingsHeader');
+  if(!header) return;
+  const newState = !header.classList.contains('expanded');
+  if(!S.ui) S.ui = {};
+  S.ui.meetingsExpanded = newState;
+  save();
+  renderMeetings();
+}
+
+function addMeeting(){
+  if(!Array.isArray(S.meetings)) S.meetings = [];
+  if(!S.seq) S.seq = {};
+  S.seq.meeting = (S.seq.meeting||0)+1;
+  let mid = 'M-'+String(S.seq.meeting).padStart(3,'0');
+  // ID 重複ガード
+  const existing = new Set(S.meetings.map(m => m && m.id).filter(Boolean));
+  const tombs = _tombstoneSetFor('meetings');
+  let bumps = 0;
+  while((existing.has(mid) || tombs.has(mid)) && bumps++ < 1000){
+    S.seq.meeting++;
+    mid = 'M-'+String(S.seq.meeting).padStart(3,'0');
+  }
+  // 他の会議は折りたたむ
+  S.meetings.forEach(m => { m._uiExpanded = false; });
+  const today = new Date().toISOString().slice(0,10);
+  const newM = {
+    id: mid,
+    name: '',
+    date: today,
+    agenda: '',
+    memo: '',
+    minutes: '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    createdBy: (_currentUser && _currentUser.name) || '',
+    _uiExpanded: true
+  };
+  S.meetings.unshift(newM);
+  // セクションが閉じていれば開く
+  if(!S.ui) S.ui = {};
+  S.ui.meetingsExpanded = true;
+  save(true, `会議メモ追加：${mid}`);
+  renderMeetings();
+  // フォーカス：新会議の会議名入力欄
+  setTimeout(()=>{
+    const inp = document.querySelector(`.meeting-card[data-mid="${mid}"] input[data-mf="name"]`);
+    if(inp){ inp.focus(); }
+  }, 100);
+  toast(`会議メモ ${mid} を作成しました`);
 }
 // 開いているメンバーチップポップアップを記憶（renderGoals で DOM が壊れても復元）
 let _openMemberChipGoalId = null;
@@ -5686,6 +5860,7 @@ function _resetWorkspaceLocalCaches(){
   // ★ v3: 新サブコレ用キャッシュもクリア
   if(typeof _lastSyncedWeeklyReports !== 'undefined') _lastSyncedWeeklyReports.clear();
   if(typeof _lastSyncedHistory !== 'undefined') _lastSyncedHistory.clear();
+  if(typeof _lastSyncedMeetings !== 'undefined') _lastSyncedMeetings.clear();
   _lastBoardJson = '';
   _lastKptJson = '';
   // サブコレクション listener も解除（新 WS の listener が後で張られる）
@@ -5694,6 +5869,7 @@ function _resetWorkspaceLocalCaches(){
   if(typeof _wsWeeklyReportsUnsubscribe !== 'undefined' && _wsWeeklyReportsUnsubscribe){ _wsWeeklyReportsUnsubscribe(); _wsWeeklyReportsUnsubscribe = null; }
   if(typeof _wsHistoryUnsubscribe !== 'undefined' && _wsHistoryUnsubscribe){ _wsHistoryUnsubscribe(); _wsHistoryUnsubscribe = null; }
   if(typeof _wsSharedUnsubscribe !== 'undefined' && _wsSharedUnsubscribe){ _wsSharedUnsubscribe(); _wsSharedUnsubscribe = null; }
+  if(typeof _wsMeetingsUnsubscribe !== 'undefined' && _wsMeetingsUnsubscribe){ _wsMeetingsUnsubscribe(); _wsMeetingsUnsubscribe = null; }
   _lastLocalChange = 0;
   _lastSuccessfulWriteAt = 0;
   _deferredSnapshot = null;
@@ -6407,8 +6583,10 @@ function _mergeFieldLevel({local, remote, lastSeenJson, kind}){
 let _wsWeeklyReportsUnsubscribe = null;
 let _wsHistoryUnsubscribe = null;
 let _wsSharedUnsubscribe = null;
+let _wsMeetingsUnsubscribe = null;             // ★ 会議メモ
 const _lastSyncedWeeklyReports = new Map(); // "userName__date" -> JSON
 const _lastSyncedHistory = new Set();        // historyId set（履歴は append-only）
+const _lastSyncedMeetings = new Map();       // ★ meetingId -> JSON
 
 function _wrKey(userName, date){
   // Firestore doc ID 用：'/' のみ禁止、`__` は予約名チェックがあるので避ける
@@ -6721,6 +6899,89 @@ async function syncSharedToSubcoll(wsId){
   return count;
 }
 
+// ============ 会議メモ サブコレクション ============
+function subscribeMeetings(wsId){
+  if(_wsMeetingsUnsubscribe){ _wsMeetingsUnsubscribe(); _wsMeetingsUnsubscribe = null; }
+  if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
+  const db = firebase.firestore();
+  _wsMeetingsUnsubscribe = db.collection(`workspaces/${wsId}/meetings`).onSnapshot(qs => {
+    if(!Array.isArray(S.meetings)) S.meetings = [];
+    let mutated = false;
+    qs.docChanges().forEach(c => {
+      const id = c.doc.id;
+      const data = c.doc.data() || {};
+      const remoteJson = JSON.stringify(data);
+      if(c.type !== 'removed' && _lastSyncedMeetings.get(id) === remoteJson) return;
+      if(c.type === 'removed'){
+        const idx = S.meetings.findIndex(m => m && m.id === id);
+        if(idx >= 0){ S.meetings.splice(idx, 1); mutated = true; }
+        _lastSyncedMeetings.delete(id);
+      } else {
+        const existing = S.meetings.find(m => m && m.id === id);
+        if(existing){
+          const uiExp = existing._uiExpanded;
+          Object.keys(data).forEach(k => { existing[k] = data[k]; });
+          existing._uiExpanded = uiExp; // UI 状態を保持
+        } else {
+          S.meetings.push(Object.assign({}, data));
+        }
+        _lastSyncedMeetings.set(id, remoteJson);
+        mutated = true;
+      }
+    });
+    if(mutated){
+      logSync('snapshot.meetings', {changes: qs.docChanges().length});
+      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
+    }
+  }, err => {
+    logSync('subscribe.error', {kind:'meetings', code: err && err.code});
+    console.error('meetings subscribe error:', err);
+  });
+}
+
+async function syncMeetingsToSubcoll(wsId){
+  if(!wsId || !_firebaseReady) return 0;
+  const meetings = Array.isArray(S.meetings) ? S.meetings : [];
+  const db = firebase.firestore();
+  const writes = [];
+  const currentIds = new Set();
+  meetings.forEach(m => {
+    if(!m || !m.id) return;
+    currentIds.add(m.id);
+    // _uiExpanded は同期しない（ユーザー個別の UI 状態）
+    const clean = Object.assign({}, m);
+    delete clean._uiExpanded;
+    const json = JSON.stringify(clean);
+    if(_lastSyncedMeetings.get(m.id) !== json){
+      writes.push({id: m.id, payload: clean, json});
+    }
+  });
+  const deletes = [];
+  _lastSyncedMeetings.forEach((_, id) => { if(!currentIds.has(id)) deletes.push(id); });
+  if(writes.length === 0 && deletes.length === 0) return 0;
+  try{
+    const ops = [...writes.map(w => ({type:'set', ...w})), ...deletes.map(id => ({type:'delete', id}))];
+    for(let i=0; i<ops.length; i+=400){
+      const batch = db.batch();
+      ops.slice(i, i+400).forEach(op => {
+        const ref = db.doc(`workspaces/${wsId}/meetings/${op.id}`);
+        if(op.type === 'set') batch.set(ref, op.payload);
+        else batch.delete(ref);
+      });
+      await batch.commit();
+    }
+    writes.forEach(w => _lastSyncedMeetings.set(w.id, w.json));
+    deletes.forEach(id => _lastSyncedMeetings.delete(id));
+    logSync('write.meetings', {writes: writes.length, deletes: deletes.length});
+    return writes.length + deletes.length;
+  }catch(e){
+    logSync('write.meetings.error', {err: String(e && e.message || e)});
+    console.warn('meetings write failed:', e);
+    return 0;
+  }
+}
+
 // 旧スキーマ（main doc に tasks/goals 配列）→ サブコレクションへ移行
 // 1ワークスペースにつき1回だけ実行
 async function migrateWorkspaceToSubcollections(wsId){
@@ -6983,6 +7244,7 @@ async function setupWorkspaceSubscriptions(wsId){
   subscribeWeeklyReports(wsId);
   subscribeHistory(wsId);
   subscribeShared(wsId);
+  subscribeMeetings(wsId); // ★ 会議メモ
 }
 
 function subscribeWorkspace(){
@@ -6993,6 +7255,7 @@ function subscribeWorkspace(){
   if(typeof _wsWeeklyReportsUnsubscribe !== 'undefined' && _wsWeeklyReportsUnsubscribe){ _wsWeeklyReportsUnsubscribe(); _wsWeeklyReportsUnsubscribe = null; }
   if(typeof _wsHistoryUnsubscribe !== 'undefined' && _wsHistoryUnsubscribe){ _wsHistoryUnsubscribe(); _wsHistoryUnsubscribe = null; }
   if(typeof _wsSharedUnsubscribe !== 'undefined' && _wsSharedUnsubscribe){ _wsSharedUnsubscribe(); _wsSharedUnsubscribe = null; }
+  if(typeof _wsMeetingsUnsubscribe !== 'undefined' && _wsMeetingsUnsubscribe){ _wsMeetingsUnsubscribe(); _wsMeetingsUnsubscribe = null; }
   if(!S.workspaceId || !_firebaseReady || !firebase.auth().currentUser) return;
   // サブコレクションのセットアップ（migration + listeners）
   setupWorkspaceSubscriptions(S.workspaceId).catch(e=>console.warn('setupWorkspaceSubscriptions failed:', e));
@@ -7097,9 +7360,10 @@ function syncToFirestore(){
         console.warn('subcollection sync failed:', e);
         // フォールバック：エラーでも main doc 書込は続行（後段で全体 LWW）
       }
-      // ★ v3: weeklyReports / shared(board,kpt) も per-doc で書込（main doc は触らない）
+      // ★ v3: weeklyReports / shared(board,kpt) / meetings も per-doc で書込（main doc は触らない）
       try{ await syncWeeklyReportsToSubcoll(S.workspaceId); }catch(e){ console.warn('weeklyReports sync failed:', e); }
       try{ await syncSharedToSubcoll(S.workspaceId); }catch(e){ console.warn('shared sync failed:', e); }
+      try{ await syncMeetingsToSubcoll(S.workspaceId); }catch(e){ console.warn('meetings sync failed:', e); }
       // ② main doc：tasks/goals 以外のフィールドが実際に変わったときだけ書く
       //    （per-document 1/sec 制限への対策。タスク/プロジェクト編集の大半は main doc を触らない）
       const mainDocCandidate = serializeWorkspace();
@@ -8746,6 +9010,8 @@ function ensureDefaults(){
   if(!S.weeklyReports) S.weeklyReports = {};
   if(!S.seq) S.seq = {goal:5,task:7,node:0};
   if(!S.seq.node) S.seq.node = 0;
+  if(typeof S.seq.meeting !== 'number') S.seq.meeting = 0; // ★ 会議メモ連番
+  if(!Array.isArray(S.meetings)) S.meetings = [];           // ★ 会議メモ配列
   // デイリータスク（プロジェクト未紐づけ）の連番は task と分離
   if(typeof S.seq.dailyTask !== 'number'){
     // 既存の D- 接頭辞タスクから最大値を復元（未指定時の初期値）
