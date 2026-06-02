@@ -286,6 +286,13 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .meetings-count{font-size:11px;font-weight:400;color:var(--muted)}
 .meetings-body{padding:10px 14px;border-top:1px solid var(--border);background:#fafbfc;display:none}
 .meetings-header.expanded + .meetings-body{display:block}
+.meeting-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.meeting-toolbar .meeting-select{flex:1;min-width:240px;padding:6px 9px;border:1px solid var(--border);border-radius:5px;background:#fff;font:inherit;font-size:13px;cursor:pointer}
+.meeting-editor{background:#fff;border:1px solid var(--border);border-radius:6px;padding:12px}
+.meeting-editor-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.meeting-editor-head .meeting-id{font-size:11px;color:var(--muted);font-family:monospace}
+.meeting-editor-head .meeting-by{font-size:11px;color:var(--muted)}
+.meeting-empty{text-align:center;padding:24px;color:var(--muted);font-size:12px;background:#fff;border:1px dashed var(--border-soft);border-radius:6px}
 .meeting-add-row{margin-bottom:10px;display:flex;gap:8px;align-items:center}
 .meeting-card{background:#fff;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;overflow:hidden}
 .meeting-card-head{padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:10px;font-size:13px;user-select:none}
@@ -1064,10 +1071,7 @@ header.app-header{padding:10px 22px}
       <span style="font-size:11px;font-weight:400;color:var(--muted)">アジェンダ・議事録・ToDo整理用</span>
     </div>
     <div class="meetings-body" id="meetingsBody">
-      <div class="meeting-add-row">
-        <button class="btn sm" onclick="addMeeting()">＋ 新規会議メモ</button>
-        <span style="color:var(--muted);font-size:11px">プロジェクトやタスクを決める前の議論・検討メモを保存できます</span>
-      </div>
+      <!-- renderMeetings() が select + 編集フォームを動的に挿入 -->
       <div id="meetingsList"></div>
     </div>
   </div>
@@ -2510,7 +2514,7 @@ function renderGoals(){
   try{ renderMeetings(); }catch(e){ console.warn('renderMeetings failed:', e); }
 }
 
-// ============ 会議メモ ============
+// ============ 会議メモ（プルダウン選択方式） ============
 function renderMeetings(){
   const list = document.getElementById('meetingsList');
   const countEl = document.getElementById('meetingsCount');
@@ -2523,70 +2527,104 @@ function renderMeetings(){
   header.querySelector('.m-toggle').textContent = expanded ? '▼' : '▶';
   // 件数表示
   if(countEl) countEl.textContent = `${S.meetings.length}件`;
-  // 日付降順ソート
-  const sorted = S.meetings.slice().sort((a,b) => (b.date||'').localeCompare(a.date||'') || (b.createdAt||'').localeCompare(a.createdAt||''));
-  if(sorted.length === 0){
-    list.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px">まだ会議メモはありません。上の「＋ 新規会議メモ」から追加してください。</div>';
-    return;
+  // 日付降順ソート（同日は createdAt で）
+  const sorted = S.meetings.slice().sort((a,b) =>
+    (b.date||'').localeCompare(a.date||'') ||
+    (b.createdAt||'').localeCompare(a.createdAt||'')
+  );
+  // 選択中の会議 ID（個人別 UI 状態）：無効なら最新を自動選択、無ければ null
+  let selectedId = (S.ui && S.ui.selectedMeetingId) || null;
+  if(selectedId && !sorted.some(m => m.id === selectedId)){
+    selectedId = null;
   }
-  list.innerHTML = sorted.map(m => `
-    <div class="meeting-card${m._uiExpanded?' expanded':''}" data-mid="${escapeHtml(m.id)}">
-      <div class="meeting-card-head">
-        <span class="m-toggle" style="display:inline-block;width:14px;transition:transform .15s${m._uiExpanded?';transform:rotate(90deg)':''}">▶</span>
-        <span style="font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(m.name || '(無題)')}</span>
-        <span style="color:var(--muted);font-size:11px;white-space:nowrap">${escapeHtml(m.date || '')}</span>
-        ${m.createdBy ? `<span style="color:var(--muted);font-size:11px;white-space:nowrap">by ${escapeHtml(m.createdBy)}</span>` : ''}
-      </div>
-      <div class="meeting-card-body">
-        <div class="meeting-field-row">
-          <div class="meeting-field"><label>会議名</label><input type="text" data-mf="name" value="${escapeHtml(m.name||'')}" placeholder="例：5/26 営業定例"></div>
-          <div class="meeting-field"><label>日付</label><input type="date" data-mf="date" value="${m.date||''}"></div>
-        </div>
-        <div class="meeting-field"><label>📋 アジェンダ（話す議題）</label><textarea data-mf="agenda" placeholder="・○○について&#10;・△△の方針確認">${escapeHtml(m.agenda||'')}</textarea></div>
-        <div class="meeting-field"><label>📝 メモ（自由記述・気付き）</label><textarea data-mf="memo" placeholder="議論中のメモ、参考情報、参加者の発言など" rows="4">${escapeHtml(m.memo||'')}</textarea></div>
-        <div class="meeting-field"><label>✅ 議事録 / 決定事項 / ToDo</label><textarea data-mf="minutes" placeholder="決まったこと・ToDo・宿題（後でプロジェクトやタスクに転記）" rows="4">${escapeHtml(m.minutes||'')}</textarea></div>
-        <div class="meeting-actions">
-          <button class="btn sm danger" data-meeting-del="${escapeHtml(m.id)}">🗑 削除</button>
-        </div>
-      </div>
+  if(!selectedId && sorted.length > 0){
+    selectedId = sorted[0].id;
+    if(!S.ui) S.ui = {};
+    S.ui.selectedMeetingId = selectedId;
+  }
+  // ツールバー（select + 新規）
+  const toolbarHtml = `
+    <div class="meeting-toolbar">
+      <select class="meeting-select" id="meetingSelect"${sorted.length===0?' disabled':''}>
+        ${sorted.length===0
+          ? '<option value="">（会議メモなし）</option>'
+          : sorted.map(m => {
+              const label = `${m.date||'----/--/--'}  ${(m.name||'(無題)')}  [${m.id}]`;
+              return `<option value="${escapeHtml(m.id)}"${m.id===selectedId?' selected':''}>${escapeHtml(label)}</option>`;
+            }).join('')
+        }
+      </select>
+      <button class="btn sm" onclick="addMeeting()">＋ 新規</button>
     </div>
-  `).join('');
-  // イベントワイヤ
-  list.querySelectorAll('.meeting-card-head').forEach(head => {
-    head.addEventListener('click', e => {
-      if(e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') return;
-      const card = head.closest('.meeting-card');
-      const mid = card.dataset.mid;
-      const m = (S.meetings||[]).find(x => x.id === mid);
-      if(!m) return;
-      m._uiExpanded = !m._uiExpanded;
+  `;
+  // 選択中の会議の編集フォーム
+  const selected = sorted.find(m => m.id === selectedId);
+  let editorHtml;
+  if(!selected){
+    editorHtml = `<div class="meeting-empty">会議メモがまだありません。<br>「＋ 新規」ボタンから作成できます。</div>`;
+  } else {
+    editorHtml = `
+      <div class="meeting-editor" data-mid="${escapeHtml(selected.id)}">
+        <div class="meeting-editor-head">
+          <span class="meeting-id">${escapeHtml(selected.id)}</span>
+          ${selected.createdBy ? `<span class="meeting-by">作成者：${escapeHtml(selected.createdBy)}</span>` : ''}
+          <span style="flex:1"></span>
+          <button class="btn sm danger" data-meeting-del="${escapeHtml(selected.id)}">🗑 削除</button>
+        </div>
+        <div class="meeting-field-row">
+          <div class="meeting-field"><label>会議名</label><input type="text" data-mf="name" value="${escapeHtml(selected.name||'')}" placeholder="例：5/26 営業定例"></div>
+          <div class="meeting-field"><label>日付</label><input type="date" data-mf="date" value="${selected.date||''}"></div>
+        </div>
+        <div class="meeting-field"><label>📋 アジェンダ（話す議題）</label><textarea data-mf="agenda" placeholder="・○○について&#10;・△△の方針確認" rows="3">${escapeHtml(selected.agenda||'')}</textarea></div>
+        <div class="meeting-field"><label>📝 メモ（自由記述・気付き）</label><textarea data-mf="memo" placeholder="議論中のメモ、参考情報、参加者の発言など" rows="5">${escapeHtml(selected.memo||'')}</textarea></div>
+        <div class="meeting-field"><label>✅ 議事録 / 決定事項 / ToDo</label><textarea data-mf="minutes" placeholder="決まったこと・ToDo・宿題（後でプロジェクトやタスクに転記）" rows="5">${escapeHtml(selected.minutes||'')}</textarea></div>
+      </div>
+    `;
+  }
+  list.innerHTML = toolbarHtml + editorHtml;
+  // select の change → 選択保存 + 再描画
+  const sel = list.querySelector('#meetingSelect');
+  if(sel){
+    sel.addEventListener('change', () => {
+      if(!S.ui) S.ui = {};
+      S.ui.selectedMeetingId = sel.value || null;
+      save();
       renderMeetings();
     });
-  });
+  }
+  // 各フィールド変更 → 自動保存
   list.querySelectorAll('[data-mf]').forEach(inp => {
     inp.addEventListener('change', () => {
-      const card = inp.closest('.meeting-card');
-      const mid = card.dataset.mid;
+      const editor = inp.closest('.meeting-editor');
+      if(!editor) return;
+      const mid = editor.dataset.mid;
       const m = (S.meetings||[]).find(x => x.id === mid);
       if(!m) return;
       m[inp.dataset.mf] = inp.value;
       m.updatedAt = new Date().toISOString();
       save(true, `会議メモ更新：${m.name||m.id}`);
     });
-    inp.addEventListener('click', e => e.stopPropagation());
   });
+  // 削除
   list.querySelectorAll('[data-meeting-del]').forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
+    btn.addEventListener('click', () => {
       const mid = btn.dataset.meetingDel;
       const m = (S.meetings||[]).find(x => x.id === mid);
       if(!m) return;
-      if(!confirm(`会議メモ「${m.name||'(無題)'}」を削除しますか？`)) return;
+      if(!confirm(`会議メモ「${m.name||'(無題)'}」を削除しますか？\n（この操作は取り消せません）`)) return;
       S.meetings = S.meetings.filter(x => x.id !== mid);
       _addTombstone('meetings', mid);
+      // 削除後の選択を次の会議へ
+      const remaining = S.meetings.slice().sort((a,b) =>
+        (b.date||'').localeCompare(a.date||'') ||
+        (b.createdAt||'').localeCompare(a.createdAt||'')
+      );
+      if(!S.ui) S.ui = {};
+      S.ui.selectedMeetingId = remaining.length > 0 ? remaining[0].id : null;
       save(true, `会議メモ削除：${m.name||mid}`);
       flushPendingSync();
       renderMeetings();
+      toast(`${mid} を削除しました`);
     });
   });
 }
@@ -2614,8 +2652,6 @@ function addMeeting(){
     S.seq.meeting++;
     mid = 'M-'+String(S.seq.meeting).padStart(3,'0');
   }
-  // 他の会議は折りたたむ
-  S.meetings.forEach(m => { m._uiExpanded = false; });
   const today = new Date().toISOString().slice(0,10);
   const newM = {
     id: mid,
@@ -2626,19 +2662,19 @@ function addMeeting(){
     minutes: '',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    createdBy: (_currentUser && _currentUser.name) || '',
-    _uiExpanded: true
+    createdBy: (_currentUser && _currentUser.name) || ''
   };
   S.meetings.unshift(newM);
-  // セクションが閉じていれば開く
+  // セクションが閉じていれば開く + 新規会議を自動選択
   if(!S.ui) S.ui = {};
   S.ui.meetingsExpanded = true;
+  S.ui.selectedMeetingId = mid;
   save(true, `会議メモ追加：${mid}`);
   renderMeetings();
-  // フォーカス：新会議の会議名入力欄
+  // フォーカス：会議名入力欄
   setTimeout(()=>{
-    const inp = document.querySelector(`.meeting-card[data-mid="${mid}"] input[data-mf="name"]`);
-    if(inp){ inp.focus(); }
+    const inp = document.querySelector(`.meeting-editor[data-mid="${mid}"] input[data-mf="name"]`);
+    if(inp){ inp.focus(); inp.select(); }
   }, 100);
   toast(`会議メモ ${mid} を作成しました`);
 }
