@@ -1146,8 +1146,7 @@ header.app-header{padding:10px 22px}
     <div class="cal-wrap"><div class="cal-table" id="calTable"></div></div>
     <aside class="cal-side" id="calSide">
       <h4>デイリータスク <span class="count" id="sideCount">0</span></h4>
-      <button class="btn sm" style="width:100%;margin-bottom:6px" onclick="addTask()">＋ タスク追加</button>
-      <div id="sideTaskPresetWrap" style="margin-bottom:8px"></div>
+      <button class="btn sm" style="width:100%;margin-bottom:8px" onclick="addTask()">＋ タスク追加</button>
       <div class="side-tab">
         <button class="active" data-side="today">本日<span class="tab-badge" data-c="today">0</span></button>
         <button data-side="week" title="カレンダーに表示中の週のタスク">表示週<span class="tab-badge" data-c="week">0</span></button>
@@ -1423,9 +1422,9 @@ header.app-header{padding:10px 22px}
     </div>
     <p class="help" style="font-size:11px;color:#666;margin-top:8px">※ Googleでログインしたメンバーは「メンバー・招待」タブで自動管理。ここの「追加メンバー」はGoogleアカウントを持たないゲスト枠として使えます。</p>
 
-    <h4 style="margin-top:24px;padding-top:18px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">📝 デイリータスクのプリセット</h4>
+    <h4 style="margin-top:24px;padding-top:18px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">📝 タスクのプリセット</h4>
     <div class="help" style="font-size:11.5px;line-height:1.6;margin:6px 0 10px">
-      「よく作るタスクの組み合わせ」を登録できます。1行に1タスクを入力してください。週間カレンダーのデイリータスクサイドバーで、プルダウンから選んで一括作成できます。
+      「プロジェクトでよく作るタスクの組み合わせ」を登録できます。1行に1タスクを入力してください。プロジェクトを展開して「📋 紐づくデイリータスク」セクションのプルダウンから選ぶと、そのプロジェクトに紐づくタスクとして一括作成されます。
     </div>
     <div id="lstTreePresets" class="tree-preset-list"></div>
     <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
@@ -3077,15 +3076,24 @@ function renderTree(g){
   const linked = S.tasks.filter(t=>t.goal===g.id);
   const linkedSection = document.createElement('div');
   linkedSection.style.cssText = 'padding:8px 12px;background:#fff;border-radius:8px;margin-bottom:10px;border:1px solid var(--border)';
+  const availablePresets = (Array.isArray(S.treePresets) ? S.treePresets : [])
+    .filter(p => p && Array.isArray(p.items) && p.items.length > 0);
+  const presetSelectHtml = availablePresets.length > 0
+    ? `<select data-preset-pick title="プリセットから一括でタスクを作成" style="padding:3px 8px;font-size:11px;border:1px solid var(--border);border-radius:5px;background:#fff;font:inherit">
+         <option value="">📚 プリセットから追加…</option>
+         ${availablePresets.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name||'(無名)')}（${p.items.length}件）</option>`).join('')}
+       </select>`
+    : '';
   let html = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-size:12px;font-weight:700;color:var(--primary-dark);gap:6px;flex-wrap:wrap">
     <span>📋 紐づくデイリータスク（${linked.length}件 / 完了 ${linked.filter(t=>t.status==='完了').length}件）</span>
-    <span style="display:inline-flex;gap:6px">
+    <span style="display:inline-flex;gap:6px;flex-wrap:wrap">
+      ${presetSelectHtml}
       <button class="btn sm ghost" data-export-tasks title="このプロジェクトのタスクをExcel(CSV)でダウンロード" style="padding:3px 9px;font-size:11px">📊 Excel出力</button>
       <button class="btn sm ghost" data-add-linked style="padding:3px 9px;font-size:11px">＋ タスク追加</button>
     </span>
   </div>`;
   if(linked.length === 0){
-    html += `<div style="color:var(--muted);font-size:11.5px;font-style:italic;padding:6px">まだタスクがありません。下の「タスク追加」または分解ツリーから作成できます。</div>`;
+    html += `<div style="color:var(--muted);font-size:11.5px;font-style:italic;padding:6px">まだタスクがありません。「＋ タスク追加」またはプリセットから作成できます。</div>`;
   } else {
     // 親→子→孫…と再帰的に DFS で並べる（最大5階層など、任意の深さに対応）
     const taskById = {};
@@ -3251,6 +3259,26 @@ function renderTree(g){
   if(exportBtn) exportBtn.onclick = ()=>{
     exportProjectTasksCSV(g.id);
   };
+  // プリセットからの一括追加（このプロジェクトに紐づけて作成）
+  const presetSel = linkedSection.querySelector('[data-preset-pick]');
+  if(presetSel){
+    presetSel.addEventListener('change', () => {
+      const pid = presetSel.value;
+      if(!pid) return;
+      const p = (S.treePresets||[]).find(x => x.id === pid);
+      if(!p || !Array.isArray(p.items) || p.items.length === 0){
+        toast('このプリセットには項目がありません');
+        presetSel.value = ''; return;
+      }
+      const cur = S.goals.find(x => x.id === g.id);
+      if(!cur){ presetSel.value = ''; return; }
+      if(!confirm(`プロジェクト「${cur.name||cur.id}」にプリセット「${p.name}」の ${p.items.length} 件を追加しますか？`)){
+        presetSel.value = ''; return;
+      }
+      applyTaskPresetToProject(p, cur);
+      presetSel.value = '';
+    });
+  }
   const addLinked = linkedSection.querySelector('[data-add-linked]');
   if(addLinked) addLinked.onclick = ()=>{
     S.seq.task = (S.seq.task||0)+1;
@@ -3719,23 +3747,28 @@ function addTask(){
   toast(`${t.id} を追加しました`);
 }
 
-// プリセットを一括適用：各項目をデイリータスク（D-XXX）として作成
-function applyDailyTaskPreset(preset){
+// プリセットを一括適用：各項目をプロジェクト紐づけタスク（T-XXX）として作成
+function applyTaskPresetToProject(preset, goal){
   if(!preset || !Array.isArray(preset.items) || preset.items.length === 0) return;
+  if(!goal || !goal.id){ toast('プロジェクトが指定されていません'); return; }
   if(!S.seq) S.seq = {};
-  const owner = (_currentUser ? _currentUser.name : S.ui.viewAsMember||'');
+  const owner = goal.owner || (_currentUser ? _currentUser.name : '');
   let created = 0;
   preset.items.forEach(name => {
     if(!name || !String(name).trim()) return;
-    S.seq.dailyTask = (S.seq.dailyTask||0)+1;
+    S.seq.task = (S.seq.task||0)+1;
     const newId = _nextUniqueId('tasks',
-      () => "D-"+String(S.seq.dailyTask).padStart(3,'0'),
-      () => { S.seq.dailyTask++; });
+      () => "T-"+String(S.seq.task).padStart(3,'0'),
+      () => { S.seq.task++; });
     S.tasks.push({
-      id: newId, goal: '', mid: '',
+      id: newId,
+      goal: goal.id,          // ★ プロジェクトに紐づけ
+      mid: '',
       act: String(name).trim(),
       owner,
-      startD: '', due: '', slot: '', pri: '',
+      startD: '',
+      due: goal.due || '',     // 期日はプロジェクトの期限を継承
+      slot: '', pri: '',
       est: 60, weight: '', act_min: '',
       status: '未着手',
       defn: '', interrupt: '',
@@ -3746,9 +3779,9 @@ function applyDailyTaskPreset(preset){
     created++;
   });
   if(created === 0){ toast('追加できるタスクがありませんでした'); return; }
-  save(true, `プリセット適用：${preset.name}（${created}件）`);
+  save(true, `プリセット適用：${preset.name} → ${goal.id}（${created}件）`);
   renderAll();
-  toast(`✅ ${created}件のタスクを作成しました`);
+  toast(`✅ ${goal.id} に ${created}件のタスクを作成しました`);
 }
 
 // 既存タスクの「子タスク」を作成し、編集モーダルを開く
@@ -4113,7 +4146,7 @@ function renderTreePresetsList(){
         <input type="text" class="preset-name" data-pf="name" value="${escapeHtml(p.name||'')}" placeholder="プリセット名">
         <span class="preset-count">${(p.items||[]).length}項目</span>
       </div>
-      <textarea class="preset-items" data-pf="items" placeholder="1行に1タスク（例：&#10;朝礼&#10;メールチェック&#10;週次レポート提出）">${escapeHtml(itemsText)}</textarea>
+      <textarea class="preset-items" data-pf="items" placeholder="1行に1タスク（例：&#10;キックオフ会議の準備&#10;議事録テンプレ作成&#10;参加者リスト確定）">${escapeHtml(itemsText)}</textarea>
       <div class="preset-actions">
         <button class="btn sm ghost" data-act="dup">📋 複製</button>
         <button class="btn sm ghost" data-act="del" style="color:#c0392b">✕ 削除</button>
@@ -4979,36 +5012,6 @@ function renderSideTasks(){
   document.querySelectorAll('.side-tab button').forEach(b=>{
     b.classList.toggle('active', b.dataset.side===tab);
   });
-  // === デイリータスクプリセットのプルダウン（プリセットが1件以上ある場合のみ表示）===
-  const presetWrap = document.getElementById('sideTaskPresetWrap');
-  if(presetWrap){
-    const presets = (Array.isArray(S.treePresets) ? S.treePresets : []).filter(p => p && Array.isArray(p.items) && p.items.length > 0);
-    if(presets.length === 0){
-      presetWrap.innerHTML = '';
-    } else {
-      presetWrap.innerHTML = `
-        <select id="sideTaskPresetSel" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:11.5px;background:#fff" title="プリセットから一括でタスクを作成">
-          <option value="">📚 プリセットから一括追加…</option>
-          ${presets.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name||'(無名)')}（${p.items.length}件）</option>`).join('')}
-        </select>
-      `;
-      const sel = presetWrap.querySelector('#sideTaskPresetSel');
-      sel.addEventListener('change', () => {
-        const pid = sel.value;
-        if(!pid){ return; }
-        const p = (S.treePresets||[]).find(x => x.id === pid);
-        if(!p || !Array.isArray(p.items) || p.items.length === 0){
-          toast('このプリセットには項目がありません');
-          sel.value = ''; return;
-        }
-        if(!confirm(`プリセット「${p.name}」の ${p.items.length} 件をデイリータスクとして追加しますか？`)){
-          sel.value = ''; return;
-        }
-        applyDailyTaskPreset(p);
-        sel.value = '';
-      });
-    }
-  }
   // ===== タブ別タスク数バッジ更新（担当者・ステータス・検索・完了非表示フィルタ連動）=====
   {
     const hideDoneCb = (document.getElementById('hideDone')||{}).checked;
