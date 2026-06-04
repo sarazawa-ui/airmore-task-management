@@ -6092,6 +6092,9 @@ function _resetWorkspaceLocalCaches(){
   S.history = [];
   S.board = {html:'', updatedAt:0, updatedBy:''};
   S.kpt = {keep:'', problem:'', try:'', goalComments:{}};
+  // ★ タスクプリセットも WS 毎の保存領域なのでリセット
+  //   （新 WS の main doc snapshot で正しい値が入る／無ければ空のまま）
+  S.treePresets = [];
   // サブコレクション同期用キャッシュもクリア
   if(typeof _lastSyncedTasks !== 'undefined') _lastSyncedTasks.clear();
   if(typeof _lastSyncedGoals !== 'undefined') _lastSyncedGoals.clear();
