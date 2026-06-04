@@ -2721,8 +2721,8 @@ function showMeetingCtxMenu(x, y, text){
   const snippet = text.length > 60 ? text.slice(0, 57) + '...' : text;
   menu.innerHTML = `
     <div class="ctx-hint">選択：「${escapeHtml(snippet)}」</div>
-    <button data-action="task-now">📝 タスクとして追加（即作成）</button>
-    <button data-action="task-edit">📝 タスクとして追加（編集モーダルを開く）</button>
+    <button data-action="project">🎯 プロジェクトとして追加</button>
+    <button data-action="task">📝 タスクとして追加</button>
   `;
   // 画面端で切れないよう調整
   menu.style.visibility = 'hidden';
@@ -2735,14 +2735,14 @@ function showMeetingCtxMenu(x, y, text){
   menu.style.left = px + 'px';
   menu.style.top = py + 'px';
   menu.style.visibility = '';
-  menu.querySelector('[data-action="task-now"]').onclick = (e) => {
+  menu.querySelector('[data-action="project"]').onclick = (e) => {
     e.stopPropagation();
-    createTaskFromMeetingText(text, false);
+    createProjectFromMeetingText(text);
     menu.remove();
   };
-  menu.querySelector('[data-action="task-edit"]').onclick = (e) => {
+  menu.querySelector('[data-action="task"]').onclick = (e) => {
     e.stopPropagation();
-    createTaskFromMeetingText(text, true);
+    createTaskFromMeetingText(text);
     menu.remove();
   };
   // 外部クリックで閉じる
@@ -2751,7 +2751,9 @@ function showMeetingCtxMenu(x, y, text){
     document.addEventListener('click', close, true);
   }, 10);
 }
-function createTaskFromMeetingText(text, openModal){
+
+// 選択テキストからタスクを作成（編集モーダルを開く・キャンセル時は削除）
+function createTaskFromMeetingText(text){
   if(!text || !text.trim()) return;
   if(!S.seq) S.seq = {};
   S.seq.dailyTask = (S.seq.dailyTask||0)+1;
@@ -2778,11 +2780,61 @@ function createTaskFromMeetingText(text, openModal){
   S.tasks.push(t);
   save(true, `タスク追加（会議メモから）：${newId}`);
   renderAll();
-  if(openModal){
-    try{ openTaskEditModal(newId); }catch(e){}
-  } else {
-    toast(`タスク ${newId} を作成しました`);
+  // 編集モーダルを開く（キャンセル時は削除される）
+  try{ openTaskEditModal(newId, {isNew: true}); }catch(e){ console.warn(e); }
+}
+
+// 選択テキストからプロジェクトを作成
+function createProjectFromMeetingText(text){
+  if(!text || !text.trim()) return;
+  if(!S.seq) S.seq = {};
+  if(!Array.isArray(S.goals)) S.goals = [];
+  S.seq.goal = (S.seq.goal||0)+1;
+  let newId = "G-"+String(S.seq.goal).padStart(3,'0');
+  const existing = new Set((S.goals||[]).map(g => g && g.id).filter(Boolean));
+  const tombs = _tombstoneSetFor('goals');
+  let bumps = 0;
+  while((existing.has(newId) || tombs.has(newId)) && bumps++ < 1000){
+    S.seq.goal++;
+    newId = "G-"+String(S.seq.goal).padStart(3,'0');
   }
+  if(bumps > 0) logSync('seq.bumped', {kind:'goals', finalId: newId, bumps});
+  const name = text.trim().slice(0, 200); // プロジェクト名上限
+  // 他のプロジェクトを折りたたみ、新規だけ展開する
+  S.goals.forEach(x => { if(x) x.expanded = false; });
+  const newGoal = {
+    id: newId,
+    name,
+    area: '',
+    owner: (_currentUser ? _currentUser.name : ''),
+    members: _currentUser ? [_currentUser.name] : [],
+    start: '',
+    due: '',
+    progress: 0,
+    progressManual: null,
+    status: '未着手',
+    defn: '',
+    breakdown: [],
+    expanded: true  // 追加直後は展開して詳細を入力しやすく
+  };
+  S.goals.push(newGoal);
+  save(true, `プロジェクト追加（会議メモから）：${newId}`);
+  renderAll();
+  // プロジェクトタブに切替えてスクロール
+  try{
+    goToView('goals');
+    setTimeout(() => {
+      const row = document.querySelector(`#tblGoals tbody tr input[data-f="id"][value="${CSS.escape(newId)}"]`);
+      const tr = row && row.closest('tr');
+      if(tr){
+        tr.scrollIntoView({behavior:'smooth', block:'center'});
+        tr.style.transition = 'background-color .8s';
+        tr.style.backgroundColor = '#FFF8DC';
+        setTimeout(()=>{ tr.style.backgroundColor = ''; }, 1400);
+      }
+    }, 150);
+  }catch(e){ console.warn(e); }
+  toast(`プロジェクト ${newId} を作成しました`);
 }
 
 function toggleMeetingsSection(){
