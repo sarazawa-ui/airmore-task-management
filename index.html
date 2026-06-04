@@ -5648,13 +5648,30 @@ async function sendReminderEmail(t){
   }
 }
 
-// 1分ごとにチェック：本日のタスクで開始時刻の10〜11分前ならリマインド送信
+// ★ 1分ごとにチェック：本日のタスクで開始時刻の10〜11分前ならリマインド送信
+//   timer の遅延 / バックグラウンド再開で範囲を逸脱するのを防ぐため 8〜12分に拡張。
+//   _reminded10 で重複送信を防止。
 async function checkUpcomingReminders(){
-  if(!S.ui.notifyReminder) return;
-  if(!_currentUser?.accessToken) return;
   const today = todayStr();
   const now = new Date();
   const nowMin = now.getHours()*60 + now.getMinutes();
+  // 設定無効ならスキップ（ログだけ残す）
+  if(!S.ui.notifyReminder){
+    if(!checkUpcomingReminders._loggedOff){
+      logSync('reminder.disabled', {reason: 'S.ui.notifyReminder is false'});
+      checkUpcomingReminders._loggedOff = true;
+    }
+    return;
+  }
+  if(!_currentUser?.accessToken){
+    if(!checkUpcomingReminders._loggedNoToken){
+      logSync('reminder.skip', {reason: 'no Google access token (Gmail送信不可)'});
+      checkUpcomingReminders._loggedNoToken = true;
+    }
+    return;
+  }
+  // 対象タスクの抽出
+  const candidates = [];
   for(const t of S.tasks){
     if(t.status === '完了' || t.status === '中止') continue;
     if(t.startD !== today) continue;
@@ -5664,21 +5681,76 @@ async function checkUpcomingReminders(){
     if(!m) continue;
     const taskMin = Number(m[1])*60 + Number(m[2]);
     const diff = taskMin - nowMin;
-    // 10〜11分前 (誤差吸収のため 9〜11 をカバー)
-    if(diff >= 9 && diff <= 11){
+    candidates.push({t, diff});
+    // 8〜12分前を「リマインド窓」とする（旧 9〜11 から拡張）
+    if(diff >= 8 && diff <= 12){
       const key = `${today}_${t.id}`;
-      if(t._reminded10 === key) continue; // すでに送信済
+      if(t._reminded10 === key){
+        logSync('reminder.skip', {reason: 'already sent', tid: t.id});
+        continue;
+      }
+      logSync('reminder.sending', {tid: t.id, time: t.time, owner: t.owner, diff});
       const ok = await sendReminderEmail(t);
       if(ok){
         t._reminded10 = key;
         _origSave();
+        logSync('reminder.sent', {tid: t.id, owner: t.owner});
+      } else {
+        logSync('reminder.failed', {tid: t.id, owner: t.owner});
       }
     }
   }
+  // 直近 30分内に開始する未送信タスクがあれば、なぜ送られなかったかをログ
+  candidates.filter(c => c.diff > 12 && c.diff <= 30).forEach(c => {
+    if(!checkUpcomingReminders._upcomingLogged) checkUpcomingReminders._upcomingLogged = new Set();
+    const ck = `${today}_${c.t.id}`;
+    if(!checkUpcomingReminders._upcomingLogged.has(ck)){
+      checkUpcomingReminders._upcomingLogged.add(ck);
+      logSync('reminder.upcoming', {tid: c.t.id, time: c.t.time, owner: c.t.owner, minUntil: c.diff});
+    }
+  });
 }
-// 起動時 + 60秒ごと
-setInterval(checkUpcomingReminders, 60*1000);
-setTimeout(checkUpcomingReminders, 5000);
+// ★ 起動時 + 30秒ごと（誤差吸収のため間隔を 60→30 秒に短縮）
+setInterval(checkUpcomingReminders, 30*1000);
+setTimeout(checkUpcomingReminders, 3000);
+
+// ★ 手動診断：window._hittatsuReminderCheck() で現状を確認できる
+window._hittatsuReminderCheck = function(){
+  const out = {
+    notifyReminder設定: S.ui.notifyReminder ? 'ON ✓' : 'OFF ✗（⚙設定→通知でONにしてください）',
+    Googleアクセストークン: _currentUser?.accessToken ? 'あり ✓' : 'なし ✗（Googleで再ログインしてください）',
+    現在ユーザー: _currentUser?.email || '(未ログイン)',
+    現在時刻: new Date().toLocaleTimeString('ja-JP'),
+    本日のタスク一覧: []
+  };
+  const today = todayStr();
+  const now = new Date();
+  const nowMin = now.getHours()*60 + now.getMinutes();
+  S.tasks.forEach(t => {
+    if(t.startD !== today) return;
+    if(t.status === '完了' || t.status === '中止') return;
+    const m = t.time && t.time.match(/^(\d{1,2}):(\d{2})/);
+    const taskMin = m ? Number(m[1])*60 + Number(m[2]) : null;
+    const diff = taskMin != null ? taskMin - nowMin : null;
+    const owner = (S.authMembers||[]).find(am => am.name === t.owner);
+    out.本日のタスク一覧.push({
+      ID: t.id,
+      タスク: (t.act||t.mid||'').slice(0, 30),
+      時刻: t.time || '(未設定)',
+      担当者: t.owner || '(未設定)',
+      担当者メール: owner?.email || '(authMembers に未登録)',
+      'あと(分)': diff,
+      'リマインド対象?': (t.time && t.owner && owner?.email && diff != null && diff >= 8 && diff <= 12) ? 'YES' : 'NO',
+      '送信済?': t._reminded10 === `${today}_${t.id}` ? 'YES' : 'NO'
+    });
+  });
+  console.table(out.本日のタスク一覧);
+  console.log('設定確認:', out.notifyReminder設定);
+  console.log('トークン:', out.Googleアクセストークン);
+  console.log('現在ユーザー:', out.現在ユーザー);
+  console.log('現在時刻:', out.現在時刻);
+  return out;
+};
 
 // ===== Header clock (Tokyo / JST) =====
 function updateHeaderClock(){
