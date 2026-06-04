@@ -125,7 +125,7 @@ tr.done td input,tr.done td select,tr.done td textarea{color:#B2BABB;text-decora
 .kpt-box{background:#fff;border:1px solid var(--border);border-radius:6px;overflow:hidden}
 .kpt-box h4{margin:0;padding:8px 12px;background:var(--section);color:var(--header);font-size:13px}
 .kpt-box textarea{width:100%;border:none;padding:10px;min-height:160px;font:inherit;resize:vertical;outline:none;background:var(--input)}
-.master-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.master-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 /* Tree preset list */
 .tree-preset-list{display:flex;flex-direction:column;gap:8px}
 .tree-preset-card{border:1px solid var(--border);border-radius:7px;padding:8px 10px;background:#fff}
@@ -699,9 +699,14 @@ header.app-header{padding:10px 22px}
 .settings-nav .divider{height:1px;background:var(--border);margin:8px 6px}
 .settings-nav .label{font-size:10.5px;color:var(--muted);padding:8px 14px 4px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
 .settings-content{padding:20px 24px}
-.settings-pane{display:none}
+.settings-pane{display:none;min-width:0}
 .settings-pane.active{display:block}
 .settings-pane h3{font-size:15px;color:var(--text);margin:0 0 12px;font-weight:700}
+/* pane-master の内部要素が幅を超えないように */
+#pane-master{min-width:0;overflow-x:hidden;box-sizing:border-box}
+#pane-master *{box-sizing:border-box;max-width:100%}
+#pane-master ul{overflow:hidden}
+#pane-master input,#pane-master select,#pane-master textarea{max-width:100%;box-sizing:border-box}
 .profile-form{background:#fff;padding:0;max-width:560px}
 .profile-form .field{margin-bottom:16px}
 .profile-form label{display:block;font-weight:600;font-size:12px;color:var(--text-soft);margin-bottom:6px}
@@ -1259,7 +1264,6 @@ header.app-header{padding:10px 22px}
       <button class="active" data-pane="workspace">🏢 ワークスペース情報</button>
       <button data-pane="master">📋 マスタ管理</button>
       <button data-pane="firebase">☁️ クラウド同期</button>
-      <button data-pane="history">📜 編集履歴</button>
       <button data-pane="data">💾 データ管理</button>
       <div class="divider"></div>
       <div class="label">プロフィール</div>
@@ -1399,7 +1403,7 @@ header.app-header{padding:10px 22px}
 
   <!-- Master pane -->
   <div class="settings-pane" id="pane-master">
-    <div class="master-grid" style="grid-template-columns:repeat(3,1fr)">
+    <div class="master-grid">
       <div class="master-col">
         <h4>ステータス</h4>
         <ul id="lstStatuses"></ul>
@@ -1410,19 +1414,9 @@ header.app-header{padding:10px 22px}
         <ul id="lstAreas"></ul>
         <div class="add"><input type="text" id="newArea" placeholder="領域名"><button class="btn sm" onclick="addArea()">追加</button></div>
       </div>
-      <div class="master-col">
-        <h4>追加メンバー（ゲスト）</h4>
-        <ul id="lstMembers"></ul>
-        <div class="add">
-          <input type="text" id="newMemberName" placeholder="氏名">
-          <input type="text" id="newMemberDept" placeholder="部門" style="max-width:80px">
-          <button class="btn sm" onclick="addMember()">追加</button>
-        </div>
-      </div>
     </div>
-    <p class="help" style="font-size:11px;color:#666;margin-top:8px">※ Googleでログインしたメンバーは「メンバー・招待」タブで自動管理。ここの「追加メンバー」はGoogleアカウントを持たないゲスト枠として使えます。</p>
 
-    <h4 style="margin-top:24px;padding-top:18px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">📝 タスクのプリセット</h4>
+    <h4 style="margin-top:22px;padding-top:16px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">📝 タスクのプリセット</h4>
     <div class="help" style="font-size:11.5px;line-height:1.6;margin:6px 0 10px">
       「プロジェクトでよく作るタスクの組み合わせ」を登録できます。1行に1タスクを入力してください。プロジェクトを展開して「📋 紐づくデイリータスク」セクションのプルダウンから選ぶと、そのプロジェクトに紐づくタスクとして一括作成されます。
     </div>
@@ -1430,6 +1424,16 @@ header.app-header{padding:10px 22px}
     <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
       <input type="text" id="newPresetName" placeholder="プリセット名（例：標準キックオフ）" style="flex:1;min-width:160px;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font:inherit">
       <button class="btn sm" onclick="addTreePreset()">＋ プリセット追加</button>
+    </div>
+
+    <h4 style="margin-top:22px;padding-top:16px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">📋 会議メモのアジェンダプリセット</h4>
+    <div class="help" style="font-size:11.5px;line-height:1.6;margin:6px 0 10px">
+      会議メモの「アジェンダ・ホワイトボード」によく使うテンプレートを登録できます。会議メモ編集画面のプルダウンから選んで挿入できます（既存内容の前に追加）。リッチテキスト（太字・色など）も保持されます。
+    </div>
+    <div id="lstAgendaPresets" class="tree-preset-list"></div>
+    <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
+      <input type="text" id="newAgendaPresetName" placeholder="プリセット名（例：定例ミーティング）" style="flex:1;min-width:160px;padding:6px 8px;border:1px solid var(--border);border-radius:5px;font:inherit">
+      <button class="btn sm" onclick="addAgendaPreset()">＋ プリセット追加</button>
     </div>
   </div>
 
@@ -1487,24 +1491,11 @@ service cloud.firestore {
     </div>
   </div>
 
-  <!-- History pane -->
-  <div class="settings-pane" id="pane-history">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <h3 style="font-size:14px;color:var(--header);margin:0;flex:1">編集履歴（直近500件）</h3>
-      <button class="btn sm ghost" onclick="renderHistory()">🔄 更新</button>
-      <button class="btn sm ghost danger" onclick="clearHistory()">履歴をクリア</button>
-    </div>
-    <table class="history-table" id="historyTable">
-      <thead><tr><th style="width:160px">日時</th><th style="width:160px">ユーザー</th><th>操作</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-
   <!-- Data pane -->
   <div class="settings-pane" id="pane-data">
     <h3>💾 データ管理</h3>
     <div class="profile-form">
-      <p class="help">全データ（タスク・プロジェクト・予定・プロファイル・編集履歴）をJSONで書き出し／読み込みできます。</p>
+      <p class="help">全データ（タスク・プロジェクト・予定・プロファイル）をJSONで書き出し／読み込みできます。</p>
       <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
         <button class="btn" onclick="exportData()">💾 エクスポート（JSON）</button>
         <button class="btn ghost" onclick="document.getElementById('importFile').click()">📂 インポート（JSON）</button>
@@ -2611,6 +2602,13 @@ function renderMeetings(){
             <span class="sep"></span>
             <button type="button" data-rt="insertUnorderedList" title="箇条書き">• 一覧</button>
             <button type="button" data-rt="insertOrderedList" title="番号付き">1. 番号</button>
+            ${(Array.isArray(S.agendaPresets) && S.agendaPresets.length>0) ? `
+              <span class="sep"></span>
+              <select data-agenda-preset title="プリセットを挿入（既存内容の前に追加）" style="font-size:12px">
+                <option value="">📚 プリセット挿入…</option>
+                ${S.agendaPresets.map(ap => `<option value="${escapeHtml(ap.id)}">${escapeHtml(ap.name||'(無名)')}</option>`).join('')}
+              </select>
+            ` : ''}
           </div>
           <div class="rt-editor" contenteditable="true" data-mf="agenda" data-placeholder="議題・議論中のメモ・気付き・参考情報など、会議中に自由に書き込んでください">${selected.agenda||''}</div>
         </div>
@@ -2685,6 +2683,34 @@ function renderMeetings(){
       sizeSel.addEventListener('change', () => {
         editorDiv.focus();
         document.execCommand('fontSize', false, sizeSel.value);
+      });
+    }
+    // アジェンダプリセット挿入：既存内容の前に追加
+    const presetSel = toolbar.querySelector('select[data-agenda-preset]');
+    if(presetSel){
+      presetSel.addEventListener('change', () => {
+        const pid = presetSel.value;
+        if(!pid){ return; }
+        const preset = (S.agendaPresets||[]).find(p => p.id === pid);
+        if(!preset){ presetSel.value = ''; return; }
+        const existing = editorDiv.innerHTML.trim();
+        // プリセット内容を前に挿入。既存と区切りを入れる
+        const sep = existing ? '<br><hr><br>' : '';
+        editorDiv.innerHTML = (preset.content||'') + sep + existing;
+        editorDiv.focus();
+        // blur 相当の保存処理を手動でトリガー
+        const editor = editorDiv.closest('.meeting-editor');
+        if(editor){
+          const mid = editor.dataset.mid;
+          const m = (S.meetings||[]).find(x => x.id === mid);
+          if(m){
+            m[editorDiv.dataset.mf] = editorDiv.innerHTML;
+            m.updatedAt = new Date().toISOString();
+            save(true, `会議メモにプリセット挿入：${preset.name}`);
+            toast(`プリセット「${preset.name}」を挿入しました`);
+          }
+        }
+        presetSel.value = '';
       });
     }
   });
@@ -4172,6 +4198,7 @@ function renderMaster(){
   renderSimpleList('lstStatuses', S.statuses, v=>{S.statuses=v;save();renderAll();});
   renderSimpleList('lstAreas', S.areas, v=>{S.areas=v;save();renderAll();});
   renderTreePresetsList();
+  renderAgendaPresetsList();
 }
 
 // ===== デイリータスクのプリセット マスタ =====
@@ -4248,6 +4275,75 @@ function addTreePreset(){
   save(true, `プリセット追加：${name}`);
   renderTreePresetsList();
   renderSideTasks();
+}
+
+// ===== 会議メモのアジェンダプリセット マスタ =====
+function renderAgendaPresetsList(){
+  const host = document.getElementById('lstAgendaPresets');
+  if(!host) return;
+  host.innerHTML = '';
+  if(!Array.isArray(S.agendaPresets)) S.agendaPresets = [];
+  if(S.agendaPresets.length === 0){
+    host.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:11.5px;background:#FAFBFC;border:1px dashed var(--border);border-radius:6px;text-align:center">アジェンダプリセットがまだ登録されていません。下の入力欄から追加してください。</div>';
+    return;
+  }
+  S.agendaPresets.forEach(p => {
+    if(!p.id) p.id = _genPresetId();
+    const card = document.createElement('div');
+    card.className = 'tree-preset-card';
+    card.innerHTML = `
+      <div class="row1">
+        <input type="text" class="preset-name" data-pf="name" value="${escapeHtml(p.name||'')}" placeholder="プリセット名">
+      </div>
+      <textarea class="preset-items" data-pf="content" rows="6" placeholder="アジェンダのテンプレート（HTML可。リッチテキスト編集は会議メモ側で）">${escapeHtml(p.content||'')}</textarea>
+      <div class="preset-actions">
+        <button class="btn sm ghost" data-act="dup">📋 複製</button>
+        <button class="btn sm ghost" data-act="del" style="color:#c0392b">✕ 削除</button>
+      </div>`;
+    const presetId = p.id;
+    const getCur = ()=> S.agendaPresets.find(x=>x.id===presetId) || p;
+    card.querySelector('[data-pf="name"]').addEventListener('change', e=>{
+      const cur = getCur();
+      cur.name = e.target.value.trim();
+      save(true, `アジェンダプリセット名を更新：${cur.name}`);
+      renderMeetings(); // 会議側のプルダウンも更新
+    });
+    card.querySelector('[data-pf="content"]').addEventListener('change', e=>{
+      const cur = getCur();
+      cur.content = e.target.value;
+      save(true, `アジェンダプリセット「${cur.name}」の内容を更新`);
+    });
+    card.querySelector('[data-act="dup"]').onclick = ()=>{
+      const cur = getCur();
+      const copy = JSON.parse(JSON.stringify(cur));
+      copy.id = _genPresetId();
+      copy.name = (cur.name||'') + ' (コピー)';
+      S.agendaPresets.push(copy);
+      save(true, `アジェンダプリセット複製：${copy.name}`);
+      renderAgendaPresetsList();
+      renderMeetings();
+    };
+    card.querySelector('[data-act="del"]').onclick = ()=>{
+      if(!confirm(`アジェンダプリセット「${p.name||'(無名)'}」を削除しますか？`)) return;
+      const i = S.agendaPresets.findIndex(x=>x.id===presetId);
+      if(i>=0) S.agendaPresets.splice(i,1);
+      save(true, `アジェンダプリセット削除：${p.name||''}`);
+      renderAgendaPresetsList();
+      renderMeetings();
+    };
+    host.appendChild(card);
+  });
+}
+function addAgendaPreset(){
+  const nameEl = document.getElementById('newAgendaPresetName');
+  const name = (nameEl?.value || '').trim();
+  if(!name){ alert('プリセット名を入力してください'); nameEl?.focus(); return; }
+  if(!Array.isArray(S.agendaPresets)) S.agendaPresets = [];
+  S.agendaPresets.push({ id:_genPresetId(), name, content: '' });
+  if(nameEl) nameEl.value = '';
+  save(true, `アジェンダプリセット追加：${name}`);
+  renderAgendaPresetsList();
+  renderMeetings();
 }
 function addArea(){ const v=document.getElementById('newArea').value.trim(); if(v){S.areas.push(v);document.getElementById('newArea').value="";save();renderAll();}}
 function renderSimpleList(id, arr, setter){
@@ -6216,9 +6312,10 @@ function _resetWorkspaceLocalCaches(){
   S.history = [];
   S.board = {html:'', updatedAt:0, updatedBy:''};
   S.kpt = {keep:'', problem:'', try:'', goalComments:{}};
-  // ★ タスクプリセットも WS 毎の保存領域なのでリセット
+  // ★ タスクプリセット / 会議アジェンダプリセットも WS 毎の保存領域なのでリセット
   //   （新 WS の main doc snapshot で正しい値が入る／無ければ空のまま）
   S.treePresets = [];
+  S.agendaPresets = [];
   // サブコレクション同期用キャッシュもクリア
   if(typeof _lastSyncedTasks !== 'undefined') _lastSyncedTasks.clear();
   if(typeof _lastSyncedGoals !== 'undefined') _lastSyncedGoals.clear();
@@ -6439,7 +6536,7 @@ function serializeWorkspace(){
   // 'profile'（会社名・ロゴ・メモ）はユーザー共通のためローカルにのみ保持
   // ★ v3: weeklyReports / history / board / kpt はサブコレクション or 専用 doc に分離 → main doc から除外
   //    （これらを main doc に詰めると 1 MiB 限界に到達して failed-precondition で全 write 失敗していた）
-  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','seq','ui','userPrefs','treePresets','_tombstones'];
+  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','seq','ui','userPrefs','treePresets','agendaPresets','_tombstones'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
   // goals.expanded はUI状態（個人別）のため同期から除外
@@ -9396,6 +9493,7 @@ function ensureDefaults(){
   if(!S.history) S.history = [];
   if(!S.userPrefs) S.userPrefs = {};
   if(!Array.isArray(S.treePresets)) S.treePresets = [];
+  if(!Array.isArray(S.agendaPresets)) S.agendaPresets = [];
   if(!Array.isArray(S._tombstones)) S._tombstones = [];
   if(!S.board || typeof S.board !== 'object') S.board = { html:'', updatedAt:0, updatedBy:'' };
   // 重要：tasks / goals が配列でない場合のフォールバック（undefined 由来のクラッシュ防止）
