@@ -1146,7 +1146,8 @@ header.app-header{padding:10px 22px}
     <div class="cal-wrap"><div class="cal-table" id="calTable"></div></div>
     <aside class="cal-side" id="calSide">
       <h4>デイリータスク <span class="count" id="sideCount">0</span></h4>
-      <button class="btn sm" style="width:100%;margin-bottom:8px" onclick="addTask()">＋ タスク追加</button>
+      <button class="btn sm" style="width:100%;margin-bottom:6px" onclick="addTask()">＋ タスク追加</button>
+      <div id="sideTaskPresetWrap" style="margin-bottom:8px"></div>
       <div class="side-tab">
         <button class="active" data-side="today">本日<span class="tab-badge" data-c="today">0</span></button>
         <button data-side="week" title="カレンダーに表示中の週のタスク">表示週<span class="tab-badge" data-c="week">0</span></button>
@@ -1422,9 +1423,9 @@ header.app-header{padding:10px 22px}
     </div>
     <p class="help" style="font-size:11px;color:#666;margin-top:8px">※ Googleでログインしたメンバーは「メンバー・招待」タブで自動管理。ここの「追加メンバー」はGoogleアカウントを持たないゲスト枠として使えます。</p>
 
-    <h4 style="margin-top:24px;padding-top:18px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">🌳 分解ツリーのプリセット</h4>
+    <h4 style="margin-top:24px;padding-top:18px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">📝 デイリータスクのプリセット</h4>
     <div class="help" style="font-size:11.5px;line-height:1.6;margin:6px 0 10px">
-      プロジェクトの分解ツリーで「よく使う項目の組み合わせ」を登録できます。1行に1項目を入力してください。プロジェクトタブで分解ツリーを展開した際、プルダウンから選んで一括追加できます。
+      「よく作るタスクの組み合わせ」を登録できます。1行に1タスクを入力してください。週間カレンダーのデイリータスクサイドバーで、プルダウンから選んで一括作成できます。
     </div>
     <div id="lstTreePresets" class="tree-preset-list"></div>
     <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
@@ -2530,14 +2531,16 @@ function renderGoals(){
 }
 
 // ============ 会議メモ（プルダウン選択方式） ============
+// 開閉状態はセッション中だけ保持（毎回ページ読込時はデフォルト閉じる）
+let _meetingsExpandedSession = false;
 function renderMeetings(){
   const list = document.getElementById('meetingsList');
   const countEl = document.getElementById('meetingsCount');
   const header = document.getElementById('meetingsHeader');
   if(!list || !header) return;
   if(!Array.isArray(S.meetings)) S.meetings = [];
-  // 折りたたみ状態の復元
-  const expanded = !!(S.ui && S.ui.meetingsExpanded);
+  // 開閉状態はセッション変数のみ（永続化しない）
+  const expanded = _meetingsExpandedSession;
   header.classList.toggle('expanded', expanded);
   header.querySelector('.m-toggle').textContent = expanded ? '▼' : '▶';
   // 件数表示
@@ -2784,12 +2787,8 @@ function createTaskFromMeetingText(text, openModal){
 }
 
 function toggleMeetingsSection(){
-  const header = document.getElementById('meetingsHeader');
-  if(!header) return;
-  const newState = !header.classList.contains('expanded');
-  if(!S.ui) S.ui = {};
-  S.ui.meetingsExpanded = newState;
-  save();
+  // セッション変数だけ反転（永続化しない＝次回読込時はデフォルト閉じる）
+  _meetingsExpandedSession = !_meetingsExpandedSession;
   renderMeetings();
 }
 
@@ -2819,8 +2818,8 @@ function addMeeting(){
   };
   S.meetings.unshift(newM);
   // セクションが閉じていれば開く + 新規会議を自動選択
+  _meetingsExpandedSession = true;
   if(!S.ui) S.ui = {};
-  S.ui.meetingsExpanded = true;
   S.ui.selectedMeetingId = mid;
   save(true, `会議メモ追加：${mid}`);
   renderMeetings();
@@ -3147,6 +3146,7 @@ function renderTree(g){
         <td class="input"><select data-tf="status" style="border:none;background:transparent;width:100%;font:inherit;outline:none">${statusOptions(t.status)}</select></td>
         <td class="center" style="white-space:nowrap">
           <button data-task-edit="${escapeHtml(t.id)}" title="詳細編集" style="background:none;border:none;color:var(--primary);cursor:pointer;font-size:14px;padding:2px 4px">✏️</button>
+          <button data-task-addchild="${escapeHtml(t.id)}" title="このタスクの子タスクを作成" style="background:none;border:none;color:#2E86C1;cursor:pointer;font-size:14px;padding:2px 4px">➕</button>
           <button data-task-dup="${escapeHtml(t.id)}" title="複製" style="background:none;border:none;color:#16A085;cursor:pointer;font-size:14px;padding:2px 4px">📋</button>
           <button data-task-del="${escapeHtml(t.id)}" title="削除" style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>
         </td>
@@ -3219,6 +3219,13 @@ function renderTree(g){
     btn.addEventListener('click',(e)=>{
       e.stopPropagation();
       openTaskEditModal(btn.dataset.taskEdit);
+    });
+  });
+  // Add child task buttons
+  linkedSection.querySelectorAll('[data-task-addchild]').forEach(btn=>{
+    btn.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      addChildTaskOf(btn.dataset.taskAddchild);
     });
   });
   // Duplicate buttons
@@ -3712,6 +3719,38 @@ function addTask(){
   toast(`${t.id} を追加しました`);
 }
 
+// プリセットを一括適用：各項目をデイリータスク（D-XXX）として作成
+function applyDailyTaskPreset(preset){
+  if(!preset || !Array.isArray(preset.items) || preset.items.length === 0) return;
+  if(!S.seq) S.seq = {};
+  const owner = (_currentUser ? _currentUser.name : S.ui.viewAsMember||'');
+  let created = 0;
+  preset.items.forEach(name => {
+    if(!name || !String(name).trim()) return;
+    S.seq.dailyTask = (S.seq.dailyTask||0)+1;
+    const newId = _nextUniqueId('tasks',
+      () => "D-"+String(S.seq.dailyTask).padStart(3,'0'),
+      () => { S.seq.dailyTask++; });
+    S.tasks.push({
+      id: newId, goal: '', mid: '',
+      act: String(name).trim(),
+      owner,
+      startD: '', due: '', slot: '', pri: '',
+      est: 60, weight: '', act_min: '',
+      status: '未着手',
+      defn: '', interrupt: '',
+      note: `プリセット「${preset.name}」から作成`,
+      time: '',
+      _expanded: false
+    });
+    created++;
+  });
+  if(created === 0){ toast('追加できるタスクがありませんでした'); return; }
+  save(true, `プリセット適用：${preset.name}（${created}件）`);
+  renderAll();
+  toast(`✅ ${created}件のタスクを作成しました`);
+}
+
 // 既存タスクの「子タスク」を作成し、編集モーダルを開く
 function addChildTaskOf(parentTaskId){
   const parent = (S.tasks||[]).find(t => t && t.id === parentTaskId);
@@ -4050,7 +4089,8 @@ function renderMaster(){
   renderTreePresetsList();
 }
 
-// ===== 分解ツリーのプリセット マスタ =====
+// ===== デイリータスクのプリセット マスタ =====
+// （旧「分解ツリーのプリセット」を流用。データキーは互換維持のため treePresets のまま）
 function _genPresetId(){
   return 'P-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,6);
 }
@@ -4073,7 +4113,7 @@ function renderTreePresetsList(){
         <input type="text" class="preset-name" data-pf="name" value="${escapeHtml(p.name||'')}" placeholder="プリセット名">
         <span class="preset-count">${(p.items||[]).length}項目</span>
       </div>
-      <textarea class="preset-items" data-pf="items" placeholder="1行に1項目（例：&#10;キックオフ会議の準備&#10;議事録テンプレ作成&#10;参加者リスト確定）">${escapeHtml(itemsText)}</textarea>
+      <textarea class="preset-items" data-pf="items" placeholder="1行に1タスク（例：&#10;朝礼&#10;メールチェック&#10;週次レポート提出）">${escapeHtml(itemsText)}</textarea>
       <div class="preset-actions">
         <button class="btn sm ghost" data-act="dup">📋 複製</button>
         <button class="btn sm ghost" data-act="del" style="color:#c0392b">✕ 削除</button>
@@ -4108,7 +4148,7 @@ function renderTreePresetsList(){
       if(i>=0) S.treePresets.splice(i,1);
       save(true, `プリセット削除：${p.name||''}`);
       renderTreePresetsList();
-      renderGoals(); // ツリー側のプルダウンも更新
+      renderSideTasks(); // サイドバーのプルダウンも更新
     };
     host.appendChild(card);
   });
@@ -4122,7 +4162,7 @@ function addTreePreset(){
   if(nameEl) nameEl.value = '';
   save(true, `プリセット追加：${name}`);
   renderTreePresetsList();
-  renderGoals();
+  renderSideTasks();
 }
 function addArea(){ const v=document.getElementById('newArea').value.trim(); if(v){S.areas.push(v);document.getElementById('newArea').value="";save();renderAll();}}
 function renderSimpleList(id, arr, setter){
@@ -4939,6 +4979,36 @@ function renderSideTasks(){
   document.querySelectorAll('.side-tab button').forEach(b=>{
     b.classList.toggle('active', b.dataset.side===tab);
   });
+  // === デイリータスクプリセットのプルダウン（プリセットが1件以上ある場合のみ表示）===
+  const presetWrap = document.getElementById('sideTaskPresetWrap');
+  if(presetWrap){
+    const presets = (Array.isArray(S.treePresets) ? S.treePresets : []).filter(p => p && Array.isArray(p.items) && p.items.length > 0);
+    if(presets.length === 0){
+      presetWrap.innerHTML = '';
+    } else {
+      presetWrap.innerHTML = `
+        <select id="sideTaskPresetSel" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:11.5px;background:#fff" title="プリセットから一括でタスクを作成">
+          <option value="">📚 プリセットから一括追加…</option>
+          ${presets.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name||'(無名)')}（${p.items.length}件）</option>`).join('')}
+        </select>
+      `;
+      const sel = presetWrap.querySelector('#sideTaskPresetSel');
+      sel.addEventListener('change', () => {
+        const pid = sel.value;
+        if(!pid){ return; }
+        const p = (S.treePresets||[]).find(x => x.id === pid);
+        if(!p || !Array.isArray(p.items) || p.items.length === 0){
+          toast('このプリセットには項目がありません');
+          sel.value = ''; return;
+        }
+        if(!confirm(`プリセット「${p.name}」の ${p.items.length} 件をデイリータスクとして追加しますか？`)){
+          sel.value = ''; return;
+        }
+        applyDailyTaskPreset(p);
+        sel.value = '';
+      });
+    }
+  }
   // ===== タブ別タスク数バッジ更新（担当者・ステータス・検索・完了非表示フィルタ連動）=====
   {
     const hideDoneCb = (document.getElementById('hideDone')||{}).checked;
@@ -5072,10 +5142,7 @@ function renderSideTasks(){
             <label>ステータス</label><select data-f="status">${statusOptions(t.status)}</select>
             <label>成果物（完了の定義）</label><textarea data-f="defn" rows="2">${escapeHtml(t.defn||'')}</textarea>
             <label>備考</label><textarea data-f="note" rows="2">${escapeHtml(t.note||'')}</textarea>
-            <div class="row" style="margin-top:6px;display:flex;gap:6px;justify-content:space-between;flex-wrap:wrap">
-              <button class="btn sm" data-add-child title="このタスクの子タスクを作成">＋ 子タスク追加</button>
-              <button class="btn sm danger" data-del>このタスクを削除</button>
-            </div>
+            <div class="row" style="margin-top:6px"><button class="btn sm danger" data-del>このタスクを削除</button></div>
           </div>
         </div>
       </div>`;
@@ -5141,15 +5208,6 @@ function renderSideTasks(){
     };
     const gl = el.querySelector('.goal-link');
     if(gl) gl.addEventListener('click',(e)=>{ e.stopPropagation(); goToGoal(gl.dataset.goalid); });
-    // ＋ 子タスク追加：このタスクを親として新規子タスクを作成
-    const addChildBtn = el.querySelector('[data-add-child]');
-    if(addChildBtn){
-      addChildBtn.onclick = (e)=>{
-        e.stopPropagation();
-        const cur = getCurTask(); if(!cur) return;
-        addChildTaskOf(cur.id);
-      };
-    }
     el.querySelector('[data-del]').onclick = (e)=>{
       e.stopPropagation();
       const cur = getCurTask(); if(!cur) return;
