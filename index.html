@@ -6316,6 +6316,15 @@ function _resetWorkspaceLocalCaches(){
   //   （新 WS の main doc snapshot で正しい値が入る／無ければ空のまま）
   S.treePresets = [];
   S.agendaPresets = [];
+  // ★ マスタ系（ステータス/領域/優先度/タイムスロット/メンバー）も WS 毎なので削除
+  //   delete することで、新 WS の main doc snapshot で値が入る／無ければ ensureDefaults が
+  //   DEFAULT_STATE から自動補充（statuses/priorities/slots/areas のみ）。
+  delete S.statuses;
+  delete S.priorities;
+  delete S.slots;
+  delete S.areas;
+  delete S.members;
+  delete S.authMembers;
   // サブコレクション同期用キャッシュもクリア
   if(typeof _lastSyncedTasks !== 'undefined') _lastSyncedTasks.clear();
   if(typeof _lastSyncedGoals !== 'undefined') _lastSyncedGoals.clear();
@@ -8152,13 +8161,13 @@ async function createNewWorkspace(){
   if(!_firebaseReady || !firebase.auth().currentUser){ alert('Firebase未接続です'); return; }
   const name = prompt('新規ワークスペースの名前を入力してください\n（例：営業チーム / プロジェクトX）');
   if(!name || !name.trim()) return;
-  if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
-  if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
-  if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
-  // Start a fresh state for the new workspace
   // 会社情報（profile）と userPrefs はユーザー共通のため保持
   const keepUserPrefs = S.userPrefs;
   const keepProfile = S.profile;
+  // ★ 旧 WS のキャッシュ / マスタ系 / サブコレ系を全てクリア
+  //   （ステータス・領域・優先度・タイムスロット・メンバー・プリセット類などが
+  //    旧 WS の値で残らないようにする）
+  _resetWorkspaceLocalCaches();
   delete S.workspaceId;
   delete S.ownerEmail;
   delete S.memberEmails;
@@ -8168,9 +8177,9 @@ async function createNewWorkspace(){
   S.tasks = [];
   S.members = [{ name: _currentUser.name, dept: 'オーナー' }];
   S.authMembers = [{ email:_currentUser.email, name:_currentUser.name, picture:_currentUser.picture||'', role:'owner', joinedAt:new Date().toISOString() }];
-  S.history = [];
   S.events = [];
   S.userPrefs = keepUserPrefs || {};
+  // ★ ensureDefaults でステータス/領域/優先度/タイムスロットが DEFAULT_STATE の値で自動補充される
   ensureDefaults();
   const ok = await joinOrCreateWorkspace(null); // create
   if(!ok){ refreshWorkspaceSwitcher(); return; }
@@ -9505,6 +9514,7 @@ function ensureDefaults(){
   if(!Array.isArray(S.statuses)) S.statuses = [...(DEFAULT_STATE.statuses||[])];
   if(!Array.isArray(S.priorities)) S.priorities = [...(DEFAULT_STATE.priorities||[])];
   if(!Array.isArray(S.slots)) S.slots = [...(DEFAULT_STATE.slots||[])];
+  if(!Array.isArray(S.areas)) S.areas = [...(DEFAULT_STATE.areas||[])];
   // Tombstones の TTL 越え枝刈り
   {
     const now = Date.now();
