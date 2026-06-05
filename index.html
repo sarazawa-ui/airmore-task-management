@@ -2651,12 +2651,15 @@ function renderMeetings(){
       m.updatedAt = new Date().toISOString();
       save(true, `会議メモ更新：${m.name||m.id}`);
     });
-    // 右クリック：選択テキストがあればタスク化メニュー
+    // 右クリック：選択テキストがあればタスク化／プロジェクト化メニュー
     div.addEventListener('contextmenu', (e) => {
       const sel = window.getSelection();
       const text = sel && sel.toString().trim();
       if(!text) return; // 選択なし → 標準メニューに任せる
       e.preventDefault();
+      // 選択範囲を保存（後で色付けに使用）
+      _meetingCtxSavedRange = sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+      _meetingCtxEditorDiv = div;
       showMeetingCtxMenu(e.clientX, e.clientY, text);
     });
   });
@@ -2738,6 +2741,38 @@ function renderMeetings(){
   });
 }
 
+// 会議メモ右クリックの選択範囲保持 + 色付け
+let _meetingCtxSavedRange = null;
+let _meetingCtxEditorDiv = null;
+function _applyColorToSavedMeetingRange(color, label){
+  if(!_meetingCtxSavedRange || !_meetingCtxEditorDiv) return;
+  try{
+    // 選択範囲を復元
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(_meetingCtxSavedRange);
+    _meetingCtxEditorDiv.focus();
+    // foreColor で色付け
+    document.execCommand('foreColor', false, color);
+    // 編集内容を保存
+    const editor = _meetingCtxEditorDiv.closest('.meeting-editor');
+    if(editor){
+      const mid = editor.dataset.mid;
+      const m = (S.meetings||[]).find(x => x.id === mid);
+      if(m){
+        m[_meetingCtxEditorDiv.dataset.mf] = _meetingCtxEditorDiv.innerHTML;
+        m.updatedAt = new Date().toISOString();
+        save(true, `会議メモ${label||'更新'}：${m.name||m.id}`);
+      }
+    }
+  }catch(e){
+    console.warn('color apply failed:', e);
+  }finally{
+    _meetingCtxSavedRange = null;
+    _meetingCtxEditorDiv = null;
+  }
+}
+
 // 会議メモ右クリックメニュー
 function showMeetingCtxMenu(x, y, text){
   // 既存メニュー削除
@@ -2763,17 +2798,28 @@ function showMeetingCtxMenu(x, y, text){
   menu.style.visibility = '';
   menu.querySelector('[data-action="project"]').onclick = (e) => {
     e.stopPropagation();
+    // 選択範囲を青色に塗ってからプロジェクトを作成
+    _applyColorToSavedMeetingRange('#1976D2', 'プロジェクト化');
     createProjectFromMeetingText(text);
     menu.remove();
   };
   menu.querySelector('[data-action="task"]').onclick = (e) => {
     e.stopPropagation();
+    // 選択範囲を緑色に塗ってからタスクを作成
+    _applyColorToSavedMeetingRange('#2E7D32', 'タスク化');
     createTaskFromMeetingText(text);
     menu.remove();
   };
-  // 外部クリックで閉じる
+  // 外部クリックで閉じる（未選択の場合は range もクリア）
   setTimeout(() => {
-    const close = (e) => { if(!menu.contains(e.target)){ menu.remove(); document.removeEventListener('click', close, true); }};
+    const close = (e) => {
+      if(!menu.contains(e.target)){
+        menu.remove();
+        document.removeEventListener('click', close, true);
+        _meetingCtxSavedRange = null;
+        _meetingCtxEditorDiv = null;
+      }
+    };
     document.addEventListener('click', close, true);
   }, 10);
 }
