@@ -4186,15 +4186,9 @@ if(_rms) _rms.addEventListener('change',e=>{S.ui.reviewMember=e.target.value;sav
 
 // ============ MASTER ============
 function renderMaster(){
-  const ml = document.getElementById('lstMembers'); if(!ml) return;
-  ml.innerHTML="";
-  S.members.forEach((m,i)=>{
-    const li = document.createElement('li');
-    li.innerHTML = `<input value="${escapeHtml(m.name)}" data-f="name"><input value="${escapeHtml(m.dept)}" data-f="dept" style="max-width:90px"><button class="rm">✕</button>`;
-    li.querySelectorAll('input').forEach(inp=>inp.addEventListener('change',()=>{m[inp.dataset.f]=inp.value;save();renderAll();}));
-    li.querySelector('.rm').onclick=()=>{ if(confirm("削除しますか？")){S.members.splice(i,1);save();renderAll();}};
-    ml.appendChild(li);
-  });
+  // 「追加メンバー」UI は廃止済み。マスタ管理ペインが DOM に存在するかで判定
+  const pane = document.getElementById('pane-master');
+  if(!pane) return;
   renderSimpleList('lstStatuses', S.statuses, v=>{S.statuses=v;save();renderAll();});
   renderSimpleList('lstAreas', S.areas, v=>{S.areas=v;save();renderAll();});
   renderTreePresetsList();
