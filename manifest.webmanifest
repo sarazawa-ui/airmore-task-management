@@ -1,0 +1,33 @@
+{
+  "name": "Hittatsu - エアモア タスク管理",
+  "short_name": "Hittatsu",
+  "description": "株式会社エアモアのチーム向けタスク管理アプリ",
+  "id": "/airmore-task-management/",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "lang": "ja",
+  "background_color": "#ffffff",
+  "theme_color": "#1F4E78",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -5,11 +5,20 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Hittatsu</title>
 <link rel="icon" type="image/png" href="favicon.png">
+<!-- ★ PWA メタ -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1F4E78">
+<!-- iOS PWA -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Hittatsu">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
 <style>
 :root{
   --primary:#3498DB;
@@ -1396,6 +1405,23 @@ header.app-header{padding:10px 22px}
         ※ 担当者のGoogleアカウントがメンバー一覧に登録されている必要があります。<br>
         ※ 同じタスクは1日1回までしか送信されません。</div>
       </div>
+
+      <div class="field" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+        <label style="font-weight:700;display:block;margin-bottom:6px">📲 ブラウザ・スマホ プッシュ通知</label>
+        <div id="pushStatusBox" style="padding:9px 12px;background:#f5f8fb;border:1px solid var(--border);border-radius:7px;font-size:12px;margin-bottom:8px">未設定</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn sm" id="pushEnableBtn" onclick="enablePushNotifications().then(updatePushStatusBox)">🔔 通知を有効化</button>
+          <button class="btn sm ghost" id="pushTestBtn" onclick="testPushNotification()">📤 テスト送信</button>
+          <button class="btn sm danger" id="pushDisableBtn" onclick="disablePushNotifications().then(updatePushStatusBox)">無効化</button>
+        </div>
+        <div class="help" style="margin-top:8px">
+        本ブラウザ／端末でプッシュ通知を受け取れるようにします。「有効化」を押すと初回のみ通知許可を求められます。<br>
+        ※ <strong>iPhone Safari の場合</strong>：先に「ホーム画面に追加」してホーム画面のアイコンから開いてください（PWA としてインストールが必須）。<br>
+        ※ メンバーごと・端末ごとに有効化が必要です（複数端末で受信可）。<br>
+        ※ Cloud Functions のセットアップ完了後、リマインドが自動送信されます。
+        </div>
+      </div>
+
       <button class="btn" onclick="saveDisplaySettings()">💾 保存</button>
     </div>
   </div>
@@ -5836,6 +5862,188 @@ async function sendReminderEmail(t){
   }
 }
 
+// ============ PWA Service Worker / FCM プッシュ通知 ============
+// VAPID 公開鍵：Firebase Console → Cloud Messaging → 「ウェブプッシュ証明書」から取得
+// 取得手順は SETUP.md 参照
+const FCM_VAPID_KEY = 'REPLACE_WITH_YOUR_VAPID_PUBLIC_KEY';
+let _swRegistration = null;
+let _fcmMessaging = null;
+let _fcmToken = null;
+function _pushSupported(){
+  return ('serviceWorker' in navigator) && ('Notification' in window) && ('PushManager' in window);
+}
+async function registerServiceWorker(){
+  if(!('serviceWorker' in navigator)) return null;
+  try{
+    const reg = await navigator.serviceWorker.register('./firebase-messaging-sw.js');
+    _swRegistration = reg;
+    console.log('[SW] registered:', reg.scope);
+    return reg;
+  }catch(e){
+    console.warn('[SW] register failed:', e);
+    return null;
+  }
+}
+// Push 通知を有効化（ユーザーが Settings → 通知 → ボタンを押した時）
+async function enablePushNotifications(){
+  if(!_pushSupported()){
+    alert('このブラウザはプッシュ通知に対応していません');
+    return false;
+  }
+  if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser){
+    alert('まず Google ログインしてください');
+    return false;
+  }
+  if(FCM_VAPID_KEY === 'REPLACE_WITH_YOUR_VAPID_PUBLIC_KEY'){
+    alert('VAPID キーが設定されていません。管理者にお問い合わせください。\n\n（Firebase Console → Cloud Messaging → 「ウェブプッシュ証明書」から取得し、コード内 FCM_VAPID_KEY を更新する必要があります）');
+    return false;
+  }
+  try{
+    // 通知許可
+    const perm = await Notification.requestPermission();
+    if(perm !== 'granted'){
+      alert('通知が許可されませんでした。ブラウザの設定から許可してください。');
+      return false;
+    }
+    // SW 登録（未登録なら）
+    if(!_swRegistration){ _swRegistration = await registerServiceWorker(); }
+    if(!_swRegistration){ alert('Service Worker の登録に失敗しました'); return false; }
+    // FCM 初期化
+    if(!_fcmMessaging){ _fcmMessaging = firebase.messaging(); }
+    // トークン取得
+    const token = await _fcmMessaging.getToken({
+      vapidKey: FCM_VAPID_KEY,
+      serviceWorkerRegistration: _swRegistration
+    });
+    if(!token){
+      alert('プッシュトークン取得に失敗しました。再度お試しください。');
+      return false;
+    }
+    _fcmToken = token;
+    // Firestore に保存（workspaces/{wsId}/pushTokens/{email_dev}）
+    await savePushTokenToFirestore(token);
+    // フォアグラウンドでメッセージを受けた時の処理
+    _fcmMessaging.onMessage((payload) => {
+      console.log('[FCM] foreground message:', payload);
+      const notif = payload.notification || {};
+      const data = payload.data || {};
+      try{
+        toast(`⏰ ${notif.title || data.title || 'リマインド'}：${notif.body || data.body || ''}`);
+      }catch(e){}
+      // タブが見えていない時は OS 通知でも表示
+      if(document.hidden && _swRegistration){
+        _swRegistration.showNotification(notif.title || 'Hittatsu', {
+          body: notif.body || '',
+          icon: 'icons/icon-192.png',
+          badge: 'icons/icon-192.png',
+          tag: data.tag || 'hittatsu-reminder',
+          data
+        });
+      }
+    });
+    toast('✅ プッシュ通知を有効化しました');
+    if(!S.ui) S.ui = {};
+    S.ui.pushEnabled = true;
+    save();
+    return true;
+  }catch(e){
+    console.error('Push enable failed:', e);
+    alert('プッシュ通知の有効化に失敗しました：\n' + (e.message || e));
+    return false;
+  }
+}
+async function savePushTokenToFirestore(token){
+  if(!S.workspaceId || !_currentUser) return;
+  const email = _currentUser.email;
+  // 端末を識別するための ID（同じユーザーが複数端末から登録できるよう）
+  const devKey = email.replace(/[^a-z0-9]/gi,'_') + '__' + token.slice(-12);
+  try{
+    await firebase.firestore()
+      .doc(`workspaces/${S.workspaceId}/pushTokens/${devKey}`)
+      .set({
+        email,
+        name: _currentUser.name || '',
+        token,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        userAgent: navigator.userAgent.slice(0, 200),
+        platform: navigator.platform || ''
+      });
+    console.log('[FCM] token saved');
+  }catch(e){
+    console.warn('[FCM] token save failed:', e);
+  }
+}
+async function disablePushNotifications(){
+  try{
+    // ローカルのトークンを Firestore から削除
+    if(_fcmToken && S.workspaceId && _currentUser){
+      const devKey = _currentUser.email.replace(/[^a-z0-9]/gi,'_') + '__' + _fcmToken.slice(-12);
+      await firebase.firestore()
+        .doc(`workspaces/${S.workspaceId}/pushTokens/${devKey}`)
+        .delete();
+    }
+    if(_fcmToken && _fcmMessaging){
+      try{ await _fcmMessaging.deleteToken(); }catch(e){}
+    }
+    _fcmToken = null;
+    if(!S.ui) S.ui = {};
+    S.ui.pushEnabled = false;
+    save();
+    toast('プッシュ通知を無効化しました');
+  }catch(e){ console.warn('disable push failed:', e); }
+}
+// 設定画面の push 状態表示を更新
+function updatePushStatusBox(){
+  const box = document.getElementById('pushStatusBox');
+  if(!box) return;
+  if(!_pushSupported()){
+    box.textContent = '⚠ このブラウザは対応していません';
+    box.style.background = '#fff3cd';
+    return;
+  }
+  const perm = Notification.permission;
+  if(perm === 'denied'){
+    box.textContent = '❌ 通知がブロックされています（ブラウザ設定から許可してください）';
+    box.style.background = '#fdedec';
+    return;
+  }
+  if(perm !== 'granted'){
+    box.textContent = '未設定（「有効化」ボタンを押してください）';
+    box.style.background = '#f5f8fb';
+    return;
+  }
+  if(_fcmToken){
+    box.innerHTML = `✅ 有効：${_currentUser?.email || ''} / token: <code style="font-size:10px">…${_fcmToken.slice(-12)}</code>`;
+    box.style.background = '#e8f5e9';
+  } else {
+    box.textContent = '⚠ 通知許可されているが、トークン未取得（再度「有効化」をお試しください）';
+    box.style.background = '#fff3cd';
+  }
+}
+
+// テスト送信（ローカル通知のみ。FCM 経由のテストは Cloud Functions のテストエンドポイント参照）
+function testPushNotification(){
+  if(!_pushSupported()){ alert('このブラウザは対応していません'); return; }
+  if(Notification.permission !== 'granted'){
+    alert('通知が許可されていません。先に「有効化」してください。');
+    return;
+  }
+  if(_swRegistration){
+    _swRegistration.showNotification('🔔 Hittatsu テスト通知', {
+      body: 'プッシュ通知は正常に動作します。',
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-192.png',
+      tag: 'hittatsu-test'
+    });
+  } else {
+    new Notification('🔔 Hittatsu テスト通知', {
+      body: 'プッシュ通知は正常に動作します。',
+      icon: 'icons/icon-192.png'
+    });
+  }
+}
+
 // ★ 1分ごとにチェック：本日のタスクで開始時刻の10〜11分前ならリマインド送信
 //   timer の遅延 / バックグラウンド再開で範囲を逸脱するのを防ぐため 8〜12分に拡張。
 //   _reminded10 で重複送信を防止。
@@ -6491,6 +6699,8 @@ function initFirebase(){
     }
     _firebaseReady = true;
     updateSyncStatus('offline');
+    // ★ PWA Service Worker 登録（プッシュ通知の受信に必要）
+    try{ registerServiceWorker(); }catch(e){ console.warn('SW registration failed:', e); }
     // signInWithRedirect の戻りを処理（ポップアップ失敗時のフォールバック経由）
     firebase.auth().getRedirectResult().then(result => {
       if(result && result.user){
@@ -8859,6 +9069,7 @@ function openSettingsModal(pane){
   renderMaster();
   renderDisplaySettings();
   renderFirebaseSettings();
+  try{ updatePushStatusBox(); }catch(e){}
 }
 function closeSettingsModal(){
   document.getElementById('settingsModal').classList.remove('show');
