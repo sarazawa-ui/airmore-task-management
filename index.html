@@ -8630,7 +8630,19 @@ async function appLogin(){
       provider.addScope('https://www.googleapis.com/auth/gmail.send');
       // 必ず同意画面を出してスコープを確実に付与
       provider.setCustomParameters({ prompt: 'consent', access_type: 'online', include_granted_scopes: 'true' });
-      console.log('[login] opening Google sign-in popup...');
+      // ★ PWA スタンドアロンモード / モバイル端末では popup が機能しないため redirect に切替
+      //   （ホーム画面アイコンから開いた PWA は別ウィンドウのpopupに結果を返せない）
+      const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+                        || window.navigator.standalone === true;
+      const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
+      if(isStandalone || isMobile){
+        console.log('[login] PWA / mobile detected → using signInWithRedirect');
+        // 注：redirect 完了後は getRedirectResult が initFirebase 内で処理する
+        await firebase.auth().signInWithRedirect(provider);
+        // ここから先は実行されない（ページがリダイレクト）
+        return;
+      }
+      console.log('[login] desktop browser → using signInWithPopup');
       const result = await firebase.auth().signInWithPopup(provider);
       console.log('[login] popup returned, user=', result.user?.email);
 
