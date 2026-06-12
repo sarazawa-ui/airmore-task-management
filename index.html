@@ -1000,6 +1000,7 @@ header.app-header{padding:10px 22px}
   <button data-view="calendar">週間カレンダー</button>
   <button data-view="review">週次レビュー</button>
   <button data-view="personal" title="参加中のすべてのワークスペースの自分のタスク">🗂 マイタスク横断</button>
+  <button id="navBudget" onclick="openBudgetApp()" title="予実管理ボードを開く（要：予実管理ロール）" style="display:none">📊 予実管理</button>
 </nav>
 <main id="appMain" style="display:none">
 
@@ -6585,6 +6586,8 @@ function _resetWorkspaceLocalCaches(){
   //   （新 WS の main doc snapshot で正しい値が入る／無ければ空のまま）
   S.treePresets = [];
   S.agendaPresets = [];
+  // ★ 予実管理ロール（WS 毎）もリセット
+  S.budgetRoles = {};
   // ★ マスタ系（ステータス/領域/優先度/タイムスロット/メンバー）も WS 毎なので削除
   //   delete することで、新 WS の main doc snapshot で値が入る／無ければ ensureDefaults が
   //   DEFAULT_STATE から自動補充（statuses/priorities/slots/areas のみ）。
@@ -6821,7 +6824,7 @@ function serializeWorkspace(){
   // 'profile'（会社名・ロゴ・メモ）はユーザー共通のためローカルにのみ保持
   // ★ v3: weeklyReports / history / board / kpt はサブコレクション or 専用 doc に分離 → main doc から除外
   //    （これらを main doc に詰めると 1 MiB 限界に到達して failed-precondition で全 write 失敗していた）
-  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','seq','ui','userPrefs','treePresets','agendaPresets','_tombstones'];
+  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','seq','ui','userPrefs','treePresets','agendaPresets','budgetRoles','_tombstones'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
   // goals.expanded はUI状態（個人別）のため同期から除外
@@ -8963,6 +8966,32 @@ function showApp(){
   // 初回表示時は label のみ更新（メニュー展開時に fetch される）
   if(typeof updateWsSwitcherLabel === 'function') updateWsSwitcherLabel();
   if(typeof renderFbUsageBadge === 'function') renderFbUsageBadge();
+  try{ updateBudgetNavVisibility(); }catch(e){}
+}
+
+// ===== 予実管理アプリへの遷移・ナビ可視性 =====
+// 自分の予実管理ロールが付いていれば「📊 予実管理」ボタンを表示
+function updateBudgetNavVisibility(){
+  const btn = document.getElementById('navBudget');
+  if(!btn) return;
+  const role = getMyBudgetRole();
+  btn.style.display = role ? '' : 'none';
+  if(role){
+    btn.title = `予実管理ボードを開く（ロール: ${role}）`;
+  }
+}
+function getMyBudgetRole(){
+  if(!_currentUser || !_currentUser.email) return null;
+  const roles = (S && S.budgetRoles) || {};
+  return roles[_currentUser.email] || null;
+}
+function openBudgetApp(){
+  if(!getMyBudgetRole()){
+    alert('予実管理ボードへのアクセス権限がありません。\nワークスペース管理者に予実管理ロールの付与を依頼してください。');
+    return;
+  }
+  // サブパスへ遷移（同一オリジン → Firebase Auth セッション共有）
+  window.location.href = './budget/';
 }
 function hideApp(){
   document.getElementById('loginScreen').style.display = '';
@@ -9549,11 +9578,26 @@ function renderMemberPane(){
     return;
   }
   list.innerHTML = '';
+  // 自分が予実管理ロールを編集できるか（オーナー or 予実 admin）
+  const meEmail = _currentUser?.email;
+  const meAuth = S.authMembers.find(x => x.email === meEmail);
+  const meIsOwner = meAuth && meAuth.role === 'owner';
+  const meBudgetRole = (S.budgetRoles || {})[meEmail || ''] || null;
+  const canManageBudget = meIsOwner || meBudgetRole === 'admin';
+
   am.forEach(m=>{
     const row = document.createElement('div');
     row.className = 'member-row' + (m._ghost ? ' member-ghost' : '');
     const initial = (m.name||'?').slice(0,1);
     const joinedDisp = m.joinedAt ? `・参加：${m.joinedAt.slice(0,10)}` : (m._ghost ? '・<span style="color:#B7950B">プロフィール未取得</span>' : '');
+    const curBudgetRole = (S.budgetRoles || {})[m.email || ''] || '';
+    const budgetSelect = `
+      <select class="budget-role" data-email="${escapeHtml(m.email||'')}" ${canManageBudget ? '' : 'disabled'} title="予実管理ロール" style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:5px;background:#fff;font:inherit">
+        <option value="" ${curBudgetRole===''?'selected':''}>予実：なし</option>
+        <option value="viewer" ${curBudgetRole==='viewer'?'selected':''}>予実：閲覧</option>
+        <option value="editor" ${curBudgetRole==='editor'?'selected':''}>予実：編集</option>
+        <option value="admin" ${curBudgetRole==='admin'?'selected':''}>予実：管理者</option>
+      </select>`;
     row.innerHTML = `
       ${m.picture ? `<img src="${m.picture}" referrerpolicy="no-referrer" alt="">` : `<div class="ph">${escapeHtml(initial)}</div>`}
       <div class="info">
@@ -9561,15 +9605,32 @@ function renderMemberPane(){
         <div class="em">${escapeHtml(m.email)}${joinedDisp}</div>
       </div>
       <span class="role ${m.role==='owner'?'':'guest'}">${m.role==='owner'?'オーナー':'メンバー'}</span>
-      ${m.role!=='owner' && _currentUser && S.authMembers.find(x=>x.email===_currentUser.email)?.role==='owner' ? `<button class="btn sm ghost" data-rm="${escapeHtml(m.email)}">削除</button>` : ''}
+      ${budgetSelect}
+      ${m.role!=='owner' && meIsOwner ? `<button class="btn sm ghost" data-rm="${escapeHtml(m.email)}">削除</button>` : ''}
     `;
     const rm = row.querySelector('[data-rm]');
     if(rm) rm.onclick = ()=>{
       if(!confirm(`${m.name} をメンバーから削除しますか？`)) return;
       S.authMembers = S.authMembers.filter(x=>x.email!==m.email);
+      // 予実ロールも消す
+      if(S.budgetRoles && m.email) delete S.budgetRoles[m.email];
       save(true,`メンバー削除：${m.name}`);
       renderMemberPane();
     };
+    const sel = row.querySelector('.budget-role');
+    if(sel && canManageBudget){
+      sel.addEventListener('change', () => {
+        if(!S.budgetRoles || typeof S.budgetRoles !== 'object') S.budgetRoles = {};
+        const v = sel.value;
+        const email = sel.dataset.email;
+        if(!email) return;
+        if(v) S.budgetRoles[email] = v;
+        else delete S.budgetRoles[email];
+        save(true, `予実ロール変更：${m.name||email} → ${v||'なし'}`);
+        try{ updateBudgetNavVisibility(); }catch(e){}
+        toast(`${m.name||email} の予実ロール：${v||'なし'}`);
+      });
+    }
     list.appendChild(row);
   });
 }
@@ -9797,6 +9858,7 @@ function ensureDefaults(){
   if(!S.userPrefs) S.userPrefs = {};
   if(!Array.isArray(S.treePresets)) S.treePresets = [];
   if(!Array.isArray(S.agendaPresets)) S.agendaPresets = [];
+  if(!S.budgetRoles || typeof S.budgetRoles !== 'object') S.budgetRoles = {};
   if(!Array.isArray(S._tombstones)) S._tombstones = [];
   if(!S.board || typeof S.board !== 'object') S.board = { html:'', updatedAt:0, updatedBy:'' };
   // 重要：tasks / goals が配列でない場合のフォールバック（undefined 由来のクラッシュ防止）
@@ -9923,6 +9985,7 @@ const _origRenderAll = function _origRenderAllImpl(){
   renderCalendar();
   renderProfileForm(); renderMemberPane(); renderHistory();
   updateWsSwitcherLabel();
+  try{ updateBudgetNavVisibility(); }catch(e){}
 };
 function renderAll(){
   // IME 合成中は描画を完全保留（compositionend で再開）
