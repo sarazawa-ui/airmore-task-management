@@ -729,17 +729,27 @@ header.app-header{padding:10px 22px}
 
 /* Members & history */
 .member-list{background:#fff;border:1px solid var(--border);border-radius:10px;padding:0;max-width:560px;overflow:hidden}
-.member-row{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border-soft)}
+.member-row{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border-soft);flex-wrap:nowrap}
 .member-row.member-ghost{background:#FFFBEA}
 .member-row.member-ghost .ph{background:#F5CBA7;color:#A04000}
 .member-row:last-child{border-bottom:none}
 .member-row img,.member-row .ph{width:36px;height:36px;border-radius:50%;flex:0 0 36px}
 .member-row .ph{background:var(--primary-light);color:var(--primary-dark);display:flex;align-items:center;justify-content:center;font-weight:700}
-.member-row .info{flex:1;min-width:0}
-.member-row .info .nm{font-weight:600;font-size:13px;color:var(--text)}
-.member-row .info .em{color:var(--muted);font-size:11px;margin-top:1px}
-.member-row .role{font-size:10.5px;background:var(--primary);color:#fff;padding:2px 9px;border-radius:10px;font-weight:600}
+.member-row .info{flex:1 1 auto;min-width:0;overflow:hidden}
+.member-row .info .nm{font-weight:600;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.member-row .info .em{color:var(--muted);font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.member-row .role{font-size:10.5px;background:var(--primary);color:#fff;padding:3px 10px;border-radius:10px;font-weight:600;flex:0 0 auto;height:22px;line-height:16px;white-space:nowrap;display:inline-flex;align-items:center}
 .member-row .role.guest{background:var(--muted)}
+.member-row .budget-role{flex:0 0 auto;height:24px;font-size:11px;padding:0 6px;border:1px solid var(--border);border-radius:5px;background:#fff;font-family:inherit;min-width:120px;max-width:140px}
+.member-row > button{flex:0 0 auto}
+@media(max-width:520px){
+  .member-row{flex-wrap:wrap;row-gap:6px}
+  .member-row .info{flex:1 1 100%;order:0;width:100%}
+  .member-row img,.member-row .ph{order:-1}
+  .member-row .role{order:1}
+  .member-row .budget-role{order:2;flex:1 1 100%;max-width:none}
+  .member-row > button{order:3}
+}
 
 .invite-card{background:linear-gradient(135deg,var(--primary-soft),#fff);border:1px solid var(--primary-light);border-radius:10px;padding:16px;margin-bottom:14px}
 .invite-card h4{margin:0 0 8px;color:var(--primary-dark);font-size:13px;font-weight:700}
@@ -1654,11 +1664,15 @@ function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg
 
 // ============ NAV ============
 document.querySelectorAll('nav button').forEach(b=>{
+  // ★ data-view を持つ標準ナビボタンのみ自動ハンドラを付与。
+  //   data-view がない特殊ボタン（onclick で独自処理する navBudget 等）はスキップ。
+  if(!b.dataset.view) return;
   b.onclick = ()=>{
     document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
     document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
     b.classList.add('active');
-    document.getElementById('view-'+b.dataset.view).classList.add('active');
+    const viewEl = document.getElementById('view-'+b.dataset.view);
+    if(viewEl) viewEl.classList.add('active');
     // personal view は明示遷移時のみ Firestore を読みに行く
     if(b.dataset.view === 'personal') renderPersonalView();
     else renderAll();
@@ -9592,7 +9606,7 @@ function renderMemberPane(){
     const joinedDisp = m.joinedAt ? `・参加：${m.joinedAt.slice(0,10)}` : (m._ghost ? '・<span style="color:#B7950B">プロフィール未取得</span>' : '');
     const curBudgetRole = (S.budgetRoles || {})[m.email || ''] || '';
     const budgetSelect = `
-      <select class="budget-role" data-email="${escapeHtml(m.email||'')}" ${canManageBudget ? '' : 'disabled'} title="予実管理ロール" style="font-size:11px;padding:3px 6px;border:1px solid var(--border);border-radius:5px;background:#fff;font:inherit">
+      <select class="budget-role" data-email="${escapeHtml(m.email||'')}" ${canManageBudget ? '' : 'disabled'} title="予実管理ロール">
         <option value="" ${curBudgetRole===''?'selected':''}>予実：なし</option>
         <option value="viewer" ${curBudgetRole==='viewer'?'selected':''}>予実：閲覧</option>
         <option value="editor" ${curBudgetRole==='editor'?'selected':''}>予実：編集</option>
