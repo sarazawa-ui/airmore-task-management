@@ -626,7 +626,9 @@ body > main:has(#view-calendar.active){overflow:hidden}
 .login-card .alt-options button{margin-top:8px}
 
 /* ===== Header Redesign ===== */
-header.app-header{padding:10px 22px}
+header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
+.app-header .hdr-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.app-header .nimomakezu-brand{height:30px;width:auto;display:block;flex:0 0 auto}
 .app-header .logo-area{display:flex;align-items:center;gap:12px}
 .app-header .hittatsu-brand{height:34px;width:auto;display:block;flex:0 0 auto;cursor:pointer;transition:opacity .12s,filter .12s}
 .app-header .hittatsu-brand:hover{opacity:.75}
@@ -979,9 +981,7 @@ header.app-header{padding:10px 22px}
     <img src="logo.png" alt="Hittatsu - タスク管理" class="hittatsu-brand" title="Hittatsu - タスク管理（ホーム）" onclick="goToView('dashboard')">
     <img src="logo-budget.png" alt="予実管理" class="hittatsu-brand hittatsu-brand-budget" id="hdrBudgetLogo" title="📊 予実管理ボードを開く" onclick="openBudgetApp()" style="display:none">
     <span class="brand-sep"></span>
-    <div class="company-logo" id="hdrLogo">㈱</div>
     <h1>
-      <span id="hdrCompanyName">タスク管理</span>
       <small id="todayLabel"></small>
     </h1>
     <div class="hdr-clock" title="東京時間（JST）">
@@ -989,21 +989,20 @@ header.app-header{padding:10px 22px}
       <span class="val" id="hdrClock">--:--:--</span>
     </div>
   </div>
-  <div class="ws-switcher" id="wsSwitcher" style="display:none">
-    <button class="ws-switcher-btn" onclick="toggleWsMenu(event)" title="ワークスペース切替">
-      <span class="icon">🏢</span>
-      <span class="name" id="wsCurrentName">読込中...</span>
-      <span class="caret">▼</span>
-    </button>
-    <div class="ws-menu" id="wsMenu"></div>
-  </div>
-  <div class="user-area">
-    <span class="sync-indicator offline" id="syncIndicator" title="同期状態">
-      <span class="dot"></span><span class="lbl">未接続</span>
-    </span>
-    <div class="user-info" id="hdrUserInfo"></div>
-    <button class="settings-btn" onclick="openSettingsModal('profile')" title="設定">⚙</button>
+  <div class="hdr-right">
+    <img src="nimomakezu-logo.png" alt="ニモマケズHD" class="nimomakezu-brand" title="ニモマケズHD">
+    <div class="ws-switcher" id="wsSwitcher" style="display:none">
+      <button class="ws-switcher-btn" onclick="toggleWsMenu(event)" title="ワークスペース切替">
+        <span class="icon">🏢</span>
+        <span class="name" id="wsCurrentName">読込中...</span>
+        <span class="caret">▼</span>
+      </button>
+      <div class="ws-menu" id="wsMenu"></div>
+    </div>
+    <button class="settings-btn" onclick="openSettingsModal('workspace')" title="設定">⚙</button>
     <input type="file" id="importFile" accept="application/json" style="display:none" onchange="importData(event)">
+    <span id="syncIndicator" class="sync-indicator offline" style="display:none"></span>
+    <div id="hdrUserInfo" class="user-info" style="display:none"></div>
   </div>
 </header>
 
@@ -1011,8 +1010,7 @@ header.app-header{padding:10px 22px}
   <button class="active" data-view="dashboard">ダッシュボード</button>
   <button data-view="goals">プロジェクト</button>
   <button data-view="calendar">週間カレンダー</button>
-  <button data-view="review">週次レビュー</button>
-  <button data-view="personal" title="参加中のすべてのワークスペースの自分のタスク">🗂 マイタスク横断</button>
+  <button data-view="personal" title="参加中のすべてのワークスペースの自分のタスク">マイタスク横断</button>
 </nav>
 <main id="appMain" style="display:none">
 
@@ -1195,29 +1193,11 @@ header.app-header{padding:10px 22px}
   </div>
 </section>
 
-<!-- ============ WEEKLY REPORT ============ -->
-<section class="view" id="view-review">
-  <div class="report-toolbar">
-    <label>メンバー：</label>
-    <select id="reviewMember"></select>
-    <label>対象週：</label>
-    <button class="btn sm ghost" onclick="moveReviewWeek(-1)">◀ 前週</button>
-    <input type="date" id="reviewStart" onchange="onReviewWeekChange()">
-    <span style="color:var(--muted)">〜</span>
-    <input type="date" id="reviewEnd" readonly>
-    <button class="btn sm ghost" onclick="moveReviewWeek(1)">翌週 ▶</button>
-    <button class="btn sm ghost" onclick="moveReviewWeek(0)">今週</button>
-    <span style="margin-left:auto"></span>
-    <button class="btn sm ghost" onclick="window.print()">🖨 印刷／PDF保存</button>
-  </div>
-  <div class="report-paper" id="reportPaper"></div>
-</section>
-
 <!-- ============ PERSONAL CROSS-WORKSPACE VIEW ============ -->
 <section class="view" id="view-personal">
   <div class="personal-wrap">
     <div class="personal-head">
-      <h2 style="margin:0;font-size:18px;color:var(--primary-dark)">🗂 マイタスク横断</h2>
+      <h2 style="margin:0;font-size:18px;color:var(--primary-dark)">マイタスク横断</h2>
       <span class="hint" style="color:var(--muted);font-size:12px">参加中の全ワークスペースから、自分が担当のタスクを集約表示</span>
       <span style="margin-left:auto"></span>
       <button class="btn sm ghost" onclick="refreshPersonalView()">🔄 再読込</button>
@@ -1283,7 +1263,6 @@ header.app-header{padding:10px 22px}
       <button data-pane="data">💾 データ管理</button>
       <div class="divider"></div>
       <div class="label">プロフィール</div>
-      <button data-pane="profile">🏛 会社名</button>
       <button data-pane="display">👤 個人設定</button>
       <button data-pane="notifications">🔔 通知</button>
       <button data-pane="logout" class="pane-logout">🚪 ログアウト</button>
@@ -1329,33 +1308,6 @@ header.app-header{padding:10px 22px}
         </div>
         <button class="btn" style="background:#C0392B;border-color:#C0392B" onclick="deleteWorkspace()">🗑 ワークスペースを完全削除</button>
       </div>
-    </div>
-  </div>
-
-  <!-- Profile pane -->
-  <div class="settings-pane" id="pane-profile">
-    <h3>🏛 会社名（プロフィール）</h3>
-    <div style="background:#EBF5FB;border:1px solid var(--primary-light);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--text-soft);margin-bottom:14px">
-      💡 会社名・ロゴは <strong>このブラウザのみ</strong> に保存され、どのワークスペースに切り替えても共通で表示されます。他メンバーには共有されません。
-    </div>
-    <div class="profile-form">
-      <div class="field">
-        <label>会社ロゴ</label>
-        <div class="logo-preview" id="logoPreview">ロゴなし</div>
-        <input type="file" id="logoUpload" accept="image/*" onchange="handleLogoUpload(event)" style="display:block;font-size:12px">
-        <div style="margin-top:6px"><button class="btn sm ghost" onclick="clearLogo()">ロゴを削除</button></div>
-        <div class="help">推奨：正方形 256×256px 以上 / PNG・JPG・SVG（5MB以下）</div>
-      </div>
-      <div class="field">
-        <label>会社名</label>
-        <input type="text" id="companyName" placeholder="株式会社エアモア">
-        <div class="help">ヘッダーやブラウザタブのタイトル、通知メールの署名に使用されます。</div>
-      </div>
-      <div class="field">
-        <label>業種・領域メモ（任意）</label>
-        <input type="text" id="companyMemo" placeholder="例：圧縮空気の総合エンジニアリング">
-      </div>
-      <button class="btn" onclick="saveProfile()">💾 保存</button>
     </div>
   </div>
 
@@ -8397,7 +8349,7 @@ function renderWsMenu(){
   html += '<div class="divider"></div>';
   html += `<button class="ws-action primary" onclick="createNewWorkspace()">➕ 新規ワークスペース作成</button>`;
   html += `<button class="ws-action" onclick="joinWorkspaceById()">🔗 IDで参加</button>`;
-  html += `<button class="ws-action" onclick="goToView('personal');closeWsMenu()">🗂 マイタスク横断を開く</button>`;
+  html += `<button class="ws-action" onclick="goToView('personal');closeWsMenu()">マイタスク横断を開く</button>`;
   menu.innerHTML = html;
 }
 
@@ -9036,24 +8988,15 @@ function updateHeaderUserInfo(){
 }
 
 function applyProfileToHeader(){
-  const p = S.profile||{};
-  document.getElementById('hdrCompanyName').textContent = p.companyName || 'タスク管理';
-  // ブラウザタブのタイトル：Hittatsu｜会社名
-  document.title = p.companyName ? `Hittatsu｜${p.companyName}` : 'Hittatsu';
-  const lg = document.getElementById('hdrLogo');
-  if(p.companyLogo){
-    lg.innerHTML = `<img src="${p.companyLogo}" alt="">`;
-  } else {
-    lg.innerHTML = (p.companyName||'㈱').slice(0,2);
-  }
-  // Login screen logo too — Hittatsu のロゴを既定で表示し、
-  //   会社ロゴが設定されていればそちらに切替（IMG 要素の src を入れ替え）
+  // 会社名・会社ロゴはヘッダーから廃止されたためタブ表示の更新のみ。
+  document.title = 'Hittatsu';
+  // ログイン画面はデフォルトの Hittatsu ロゴをそのまま使用。
   const llg = document.getElementById('loginLogo');
   if(llg && llg.tagName === 'IMG'){
-    llg.src = p.companyLogo || 'logo.png';
+    llg.src = 'logo.png';
   }
   const lt = document.getElementById('loginTitle');
-  if(lt) lt.textContent = (p.companyName||'タスク管理');
+  if(lt) lt.textContent = 'タスク管理';
 }
 
 // ============ Task edit modal ============
@@ -9280,12 +9223,17 @@ function renderProfileForm(){
   const wsInput = document.getElementById('wsNameInput');
   // ドラフトがあれば優先（未保存の入力を保持）。なければ S から復元
   if(wsInput) wsInput.value = (_profileDraft.wsName !== null) ? _profileDraft.wsName : (S.wsName || p.companyName || '');
-  document.getElementById('companyName').value = (_profileDraft.companyName !== null) ? _profileDraft.companyName : (p.companyName||'');
-  document.getElementById('companyMemo').value = (_profileDraft.companyMemo !== null) ? _profileDraft.companyMemo : (p.companyMemo||'');
+  // 「会社名／ロゴ／業種メモ」UI は廃止済み（要素があれば後方互換で値だけ復元、なければスキップ）
+  const cn = document.getElementById('companyName');
+  if(cn) cn.value = (_profileDraft.companyName !== null) ? _profileDraft.companyName : (p.companyName||'');
+  const cm = document.getElementById('companyMemo');
+  if(cm) cm.value = (_profileDraft.companyMemo !== null) ? _profileDraft.companyMemo : (p.companyMemo||'');
   _bindProfileDraft();
   const prev = document.getElementById('logoPreview');
-  if(p.companyLogo) prev.innerHTML = `<img src="${p.companyLogo}" alt="">`;
-  else prev.textContent = 'ロゴなし';
+  if(prev){
+    if(p.companyLogo) prev.innerHTML = `<img src="${p.companyLogo}" alt="">`;
+    else prev.textContent = 'ロゴなし';
+  }
   // Workspace info banner
   const banner = document.getElementById('wsInfoBanner');
   const dz = document.getElementById('wsDangerZone');
@@ -9305,14 +9253,16 @@ function renderProfileForm(){
   if(dz) dz.style.display = isOwner ? '' : 'none';
 }
 function saveProfile(){
-  const newCompany = document.getElementById('companyName').value.trim();
+  const cn = document.getElementById('companyName');
+  const cm = document.getElementById('companyMemo');
+  const newCompany = cn ? cn.value.trim() : (S.profile?.companyName || '');
   const oldCompany = (S.profile && S.profile.companyName) || '';
   const wsInput = document.getElementById('wsNameInput');
   const newWs = wsInput ? wsInput.value.trim() : '';
   const oldWs = S.wsName || '';
   S.profile = S.profile || {};
   S.profile.companyName = newCompany;
-  S.profile.companyMemo = document.getElementById('companyMemo').value.trim();
+  S.profile.companyMemo = cm ? cm.value.trim() : (S.profile?.companyMemo || '');
   // 会社情報はローカル（ユーザー共通）に保存。同期はしない
   saveCompanyProfile();
   // ワークスペース名はクラウド同期する
@@ -9971,7 +9921,7 @@ const _origRenderAll = function _origRenderAllImpl(){
   if(!_currentUser){ hideApp(); return; }
   applyProfileToHeader();
   updateHeaderUserInfo();
-  renderDashboard(); renderGoals(); renderTasks(); renderReview(); renderMaster();
+  renderDashboard(); renderGoals(); renderTasks(); renderMaster();
   renderCalendar();
   renderProfileForm(); renderMemberPane(); renderHistory();
   updateWsSwitcherLabel();
