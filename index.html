@@ -628,8 +628,10 @@ body > main:has(#view-calendar.active){overflow:hidden}
 /* ===== Header Redesign ===== */
 header.app-header{padding:10px 22px}
 .app-header .logo-area{display:flex;align-items:center;gap:12px}
-.app-header .hittatsu-brand{height:34px;width:auto;display:block;flex:0 0 auto;cursor:pointer;transition:opacity .12s}
+.app-header .hittatsu-brand{height:34px;width:auto;display:block;flex:0 0 auto;cursor:pointer;transition:opacity .12s,filter .12s}
 .app-header .hittatsu-brand:hover{opacity:.75}
+.app-header .hittatsu-brand.hittatsu-brand-budget{margin-left:8px;border-left:1px solid var(--border);padding-left:10px;border-radius:0}
+.app-header .hittatsu-brand.hittatsu-brand-budget:hover{filter:drop-shadow(0 0 4px rgba(31,78,120,.35))}
 .app-header .brand-sep{display:inline-block;width:1px;height:26px;background:var(--border);margin:0 4px}
 .app-header .company-logo{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--primary-light),#fff);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--primary-dark);font-weight:700;font-size:15px;overflow:hidden;flex:0 0 40px}
 .app-header .company-logo img{width:100%;height:100%;object-fit:cover}
@@ -974,7 +976,8 @@ header.app-header{padding:10px 22px}
 
 <header class="app-header" id="appHeader" style="display:none">
   <div class="logo-area">
-    <img src="logo.png" alt="Hittatsu" class="hittatsu-brand" title="Hittatsu - タスク管理" onclick="goToView('dashboard')">
+    <img src="logo.png" alt="Hittatsu - タスク管理" class="hittatsu-brand" title="Hittatsu - タスク管理（ホーム）" onclick="goToView('dashboard')">
+    <img src="logo-budget.png" alt="予実管理" class="hittatsu-brand hittatsu-brand-budget" id="hdrBudgetLogo" title="📊 予実管理ボードを開く" onclick="openBudgetApp()" style="display:none">
     <span class="brand-sep"></span>
     <div class="company-logo" id="hdrLogo">㈱</div>
     <h1>
@@ -1010,7 +1013,6 @@ header.app-header{padding:10px 22px}
   <button data-view="calendar">週間カレンダー</button>
   <button data-view="review">週次レビュー</button>
   <button data-view="personal" title="参加中のすべてのワークスペースの自分のタスク">🗂 マイタスク横断</button>
-  <button id="navBudget" onclick="openBudgetApp()" title="予実管理ボードを開く（要：予実管理ロール）" style="display:none">📊 予実管理</button>
 </nav>
 <main id="appMain" style="display:none">
 
@@ -8983,16 +8985,14 @@ function showApp(){
   try{ updateBudgetNavVisibility(); }catch(e){}
 }
 
-// ===== 予実管理アプリへの遷移・ナビ可視性 =====
-// 自分の予実管理ロールが付いていれば「📊 予実管理」ボタンを表示
+// ===== 予実管理アプリへの遷移（ヘッダー右側の予算ロゴボタン）=====
+// ワークスペースに入っていれば誰でもアクセス可能。
+// 中で admin が他ユーザーの権限を管理する。
 function updateBudgetNavVisibility(){
-  const btn = document.getElementById('navBudget');
+  const btn = document.getElementById('hdrBudgetLogo');
   if(!btn) return;
-  const role = getMyBudgetRole();
-  btn.style.display = role ? '' : 'none';
-  if(role){
-    btn.title = `予実管理ボードを開く（ロール: ${role}）`;
-  }
+  // ワークスペースに参加している人なら全員表示
+  btn.style.display = (S && S.workspaceId) ? '' : 'none';
 }
 function getMyBudgetRole(){
   if(!_currentUser || !_currentUser.email) return null;
@@ -9000,12 +9000,14 @@ function getMyBudgetRole(){
   return roles[_currentUser.email] || null;
 }
 function openBudgetApp(){
-  if(!getMyBudgetRole()){
-    alert('予実管理ボードへのアクセス権限がありません。\nワークスペース管理者に予実管理ロールの付与を依頼してください。');
+  if(!S.workspaceId){
+    alert('ワークスペースに参加してから予実管理を開いてください。');
     return;
   }
-  // サブパスへ遷移（同一オリジン → Firebase Auth セッション共有）
-  window.location.href = './budget/';
+  // 現在のワークスペース ID を予実管理アプリに引き継ぐための共有キー
+  try{ localStorage.setItem('hittatsu_current_ws', S.workspaceId); }catch(e){}
+  // 予実管理アプリは同一オリジンの /budget/ にホスト（Firebase Auth セッション共有）
+  window.location.href = './budget/?ws=' + encodeURIComponent(S.workspaceId);
 }
 function hideApp(){
   document.getElementById('loginScreen').style.display = '';
@@ -9592,26 +9594,15 @@ function renderMemberPane(){
     return;
   }
   list.innerHTML = '';
-  // 自分が予実管理ロールを編集できるか（オーナー or 予実 admin）
   const meEmail = _currentUser?.email;
   const meAuth = S.authMembers.find(x => x.email === meEmail);
   const meIsOwner = meAuth && meAuth.role === 'owner';
-  const meBudgetRole = (S.budgetRoles || {})[meEmail || ''] || null;
-  const canManageBudget = meIsOwner || meBudgetRole === 'admin';
 
   am.forEach(m=>{
     const row = document.createElement('div');
     row.className = 'member-row' + (m._ghost ? ' member-ghost' : '');
     const initial = (m.name||'?').slice(0,1);
     const joinedDisp = m.joinedAt ? `・参加：${m.joinedAt.slice(0,10)}` : (m._ghost ? '・<span style="color:#B7950B">プロフィール未取得</span>' : '');
-    const curBudgetRole = (S.budgetRoles || {})[m.email || ''] || '';
-    const budgetSelect = `
-      <select class="budget-role" data-email="${escapeHtml(m.email||'')}" ${canManageBudget ? '' : 'disabled'} title="予実管理ロール">
-        <option value="" ${curBudgetRole===''?'selected':''}>予実：なし</option>
-        <option value="viewer" ${curBudgetRole==='viewer'?'selected':''}>予実：閲覧</option>
-        <option value="editor" ${curBudgetRole==='editor'?'selected':''}>予実：編集</option>
-        <option value="admin" ${curBudgetRole==='admin'?'selected':''}>予実：管理者</option>
-      </select>`;
     row.innerHTML = `
       ${m.picture ? `<img src="${m.picture}" referrerpolicy="no-referrer" alt="">` : `<div class="ph">${escapeHtml(initial)}</div>`}
       <div class="info">
@@ -9619,7 +9610,6 @@ function renderMemberPane(){
         <div class="em">${escapeHtml(m.email)}${joinedDisp}</div>
       </div>
       <span class="role ${m.role==='owner'?'':'guest'}">${m.role==='owner'?'オーナー':'メンバー'}</span>
-      ${budgetSelect}
       ${m.role!=='owner' && meIsOwner ? `<button class="btn sm ghost" data-rm="${escapeHtml(m.email)}">削除</button>` : ''}
     `;
     const rm = row.querySelector('[data-rm]');
@@ -9631,20 +9621,6 @@ function renderMemberPane(){
       save(true,`メンバー削除：${m.name}`);
       renderMemberPane();
     };
-    const sel = row.querySelector('.budget-role');
-    if(sel && canManageBudget){
-      sel.addEventListener('change', () => {
-        if(!S.budgetRoles || typeof S.budgetRoles !== 'object') S.budgetRoles = {};
-        const v = sel.value;
-        const email = sel.dataset.email;
-        if(!email) return;
-        if(v) S.budgetRoles[email] = v;
-        else delete S.budgetRoles[email];
-        save(true, `予実ロール変更：${m.name||email} → ${v||'なし'}`);
-        try{ updateBudgetNavVisibility(); }catch(e){}
-        toast(`${m.name||email} の予実ロール：${v||'なし'}`);
-      });
-    }
     list.appendChild(row);
   });
 }
