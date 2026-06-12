@@ -1078,13 +1078,6 @@ header.app-header{padding:10px 22px}
     </table>
   </div>
 
-  <div class="section">■ プロジェクト（中長期）進捗</div>
-  <div class="card scroll-x" style="padding:0">
-    <table id="tblGoalDash">
-      <thead><tr><th>ID</th><th>プロジェクト名</th><th>主担当者</th><th>期限</th><th style="width:160px">進捗率</th><th>ステータス</th><th>残日数</th><th>状況</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
 
 </section>
 
@@ -1416,7 +1409,7 @@ header.app-header{padding:10px 22px}
       </div>
 
       <div class="field" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-        <label style="font-weight:700;display:block;margin-bottom:6px">📲 ブラウザ・スマホ プッシュ通知</label>
+        <label style="font-weight:700;display:block;margin-bottom:6px">🖥 ブラウザ プッシュ通知</label>
         <div id="pushStatusBox" style="padding:9px 12px;background:#f5f8fb;border:1px solid var(--border);border-radius:7px;font-size:12px;margin-bottom:8px">未設定</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn sm" id="pushEnableBtn" onclick="enablePushNotifications().then(updatePushStatusBox)">🔔 通知を有効化</button>
@@ -1424,11 +1417,9 @@ header.app-header{padding:10px 22px}
           <button class="btn sm danger" id="pushDisableBtn" onclick="disablePushNotifications().then(updatePushStatusBox)">無効化</button>
         </div>
         <div class="help" style="margin-top:8px">
-        本ブラウザ／端末でプッシュ通知を受け取れるようにします。「有効化」を押すと初回のみ通知許可を求められます。<br>
-        ※ <strong>PC</strong>：Chrome / Edge / Firefox（HTTPS環境）で動作。<br>
-        ※ <strong>Android</strong>：Chrome ブラウザでそのまま有効化できます。アプリ風に使うなら「ホーム画面に追加」も可能。<br>
-        ※ <strong>iPhone / iPad</strong>：iOS 16.4 以降必須。<u>Safari でアプリを開いている状態では使えません</u>。先に Safari → 共有 → 「ホーム画面に追加」してから、ホーム画面のアイコンで起動して有効化してください。<br>
-        ※ メンバーごと・端末ごとに有効化が必要です（複数端末で受信可）。<br>
+        本ブラウザでプッシュ通知を受け取れるようにします。「有効化」を押すと初回のみ通知許可を求められます。<br>
+        ※ Chrome / Edge / Firefox に対応（HTTPS環境）。<br>
+        ※ ブラウザごと・端末ごとに有効化が必要です（複数端末で受信可）。<br>
         ※ Cloud Functions のセットアップ完了後、リマインドが自動送信されます。
         </div>
       </div>
@@ -2318,33 +2309,12 @@ function renderDashboard(){
        <td class="center ${sum?rateColor:''}">${sum?rate.toFixed(1)+'%':'-'}</td></tr>`);
   });
 
-  // Goals
-  const gb = document.querySelector('#tblGoalDash tbody'); gb.innerHTML="";
-  S.goals.forEach(g=>{
+  // ※ ダッシュボードの「プロジェクト一覧」セクションは仕様により廃止。
+  //   プロジェクトの状況はナビの「プロジェクト」タブで確認します。
+  // それでも進捗計算は他箇所で利用するため、各 goal の progress は更新しておく
+  S.goals.forEach(g => {
     const auto = computeGoalProgress(g);
     g.progress = auto.value;
-    const rem = g.due ? diffDays(g.due,todayStr()) : "";
-    let situ="○",cls="";
-    if(g.due){
-      if(g.status==="完了"){situ="✔達成";cls="alert-green"}
-      else if(rem<0){situ="⛔期限超過";cls="alert-red"}
-      else if(rem<=30){situ="⚠1ヶ月以内";cls="alert-orange"}
-    }
-    const remDisp = g.due ? (rem>=0?rem+"日":(rem)+"日") : "-";
-    gb.insertAdjacentHTML('beforeend',
-      `<tr><td class="center"><a href="javascript:void(0)" class="goal-jump" data-goalid="${escapeHtml(g.id)}">${escapeHtml(g.id)}</a></td>
-       <td><a href="javascript:void(0)" class="goal-jump" data-goalid="${escapeHtml(g.id)}">${escapeHtml(g.name)}</a></td>
-       <td class="center">${escapeHtml(g.owner)}</td><td class="center">${escapeHtml(g.due)}</td>
-       <td class="center"><div class="progress"><span style="width:${Math.min(100,Math.max(0,Number(g.progress)||0))}%"></span></div> ${g.progress||0}%</td>
-       <td class="center">${escapeHtml(g.status)}</td><td class="center">${remDisp}</td>
-       <td class="center ${cls}">${situ}</td></tr>`);
-  });
-  // Wire up jump links
-  gb.querySelectorAll('.goal-jump').forEach(a=>{
-    a.addEventListener('click', e=>{
-      e.preventDefault();
-      goToGoal(a.dataset.goalid);
-    });
   });
 }
 
@@ -5883,41 +5853,16 @@ let _fcmToken = null;
 function _pushSupported(){
   return ('serviceWorker' in navigator) && ('Notification' in window) && ('PushManager' in window);
 }
-// 詳細な未対応理由を返す（UI 案内用）
+// 詳細な未対応理由を返す（UI 案内用）— PC ブラウザ向け
 function _pushUnsupportedReason(){
-  const ua = navigator.userAgent;
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
-                    || window.navigator.standalone === true;
-  const isIOS = /iphone|ipad|ipod/i.test(ua);
-  const isAndroid = /android/i.test(ua);
-  // 個別 API チェック
   const missing = [];
   if(!('serviceWorker' in navigator)) missing.push('Service Worker');
   if(!('Notification' in window)) missing.push('Notification API');
   if(!('PushManager' in window)) missing.push('Push API');
-  // iOS Safari ブラウザ（PWAでない）
-  if(isIOS && !isStandalone){
-    return {
-      msg: 'iPhone/iPad では Safari ブラウザで直接プッシュ通知を有効化できません。先に「ホーム画面に追加」してください。',
-      detail: '手順: Safari → 共有ボタン（□↑）→「ホーム画面に追加」→ 追加されたアイコンから起動 → 設定 → 通知 → 有効化',
-      severity: 'warn'
-    };
-  }
-  // iOS PWA だが古いバージョン
-  if(isIOS && isStandalone && missing.length > 0){
-    return {
-      msg: 'iOS 16.4 以降が必要です。iOS をアップデートしてください。',
-      detail: 'システム要件: iOS 16.4 以上 / Safari 16.4 以上。設定アプリ → 一般 → ソフトウェアアップデート で確認できます。',
-      severity: 'error'
-    };
-  }
-  // Android（その他）
-  if(missing.length === 0){
-    return null; // 対応している
-  }
+  if(missing.length === 0) return null;
   return {
     msg: `このブラウザは対応していません（不足: ${missing.join(', ')}）`,
-    detail: `User Agent: ${ua.slice(0, 100)}`,
+    detail: `Chrome / Edge / Firefox の最新版でお試しください。`,
     severity: 'error'
   };
 }
