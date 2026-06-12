@@ -1425,7 +1425,9 @@ header.app-header{padding:10px 22px}
         </div>
         <div class="help" style="margin-top:8px">
         本ブラウザ／端末でプッシュ通知を受け取れるようにします。「有効化」を押すと初回のみ通知許可を求められます。<br>
-        ※ <strong>iPhone Safari の場合</strong>：先に「ホーム画面に追加」してホーム画面のアイコンから開いてください（PWA としてインストールが必須）。<br>
+        ※ <strong>PC</strong>：Chrome / Edge / Firefox（HTTPS環境）で動作。<br>
+        ※ <strong>Android</strong>：Chrome ブラウザでそのまま有効化できます。アプリ風に使うなら「ホーム画面に追加」も可能。<br>
+        ※ <strong>iPhone / iPad</strong>：iOS 16.4 以降必須。<u>Safari でアプリを開いている状態では使えません</u>。先に Safari → 共有 → 「ホーム画面に追加」してから、ホーム画面のアイコンで起動して有効化してください。<br>
         ※ メンバーごと・端末ごとに有効化が必要です（複数端末で受信可）。<br>
         ※ Cloud Functions のセットアップ完了後、リマインドが自動送信されます。
         </div>
@@ -5881,6 +5883,44 @@ let _fcmToken = null;
 function _pushSupported(){
   return ('serviceWorker' in navigator) && ('Notification' in window) && ('PushManager' in window);
 }
+// 詳細な未対応理由を返す（UI 案内用）
+function _pushUnsupportedReason(){
+  const ua = navigator.userAgent;
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+                    || window.navigator.standalone === true;
+  const isIOS = /iphone|ipad|ipod/i.test(ua);
+  const isAndroid = /android/i.test(ua);
+  // 個別 API チェック
+  const missing = [];
+  if(!('serviceWorker' in navigator)) missing.push('Service Worker');
+  if(!('Notification' in window)) missing.push('Notification API');
+  if(!('PushManager' in window)) missing.push('Push API');
+  // iOS Safari ブラウザ（PWAでない）
+  if(isIOS && !isStandalone){
+    return {
+      msg: 'iPhone/iPad では Safari ブラウザで直接プッシュ通知を有効化できません。先に「ホーム画面に追加」してください。',
+      detail: '手順: Safari → 共有ボタン（□↑）→「ホーム画面に追加」→ 追加されたアイコンから起動 → 設定 → 通知 → 有効化',
+      severity: 'warn'
+    };
+  }
+  // iOS PWA だが古いバージョン
+  if(isIOS && isStandalone && missing.length > 0){
+    return {
+      msg: 'iOS 16.4 以降が必要です。iOS をアップデートしてください。',
+      detail: 'システム要件: iOS 16.4 以上 / Safari 16.4 以上。設定アプリ → 一般 → ソフトウェアアップデート で確認できます。',
+      severity: 'error'
+    };
+  }
+  // Android（その他）
+  if(missing.length === 0){
+    return null; // 対応している
+  }
+  return {
+    msg: `このブラウザは対応していません（不足: ${missing.join(', ')}）`,
+    detail: `User Agent: ${ua.slice(0, 100)}`,
+    severity: 'error'
+  };
+}
 async function registerServiceWorker(){
   if(!('serviceWorker' in navigator)) return null;
   try{
@@ -6006,11 +6046,15 @@ async function disablePushNotifications(){
 function updatePushStatusBox(){
   const box = document.getElementById('pushStatusBox');
   if(!box) return;
-  if(!_pushSupported()){
-    box.textContent = '⚠ このブラウザは対応していません';
-    box.style.background = '#fff3cd';
+  // 詳細な未対応判定（iOS Safari / iOS 古い / Android 等を区別）
+  const reason = _pushUnsupportedReason();
+  if(reason){
+    const bg = reason.severity === 'warn' ? '#fff3cd' : '#fdedec';
+    box.style.background = bg;
+    box.innerHTML = `⚠ <strong>${escapeHtml(reason.msg)}</strong><div style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.5">${escapeHtml(reason.detail||'')}</div>`;
     return;
   }
+  // ここから先は対応済ブラウザ
   const perm = Notification.permission;
   if(perm === 'denied'){
     box.textContent = '❌ 通知がブロックされています（ブラウザ設定から許可してください）';
@@ -6023,7 +6067,7 @@ function updatePushStatusBox(){
     return;
   }
   if(_fcmToken){
-    box.innerHTML = `✅ 有効：${_currentUser?.email || ''} / token: <code style="font-size:10px">…${_fcmToken.slice(-12)}</code>`;
+    box.innerHTML = `✅ 有効：${escapeHtml(_currentUser?.email || '')} / token: <code style="font-size:10px">…${escapeHtml(_fcmToken.slice(-12))}</code>`;
     box.style.background = '#e8f5e9';
   } else {
     box.textContent = '⚠ 通知許可されているが、トークン未取得（再度「有効化」をお試しください）';
