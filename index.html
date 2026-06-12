@@ -3227,6 +3227,13 @@ function renderTree(g){
     html += `<div style="color:var(--muted);font-size:11.5px;font-style:italic;padding:6px">まだタスクがありません。「＋ タスク追加」またはプリセットから作成できます。</div>`;
   } else {
     // 親→子→孫…と再帰的に DFS で並べる（最大5階層など、任意の深さに対応）
+    // ★ 同階層内は「期日が早い順」（期日なしは末尾）でソート
+    const _dueKey = t => (t && t.due) ? t.due : '9999-12-31';
+    const _sortByDue = (a, b) => {
+      const ad = _dueKey(a), bd = _dueKey(b);
+      if(ad !== bd) return ad.localeCompare(bd);
+      return (a.id||'').localeCompare(b.id||'');
+    };
     const taskById = {};
     const childByParent = {};
     linked.forEach(t=>{
@@ -3235,8 +3242,12 @@ function renderTree(g){
         (childByParent[t.parentTaskId] = childByParent[t.parentTaskId] || []).push(t);
       }
     });
-    // ルート：parentTaskId が空 OR 参照先が同じプロジェクトに無い
-    const rootTasks = linked.filter(t => !t.parentTaskId || !taskById[t.parentTaskId]);
+    // 子要素も期日順にソート
+    Object.values(childByParent).forEach(arr => arr.sort(_sortByDue));
+    // ルート：parentTaskId が空 OR 参照先が同じプロジェクトに無い  →  期日順
+    const rootTasks = linked
+      .filter(t => !t.parentTaskId || !taskById[t.parentTaskId])
+      .sort(_sortByDue);
     const ordered = [];
     const visited = new Set();
     function pushSubtree(t, depth){
@@ -3249,8 +3260,10 @@ function renderTree(g){
       kids.forEach(c => pushSubtree(c, depth+1));
     }
     rootTasks.forEach(r => pushSubtree(r, 0));
-    // ループ参照や未到達の安全網
-    linked.forEach(t => { if(!visited.has(t.id)) ordered.push({task:t, depth:0, hasChildren:false, orphan:true}); });
+    // ループ参照や未到達の安全網（こちらも期日順で末尾追加）
+    linked.slice().sort(_sortByDue).forEach(t => {
+      if(!visited.has(t.id)) ordered.push({task:t, depth:0, hasChildren:false, orphan:true});
+    });
     html += `<table style="font-size:11.5px;width:100%"><thead><tr>
       <th style="width:34px"></th>
       <th style="text-align:left">アクション</th>
@@ -5386,14 +5399,23 @@ function renderSideTasks(){
       });
       rng.addEventListener('click',e=>e.stopPropagation());
     }
-    // タイトルをクリックでカレンダー上の位置にジャンプ＆2秒点滅
+    // ★ バッジ全体（カード）クリックでカレンダー上の位置にジャンプ＆2秒点滅
+    //   ※ フォーム類（チェックボックス・ボタン・入力・スライダー）や、
+    //     詳細展開エリア(.more)、プロジェクトリンク、親リンクは除外
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', (e)=>{
+      // 詳細展開中は誤発火を防ぐ
+      const interactive = e.target.closest(
+        'input, select, textarea, button, label, ' +
+        '.est-slider, .more, .expand-btn-sm, .goal-link, .parent-link'
+      );
+      if(interactive) return;
+      focusTaskOnCalendar(taskId);
+    });
+    // タイトル単独クリックも引き続き有効（後方互換）
     const ttlEl = el.querySelector('.ttl');
     if(ttlEl){
       ttlEl.style.cursor = 'pointer';
-      ttlEl.addEventListener('click', (e)=>{
-        e.stopPropagation();
-        focusTaskOnCalendar(taskId);
-      });
     }
     el.querySelector('.expand-btn-sm').onclick = (e)=>{
       e.stopPropagation();
