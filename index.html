@@ -1278,6 +1278,7 @@ header.app-header{padding:10px 22px}
       <div class="label">プロフィール</div>
       <button data-pane="profile">🏛 会社名</button>
       <button data-pane="display">👤 個人設定</button>
+      <button data-pane="notifications">🔔 通知</button>
       <button data-pane="logout" class="pane-logout">🚪 ログアウト</button>
     </div>
     <div class="settings-content">
@@ -1391,7 +1392,15 @@ header.app-header{padding:10px 22px}
         <label><input type="checkbox" id="cfgEnforceCap"> 上限超過時はタスク配置をブロック</label>
         <div class="help">チェックON：超過する場合はカレンダー上にドロップできません。OFF：警告のみ表示し配置は許可。</div>
       </div>
-      <div class="field" style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px">
+      <button class="btn" onclick="saveDisplaySettings()">💾 保存</button>
+    </div>
+  </div>
+
+  <!-- 🔔 Notifications pane -->
+  <div class="settings-pane" id="pane-notifications">
+    <h3>🔔 通知</h3>
+    <div class="profile-form">
+      <div class="field">
         <label><input type="checkbox" id="cfgNotifyOnComplete"> タスク完了時にメンバーへメール通知</label>
         <div class="help">タスクのチェックボックスをONにした際、<strong>そのタスクが紐づくプロジェクトのチームメンバー（自分以外）</strong> の Gmail アドレス宛にGmail経由で完了通知を送信します。<br>
         ※ プロジェクトの「主担当者」+「チームメンバー」がそのまま通知対象です。<br>
@@ -1422,7 +1431,7 @@ header.app-header{padding:10px 22px}
         </div>
       </div>
 
-      <button class="btn" onclick="saveDisplaySettings()">💾 保存</button>
+      <button class="btn" onclick="saveDisplaySettings()" style="margin-top:18px">💾 保存</button>
     </div>
   </div>
 
@@ -9085,6 +9094,7 @@ function switchSettingsPane(pane){
   else if(pane==='history') renderHistory();
   else if(pane==='master') renderMaster();
   else if(pane==='display') renderDisplaySettings();
+  else if(pane==='notifications'){ renderDisplaySettings(); try{ updatePushStatusBox(); }catch(e){} }
   else if(pane==='firebase') renderFirebaseSettings();
 }
 document.addEventListener('click', e=>{
