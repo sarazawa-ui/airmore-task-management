@@ -6754,6 +6754,11 @@ function initFirebase(){
     updateSyncStatus('offline');
     // ★ PWA Service Worker 登録（プッシュ通知の受信に必要）
     try{ registerServiceWorker(); }catch(e){ console.warn('SW registration failed:', e); }
+    // ★ 永続化を明示的に LOCAL に設定（iOS PWA でも redirect 後にセッションが残るように）
+    try{
+      firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+        .catch(e => console.warn('setPersistence (init) failed:', e));
+    }catch(e){ console.warn(e); }
     // signInWithRedirect の戻りを処理（ポップアップ失敗時のフォールバック経由）
     firebase.auth().getRedirectResult().then(result => {
       if(result && result.user){
@@ -8669,21 +8674,25 @@ async function appLogin(){
     if(window._loginInProgress){ console.log("Login already in progress"); return; }
     window._loginInProgress = true;
     try{
+      // ★ 永続化を明示的に LOCAL に設定（iOS PWA でも redirect 後にセッションが残るように）
+      try{
+        await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+      }catch(e){ console.warn('setPersistence failed:', e); }
+
       const provider = new firebase.auth.GoogleAuthProvider();
       provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
       provider.addScope('https://www.googleapis.com/auth/gmail.send');
       // 必ず同意画面を出してスコープを確実に付与
       provider.setCustomParameters({ prompt: 'consent', access_type: 'online', include_granted_scopes: 'true' });
       // ★ PWA スタンドアロンモード / モバイル端末では popup が機能しないため redirect に切替
-      //   （ホーム画面アイコンから開いた PWA は別ウィンドウのpopupに結果を返せない）
       const isStandalone = window.matchMedia('(display-mode: standalone)').matches
                         || window.navigator.standalone === true;
       const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
       if(isStandalone || isMobile){
         console.log('[login] PWA / mobile detected → using signInWithRedirect');
-        // 注：redirect 完了後は getRedirectResult が initFirebase 内で処理する
+        // リダイレクト処理中のフラグを sessionStorage に書く（戻り時にローディング表示）
+        try{ sessionStorage.setItem('hittatsu_redirect_pending', '1'); }catch(e){}
         await firebase.auth().signInWithRedirect(provider);
-        // ここから先は実行されない（ページがリダイレクト）
         return;
       }
       console.log('[login] desktop browser → using signInWithPopup');
@@ -10215,6 +10224,42 @@ loadSession();
 ensureDefaults();
 loadCompanyProfile(); // 会社情報（ワークスペース共通）をローカルから読み込み
 applyProfileToHeader(); // populate login screen logo/title from saved profile
+
+// ★ PWA / モバイル：signInWithRedirect 戻り時にローディング表示を出す
+//   getRedirectResult が解決するまで「ログイン処理中…」を維持。解決後にアプリ画面 or 再ログイン。
+const _redirectPending = (function(){
+  try{ return sessionStorage.getItem('hittatsu_redirect_pending') === '1'; }catch(e){ return false; }
+})();
+
+function _showRedirectLoading(){
+  const loginScr = document.getElementById('loginScreen');
+  if(!loginScr) return;
+  // ログイン画面を表示しつつ、ボタン群を隠してローディングメッセージを出す
+  hideApp();
+  const existing = document.getElementById('loginRedirectLoader');
+  if(existing) return;
+  const loader = document.createElement('div');
+  loader.id = 'loginRedirectLoader';
+  loader.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,0.95);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:inherit;padding:24px;text-align:center';
+  loader.innerHTML = `
+    <div style="width:48px;height:48px;border:4px solid #ddd;border-top-color:#1F4E78;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:18px"></div>
+    <div style="font-size:15px;color:#1F4E78;font-weight:700;margin-bottom:8px">ログイン処理中…</div>
+    <div style="font-size:12px;color:#666;line-height:1.6;max-width:320px">Google 認証から戻ってきました。<br>セッション復元中です。数秒お待ちください。</div>
+    <button id="loginRedirectAbort" style="margin-top:24px;padding:8px 16px;background:#fff;border:1px solid #ccc;border-radius:6px;cursor:pointer;font:inherit;font-size:12px">キャンセル（ログイン画面へ戻る）</button>
+    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+  `;
+  document.body.appendChild(loader);
+  document.getElementById('loginRedirectAbort').onclick = () => {
+    try{ sessionStorage.removeItem('hittatsu_redirect_pending'); }catch(e){}
+    loader.remove();
+  };
+}
+function _hideRedirectLoading(){
+  const el = document.getElementById('loginRedirectLoader');
+  if(el) el.remove();
+  try{ sessionStorage.removeItem('hittatsu_redirect_pending'); }catch(e){}
+}
+
 if(_currentUser){
   // ローカルにユーザー情報あり → 即座にアプリ表示（期限チェックなし）
   showApp();
@@ -10232,10 +10277,38 @@ if(_currentUser){
   setTimeout(()=>{ try { googleFetchEvents(true); } catch(e){} }, 600);
   // ★ 招待 URL（?ws=...）処理：既ログイン状態でも案内する
   setTimeout(()=>{ try { handleInviteUrlIfPresent(); } catch(e){ console.warn(e); } }, 800);
+} else if(_redirectPending){
+  // signInWithRedirect 戻り中 → ローディング表示
+  _showRedirectLoading();
+  // getRedirectResult / onAuthStateChanged が _currentUser を埋めたらアプリ画面へ
+  //   既存の onAuthStateChanged ハンドラ（initFirebase 内）が showApp() を呼ぶ。
+  //   8秒経ってもログインできなかったら諦めて通常のログイン画面に戻す
+  setTimeout(() => {
+    if(!_currentUser){
+      console.warn('[login] redirect timeout — returning to login screen');
+      _hideRedirectLoading();
+      hideApp();
+    }
+  }, 8000);
 } else {
   // If invite hash but no session, show invite banner on login
   hideApp();
 }
+
+// onAuthStateChanged で _currentUser が設定された後に呼ばれるフック：
+//   ローディング表示があれば消す
+(function watchLoginCompletion(){
+  let tries = 0;
+  const id = setInterval(() => {
+    tries++;
+    if(_currentUser){
+      _hideRedirectLoading();
+      clearInterval(id);
+    } else if(tries > 50){ // 25秒
+      clearInterval(id);
+    }
+  }, 500);
+})();
 
 // 既ログイン状態で招待 URL を踏んだ場合：当該ワークスペースへ切替するか確認
 async function handleInviteUrlIfPresent(){
