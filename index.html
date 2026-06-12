@@ -8381,26 +8381,34 @@ async function switchWorkspace(wsId){
   closeWsMenu();
   if(!wsId || wsId === S.workspaceId) return;
   if(!_firebaseReady || !firebase.auth().currentUser){ alert('未ログインです'); return; }
-  // 切替時はパーソナルビューと WS 一覧のキャッシュを無効化（次回取得時に最新）
-  _personalViewFetchedAt = 0;
-  _personalViewCache = null;
-  // unsubscribe current
-  if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
-  if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
-  if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
-  // load target
+  // 切替を確実に反映するため、ローカル状態をクリアし、S.workspaceId を新WSに書き換えてからフルリロード。
+  // 多段のサブコレ購読・キャッシュのレースを避けるため、ブートから新WSを読み込む方式を採用。
+  try{ _resetWorkspaceLocalCaches(); }catch(e){}
+  try{
+    // 旧WSのタスク/目標/ボード等が残らないよう、サブコレ系はリセット
+    S.tasks = [];
+    S.goals = [];
+    delete S.wsName;
+    delete S.ownerEmail;
+    delete S.memberEmails;
+    delete S.authMembers;
+    delete S.members;
+    delete S._tombstones;
+    S.workspaceId = wsId;
+    localStorage.setItem(LS_KEY, JSON.stringify(S));
+  }catch(e){ console.warn('switchWorkspace: persist failed', e); }
+  // 予算管理側で参照される共有キーも更新
+  try{ localStorage.setItem('hittatsu_current_ws', wsId); }catch(e){}
+  // URL から ?ws= を除去（リロード後に招待ダイアログが出ないよう）
+  try{
+    const url = new URL(window.location.href);
+    if(url.searchParams.has('ws')){
+      url.searchParams.delete('ws');
+      window.history.replaceState(null, '', url.toString());
+    }
+  }catch(e){}
   toast('ワークスペースを切替中...');
-  const ok = await joinOrCreateWorkspace(wsId);
-  if(!ok){
-    refreshWorkspaceSwitcher();
-    return;
-  }
-  if(typeof _origSave === 'function') _origSave();
-  else localStorage.setItem(LS_KEY, JSON.stringify(S));
-  subscribeWorkspace();
-  renderAll();
-  refreshWorkspaceSwitcher();
-  if(typeof renderFirebaseSettings === 'function') renderFirebaseSettings();
+  location.reload();
 }
 
 async function createNewWorkspace(){
