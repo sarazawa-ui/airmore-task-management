@@ -611,7 +611,8 @@ body > main:has(#view-calendar.active){overflow:hidden}
 /* ===== Login Screen ===== */
 .login-screen{position:fixed;inset:0;background:linear-gradient(135deg,#1F4E78 0%,#2c5fb8 100%);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px}
 .login-card{background:#fff;border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.3);padding:36px;max-width:460px;width:100%;text-align:center}
-.login-card .lg-logo{width:88px;height:88px;border-radius:18px;background:#1F4E78;color:#fff;display:flex;align-items:center;justify-content:center;font-size:42px;margin:0 auto 16px}
+.login-card .lg-logo{max-width:240px;height:auto;display:block;margin:0 auto 16px}
+.login-card .lg-logo.fallback{width:88px;height:88px;border-radius:18px;background:#1F4E78;color:#fff;display:flex;align-items:center;justify-content:center;font-size:42px}
 .login-card h1{font-size:22px;color:#1F4E78;margin:0 0 6px}
 .login-card .lg-sub{color:#666;font-size:13px;margin:0 0 24px}
 .login-card .invite-banner{background:#FFF8DC;border:1px solid #FFD966;color:#5a4600;border-radius:6px;padding:10px;font-size:12px;margin-bottom:16px;text-align:left}
@@ -935,7 +936,7 @@ header.app-header{padding:10px 22px}
 <!-- ============ LOGIN SCREEN ============ -->
 <div class="login-screen" id="loginScreen" style="display:none">
   <div class="login-card">
-    <div class="lg-logo" id="loginLogo">📊</div>
+    <img class="lg-logo" id="loginLogo" src="logo.png" alt="Hittatsu">
     <h1 id="loginTitle">タスク管理アプリ</h1>
     <div class="lg-sub" id="loginSub">Googleアカウントでログインしてください</div>
     <div class="invite-banner" id="inviteBanner" style="display:none">
@@ -9000,11 +9001,11 @@ function applyProfileToHeader(){
   } else {
     lg.innerHTML = (p.companyName||'㈱').slice(0,2);
   }
-  // Login screen logo too
+  // Login screen logo too — Hittatsu のロゴを既定で表示し、
+  //   会社ロゴが設定されていればそちらに切替（IMG 要素の src を入れ替え）
   const llg = document.getElementById('loginLogo');
-  if(llg){
-    if(p.companyLogo) llg.innerHTML = `<img src="${p.companyLogo}" style="width:100%;height:100%;object-fit:cover;border-radius:18px">`;
-    else llg.textContent = '📊';
+  if(llg && llg.tagName === 'IMG'){
+    llg.src = p.companyLogo || 'logo.png';
   }
   const lt = document.getElementById('loginTitle');
   if(lt) lt.textContent = (p.companyName||'タスク管理');
