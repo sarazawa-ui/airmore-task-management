@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
@@ -1641,14 +1641,27 @@ document.querySelectorAll('nav button').forEach(b=>{
 });
 
 // ============ HELPERS ============
+// 参加メンバーのみ返す：S.members から、authMembers にも存在する名前だけ抽出。
+// authMembers が空（初期化前など）の場合はフォールバックで S.members 全部返す。
+function activeMembers(){
+  const auth = new Set((S.authMembers||[]).map(am => am && am.name).filter(Boolean));
+  if(auth.size === 0) return (S.members||[]).filter(m => m && m.name);
+  return (S.members||[]).filter(m => m && m.name && auth.has(m.name));
+}
+
 function memberOptions(sel=""){
-  // authMembers（一度ログインしたユーザー）と members（マスタ追加メンバー）の和集合を生成。
-  // 名前で uniq、authMembers を優先。一度ログインしたメンバーは消えない。
+  // ワークスペースへの参加メンバー（authMembers）のみ表示。
+  // S.members 側に手動追加された未参加者は除外する。
   const seen = new Set();
   const names = [];
   (S.authMembers||[]).forEach(am => { if(am && am.name && !seen.has(am.name)){ seen.add(am.name); names.push(am.name); }});
-  (S.members||[]).forEach(m => { if(m && m.name && !seen.has(m.name)){ seen.add(m.name); names.push(m.name); }});
-  if(sel && !seen.has(sel)) names.push(sel); // 既存タスクの担当者が一覧にない場合も保持
+  // 既存タスクに割当てられている担当者が現メンバーに居ない場合：（未参加）として残す
+  // 完全に消すと、誰が担当だったか分からなくなるため
+  if(sel && !seen.has(sel)) {
+    return '<option value=""></option>' +
+      names.map(n=>`<option ${n===sel?'selected':''}>${escapeHtml(n)}</option>`).join('') +
+      `<option selected>${escapeHtml(sel)}（未参加）</option>`;
+  }
   return '<option value=""></option>' + names.map(n=>`<option ${n===sel?'selected':''}>${escapeHtml(n)}</option>`).join('');
 }
 function statusOptions(sel=""){
@@ -2266,7 +2279,7 @@ function renderDashboard(){
 
   // Member table (filtered by range)
   const tb = document.querySelector('#tblMember tbody'); tb.innerHTML="";
-  S.members.filter(m=>m.name).forEach(m=>{
+  activeMembers().forEach(m=>{
     const ts = S.tasks.filter(t=>t.owner===m.name && inRange(t));
     const c = {未着手:0,着手中:0,完了:0,中止:0};
     let lt=0;
@@ -2954,7 +2967,7 @@ function renderMemberChips(host, g){
   const seen = new Set();
   const allMembers = [];
   (S.authMembers||[]).forEach(am=>{ if(am.name && !seen.has(am.name)){ seen.add(am.name); allMembers.push({name:am.name, dept:'(Google)'}); }});
-  S.members.filter(m=>m.name).forEach(m=>{ if(!seen.has(m.name)){ seen.add(m.name); allMembers.push(m); }});
+  activeMembers().forEach(m=>{ if(!seen.has(m.name)){ seen.add(m.name); allMembers.push(m); }});
   if(allMembers.length===0){
     html += `<div style="padding:8px;color:#888;font-size:11px">マスタにメンバーが登録されていません</div>`;
   } else {
@@ -4056,7 +4069,7 @@ function renderReview(){
   (S.authMembers||[]).forEach(am=>{
     if(am.name && !seen.has(am.name)){ seen.add(am.name); opts += `<option value="${escapeHtml(am.name)}" ${am.name===cur?'selected':''}>${escapeHtml(am.name)}（${escapeHtml(am.email||'')}）</option>`; }
   });
-  S.members.filter(m=>m.name).forEach(m=>{
+  activeMembers().forEach(m=>{
     if(!seen.has(m.name)){ seen.add(m.name); opts += `<option value="${escapeHtml(m.name)}" ${m.name===cur?'selected':''}>${escapeHtml(m.name)}</option>`; }
   });
   ms.innerHTML = opts;
@@ -4622,7 +4635,7 @@ function renderCalendar(){
   const va = document.getElementById('viewAsMember');
   if(va){
     const cur = S.ui.viewAsMember||'';
-    va.innerHTML = '<option value="">全員（透明度なし）</option>'+S.members.filter(m=>m.name).map(m=>`<option ${m.name===cur?'selected':''}>${escapeHtml(m.name)}</option>`).join('');
+    va.innerHTML = '<option value="">全員（透明度なし）</option>'+activeMembers().map(m=>`<option ${m.name===cur?'selected':''}>${escapeHtml(m.name)}</option>`).join('');
     va.onchange = ()=>{ S.ui.viewAsMember = va.value; save(); renderCalendar(); };
   }
   renderDailySummary();
@@ -5235,7 +5248,7 @@ function renderSideTasks(){
   const stSel = document.getElementById('taskStatusFilter');
   if(memSel){
     const memVal = memSel.value;
-    memSel.innerHTML = '<option value="">全担当者</option>'+S.members.filter(m=>m.name).map(m=>`<option ${m.name===memVal?'selected':''}>${escapeHtml(m.name)}</option>`).join('');
+    memSel.innerHTML = '<option value="">全担当者</option>'+activeMembers().map(m=>`<option ${m.name===memVal?'selected':''}>${escapeHtml(m.name)}</option>`).join('');
   }
   if(stSel){
     const stVal = stSel.value;
