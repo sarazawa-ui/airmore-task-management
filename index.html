@@ -1330,6 +1330,11 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
     </div>
     <div class="profile-form">
       <div class="field">
+        <label>所属会社</label>
+        <input type="text" id="cfgMyCompany" placeholder="例：エアモア">
+        <div class="help">予算管理に移動した際、ここに設定した会社名と一致する組織が自動で選択されます（組織名と完全一致が必要）。</div>
+      </div>
+      <div class="field">
         <label>カレンダーの週始まり</label>
         <select id="weekStartDay">
           <option value="1">月曜日始まり</option>
@@ -9150,6 +9155,10 @@ function renderDisplaySettings(){
   if(!sel) return;
   // Proxy 経由で個人設定を取得
   sel.value = String(S.ui.weekStartDay ?? 1);
+  const myCo = document.getElementById('cfgMyCompany');
+  if(myCo){
+    try{ myCo.value = localStorage.getItem('hittatsu_my_company') || ''; }catch(e){ myCo.value = ''; }
+  }
   document.getElementById('cfgWorkMin').value = S.ui.workMin ?? 480;
   document.getElementById('cfgBufferMin').value = S.ui.bufferMin ?? 90;
   document.getElementById('cfgEnforceCap').checked = !!S.ui.enforceCap;
@@ -9163,6 +9172,14 @@ function renderDisplaySettings(){
 }
 function saveDisplaySettings(){
   S.ui.weekStartDay = Number(document.getElementById('weekStartDay').value);
+  const myCo = document.getElementById('cfgMyCompany');
+  if(myCo){
+    try{
+      const v = (myCo.value||'').trim();
+      if(v) localStorage.setItem('hittatsu_my_company', v);
+      else localStorage.removeItem('hittatsu_my_company');
+    }catch(e){}
+  }
   S.ui.workMin = Number(document.getElementById('cfgWorkMin').value)||480;
   S.ui.bufferMin = Number(document.getElementById('cfgBufferMin').value)||0;
   S.ui.enforceCap = !!document.getElementById('cfgEnforceCap').checked;
