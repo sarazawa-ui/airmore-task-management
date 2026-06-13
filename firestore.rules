@@ -30,15 +30,42 @@ service cloud.firestore {
       }
     }
 
+    // === Global Budget（WS非依存・全ユーザー共通） ===
+    // - globalBudget/data         : 予実データ本体（JSON 文字列）
+    // - globalBudget/roles        : { roles: { email: 'admin'|'editor'|'viewer' } }
+    // - globalBudget/userCompanies: { map: { email: 会社名 } }
+    // 役割：viewer / editor / admin（admin はロール管理可）
+    // bootstrap admin: sarazawa@leaklab-japan.com は無条件 admin（初期セットアップ用）
+    match /globalBudget/{doc=**} {
+      allow read: if request.auth != null && _gbReadOk(request.auth.token.email);
+      allow write: if request.auth != null && _gbWriteOk(request.auth.token.email);
+    }
+
     // === sentReminders（Cloud Functions のみ）===
     match /sentReminders/{id} {
       allow read, write: if false;
     }
   }
 
-  // ヘルパ関数：workspaces/{wsId}.budgetRoles[email] を返す
+  // ヘルパ関数：workspaces/{wsId}.budgetRoles[email] を返す（旧パス互換）
   function _budgetRole(wsId, email) {
     return get(/databases/$(database)/documents/workspaces/$(wsId))
       .data.get('budgetRoles', {}).get(email, null);
+  }
+
+  // === Global Budget ヘルパ ===
+  function _isBootstrapAdmin(email) {
+    return email == 'sarazawa@leaklab-japan.com';
+  }
+  function _gbRole(email) {
+    return exists(/databases/$(database)/documents/globalBudget/roles)
+      ? get(/databases/$(database)/documents/globalBudget/roles).data.get('roles', {}).get(email, null)
+      : null;
+  }
+  function _gbReadOk(email) {
+    return _isBootstrapAdmin(email) || _gbRole(email) in ['admin', 'editor', 'viewer'];
+  }
+  function _gbWriteOk(email) {
+    return _isBootstrapAdmin(email) || _gbRole(email) in ['admin', 'editor'];
   }
 }

@@ -6760,6 +6760,9 @@ function initFirebase(){
             renderAll();
           }
         }
+        // ★ Firebase 認証が解決した時点で WS 切替プルダウンを必ず再表示
+        // 予算管理からの遷移後など、auth 解決前に updateWsSwitcherLabel が走って隠れたままになるのを救済
+        if(typeof refreshWorkspaceSwitcher === 'function') refreshWorkspaceSwitcher();
         // ワークスペース購読
         if(S.workspaceId && !_wsUnsubscribe){
           subscribeWorkspace();
@@ -8700,6 +8703,15 @@ async function appLogin(){
     }catch(err){
       const code = err?.code || '';
       console.warn('[login] error code=', code, 'message=', err?.message, err);
+      // ★ Firebase 認証は既に成功している場合（後処理だけ失敗）→ 失敗ダイアログを出さない
+      try{
+        if(_firebaseReady && firebase.auth().currentUser){
+          console.log('[login] auth succeeded; suppressing post-login error popup');
+          toast('ログイン成功（一部の初期化処理でエラーが出ました：'+(code||err?.message||'')+'）');
+          window._loginInProgress = false;
+          return;
+        }
+      }catch(e){}
       if(code === 'auth/cancelled-popup-request'){
         // 多重クリック等 → 静かに無視
         console.log("Login popup cancelled (multiple request):", code);
@@ -8936,6 +8948,8 @@ function appLogout(){
   if(_wsUnsubscribe){ _wsUnsubscribe(); _wsUnsubscribe = null; }
   if(typeof _wsTasksUnsubscribe !== 'undefined' && _wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
   if(typeof _wsGoalsUnsubscribe !== 'undefined' && _wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
+  // 設定モーダルが開いていれば閉じる（閉じないとログイン画面が裏に隠れる）
+  try{ closeSettingsModal && closeSettingsModal(); }catch(e){}
   // 明示的なログアウト時のみ Firebase からもサインアウト（永続セッション解除）
   if(_firebaseReady && firebase.auth().currentUser){
     firebase.auth().signOut().catch(e=>console.warn(e));
@@ -8946,10 +8960,12 @@ function appLogout(){
   logHistory("logout", `${_currentUser?_currentUser.name:'ユーザー'} がログアウト`);
   _currentUser = null;
   saveSession();
-  // localStorage も明示的にクリア
   try{ localStorage.removeItem(AUTH_KEY); }catch(e){}
   updateSyncStatus('offline');
   hideApp();
+  // 念のため WS 切替メニューも閉じる + サブコレ系のローカルキャッシュも破棄
+  try{ closeWsMenu && closeWsMenu(); }catch(e){}
+  try{ _resetWorkspaceLocalCaches && _resetWorkspaceLocalCaches(); }catch(e){}
 }
 
 function showApp(){
@@ -9183,14 +9199,14 @@ function renderDisplaySettings(){
   }
 }
 
-// 予算管理に登録された組織名一覧を取得（キャッシュ付き）
+// グローバル予算管理 (globalBudget/data) から組織名一覧を取得（キャッシュ付き）
 let _budgetOrgsCache = null;
 let _budgetOrgsCacheAt = 0;
 async function fetchBudgetOrgs(force){
   if(!force && _budgetOrgsCache && (Date.now()-_budgetOrgsCacheAt) < 60000) return _budgetOrgsCache;
-  if(!_firebaseReady || !firebase.auth().currentUser || !S.workspaceId) return [];
+  if(!_firebaseReady || !firebase.auth().currentUser) return [];
   try{
-    const snap = await firebase.firestore().doc(`workspaces/${S.workspaceId}/budget/airmore-budget-v4`).get();
+    const snap = await firebase.firestore().doc('globalBudget/data').get();
     bumpFbUsage('read', 1);
     if(!snap.exists){ _budgetOrgsCache = []; _budgetOrgsCacheAt = Date.now(); return []; }
     const data = snap.data() || {};
@@ -9206,23 +9222,57 @@ async function fetchBudgetOrgs(force){
   }
 }
 
+// グローバル userCompanies マップから自分の所属会社を取得
+async function fetchMyCompany(){
+  if(!_firebaseReady || !firebase.auth().currentUser) return '';
+  try{
+    const snap = await firebase.firestore().doc('globalBudget/userCompanies').get();
+    bumpFbUsage('read', 1);
+    if(!snap.exists) return '';
+    const m = (snap.data() || {}).map || {};
+    return m[_currentUser.email] || '';
+  }catch(e){ console.warn('fetchMyCompany failed:', e); return ''; }
+}
+
 async function populateMyCompanySelect(){
   const sel = document.getElementById('cfgMyCompany');
   if(!sel) return;
-  const current = (_currentUser && S.userCompanies && S.userCompanies[_currentUser.email]) ||
-                  (function(){ try{ return localStorage.getItem('hittatsu_my_company')||''; }catch(e){ return ''; }})();
+  // ローカルキャッシュで先に表示 → 後でグローバル値で上書き
+  let current = '';
+  try{ current = localStorage.getItem('hittatsu_my_company') || ''; }catch(e){}
+  const cloudCurrent = await fetchMyCompany();
+  if(cloudCurrent) {
+    current = cloudCurrent;
+    try{ localStorage.setItem('hittatsu_my_company', cloudCurrent); }catch(e){}
+  }
   const orgs = await fetchBudgetOrgs();
-  // 既存設定値が選択肢に無い場合も保持（予算管理側で組織未登録の段階でも入力済みの値を残す）
   const all = new Set(orgs);
   if(current) all.add(current);
   const sorted = Array.from(all).sort((a,b)=>a.localeCompare(b,'ja'));
   sel.innerHTML = '<option value="">（未設定）</option>' +
     sorted.map(n => `<option value="${escapeHtml(n)}"${n===current?' selected':''}>${escapeHtml(n)}</option>`).join('');
   if(orgs.length === 0){
-    // 予算管理がまだ初期化されていない場合のヒント
     const hint = document.createElement('option');
     hint.value = ''; hint.disabled = true; hint.textContent = '（予算管理で組織を登録してください）';
     sel.appendChild(hint);
+  }
+}
+
+// 所属会社を globalBudget/userCompanies に保存
+async function saveMyCompany(company){
+  if(!_firebaseReady || !firebase.auth().currentUser) return;
+  try{
+    const ref = firebase.firestore().doc('globalBudget/userCompanies');
+    const snap = await ref.get();
+    bumpFbUsage('read', 1);
+    const cur = snap.exists ? ((snap.data() || {}).map || {}) : {};
+    if(company) cur[_currentUser.email] = company;
+    else delete cur[_currentUser.email];
+    await ref.set({ map: cur, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    bumpFbUsage('write', 1);
+  }catch(e){
+    console.warn('saveMyCompany failed:', e);
+    throw e;
   }
 }
 
@@ -9231,14 +9281,15 @@ function saveDisplaySettings(){
   const myCo = document.getElementById('cfgMyCompany');
   if(myCo && _currentUser && _currentUser.email){
     const v = (myCo.value||'').trim();
-    if(!S.userCompanies) S.userCompanies = {};
-    if(v) S.userCompanies[_currentUser.email] = v;
-    else delete S.userCompanies[_currentUser.email];
-    // 同一ブラウザの予算管理が初期表示で参照するためキャッシュ
     try{
       if(v) localStorage.setItem('hittatsu_my_company', v);
       else localStorage.removeItem('hittatsu_my_company');
     }catch(e){}
+    // グローバル予算管理側へ保存（非同期）
+    saveMyCompany(v).catch(e=>{
+      console.warn('所属会社の保存に失敗:', e);
+      toast('所属会社のクラウド保存に失敗：'+(e.message||e.code||e));
+    });
   }
   S.ui.workMin = Number(document.getElementById('cfgWorkMin').value)||480;
   S.ui.bufferMin = Number(document.getElementById('cfgBufferMin').value)||0;
