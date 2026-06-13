@@ -1331,8 +1331,10 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
     <div class="profile-form">
       <div class="field">
         <label>所属会社</label>
-        <input type="text" id="cfgMyCompany" placeholder="例：エアモア">
-        <div class="help">予算管理に移動した際、ここに設定した会社名と一致する組織が自動で選択されます（組織名と完全一致が必要）。</div>
+        <select id="cfgMyCompany">
+          <option value="">（未設定）</option>
+        </select>
+        <div class="help">予算管理に移動した際、ここで選択した会社が自動で表示されます。選択肢は予算管理の「組織設定」で登録された会社一覧です。</div>
       </div>
       <div class="field">
         <label>カレンダーの週始まり</label>
@@ -6797,7 +6799,7 @@ function serializeWorkspace(){
   // 'profile'（会社名・ロゴ・メモ）はユーザー共通のためローカルにのみ保持
   // ★ v3: weeklyReports / history / board / kpt はサブコレクション or 専用 doc に分離 → main doc から除外
   //    （これらを main doc に詰めると 1 MiB 限界に到達して failed-precondition で全 write 失敗していた）
-  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','seq','ui','userPrefs','treePresets','agendaPresets','budgetRoles','_tombstones'];
+  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','seq','ui','userPrefs','treePresets','agendaPresets','budgetRoles','userCompanies','_tombstones'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
   // goals.expanded はUI状態（個人別）のため同期から除外
@@ -9155,10 +9157,7 @@ function renderDisplaySettings(){
   if(!sel) return;
   // Proxy 経由で個人設定を取得
   sel.value = String(S.ui.weekStartDay ?? 1);
-  const myCo = document.getElementById('cfgMyCompany');
-  if(myCo){
-    try{ myCo.value = localStorage.getItem('hittatsu_my_company') || ''; }catch(e){ myCo.value = ''; }
-  }
+  populateMyCompanySelect();
   document.getElementById('cfgWorkMin').value = S.ui.workMin ?? 480;
   document.getElementById('cfgBufferMin').value = S.ui.bufferMin ?? 90;
   document.getElementById('cfgEnforceCap').checked = !!S.ui.enforceCap;
@@ -9170,12 +9169,60 @@ function renderDisplaySettings(){
     lbl.textContent = `${_currentUser.name}（${_currentUser.email}）`;
   }
 }
+
+// 予算管理に登録された組織名一覧を取得（キャッシュ付き）
+let _budgetOrgsCache = null;
+let _budgetOrgsCacheAt = 0;
+async function fetchBudgetOrgs(force){
+  if(!force && _budgetOrgsCache && (Date.now()-_budgetOrgsCacheAt) < 60000) return _budgetOrgsCache;
+  if(!_firebaseReady || !firebase.auth().currentUser || !S.workspaceId) return [];
+  try{
+    const snap = await firebase.firestore().doc(`workspaces/${S.workspaceId}/budget/airmore-budget-v4`).get();
+    bumpFbUsage('read', 1);
+    if(!snap.exists){ _budgetOrgsCache = []; _budgetOrgsCacheAt = Date.now(); return []; }
+    const data = snap.data() || {};
+    let parsed = null;
+    try{ parsed = JSON.parse(data.value || '{}'); }catch(e){ parsed = {}; }
+    const orgs = Array.isArray(parsed.orgs) ? parsed.orgs.map(o => o.name).filter(Boolean) : [];
+    _budgetOrgsCache = orgs;
+    _budgetOrgsCacheAt = Date.now();
+    return orgs;
+  }catch(e){
+    console.warn('fetchBudgetOrgs failed:', e);
+    return _budgetOrgsCache || [];
+  }
+}
+
+async function populateMyCompanySelect(){
+  const sel = document.getElementById('cfgMyCompany');
+  if(!sel) return;
+  const current = (_currentUser && S.userCompanies && S.userCompanies[_currentUser.email]) ||
+                  (function(){ try{ return localStorage.getItem('hittatsu_my_company')||''; }catch(e){ return ''; }})();
+  const orgs = await fetchBudgetOrgs();
+  // 既存設定値が選択肢に無い場合も保持（予算管理側で組織未登録の段階でも入力済みの値を残す）
+  const all = new Set(orgs);
+  if(current) all.add(current);
+  const sorted = Array.from(all).sort((a,b)=>a.localeCompare(b,'ja'));
+  sel.innerHTML = '<option value="">（未設定）</option>' +
+    sorted.map(n => `<option value="${escapeHtml(n)}"${n===current?' selected':''}>${escapeHtml(n)}</option>`).join('');
+  if(orgs.length === 0){
+    // 予算管理がまだ初期化されていない場合のヒント
+    const hint = document.createElement('option');
+    hint.value = ''; hint.disabled = true; hint.textContent = '（予算管理で組織を登録してください）';
+    sel.appendChild(hint);
+  }
+}
+
 function saveDisplaySettings(){
   S.ui.weekStartDay = Number(document.getElementById('weekStartDay').value);
   const myCo = document.getElementById('cfgMyCompany');
-  if(myCo){
+  if(myCo && _currentUser && _currentUser.email){
+    const v = (myCo.value||'').trim();
+    if(!S.userCompanies) S.userCompanies = {};
+    if(v) S.userCompanies[_currentUser.email] = v;
+    else delete S.userCompanies[_currentUser.email];
+    // 同一ブラウザの予算管理が初期表示で参照するためキャッシュ
     try{
-      const v = (myCo.value||'').trim();
       if(v) localStorage.setItem('hittatsu_my_company', v);
       else localStorage.removeItem('hittatsu_my_company');
     }catch(e){}
