@@ -6317,10 +6317,12 @@ async function refreshGoogleAccessToken(silent){
   if(!_firebaseReady || typeof firebase==='undefined') return false;
   const user = firebase.auth().currentUser;
   if(!user) return false;
-  // サイレントモードではポップアップを開かない（バックグラウンド処理でユーザーを驚かせない）
-  // OAuthアクセストークンはポップアップ無しに更新できないため、明示的に再取得を促す
+  // サイレントモード：GIS トークンクライアントで prompt:'' によるバックグラウンド更新を試みる。
+  // 成功すればポップアップなしでトークンが更新される（OAuth同意画面が「内部」かつ同意済みの場合）。
   if(silent){
-    console.log("Silent token refresh skipped — popup not allowed in background.");
+    const ok = await silentRefreshAccessToken();
+    if(ok) return true;
+    console.log("Silent token refresh failed — interactive re-auth required.");
     return false;
   }
   try{
@@ -6352,6 +6354,93 @@ async function refreshGoogleAccessToken(silent){
     if(!silent) alert("再認証失敗："+(e.message||e.code||e));
     return false;
   }
+}
+
+// ===== サイレント・トークン更新（GIS token client / prompt:''） =====
+// 利用可能な OAuth Web クライアントID を解決（定数 > localStorage > 設定値の順）
+function _getGisClientId(){
+  return (typeof GIS_CLIENT_ID !== 'undefined' && GIS_CLIENT_ID)
+      || getClientId()
+      || (S.ui && S.ui.googleClientId)
+      || '';
+}
+
+let _silentTokenClient = null;
+let _silentRefreshInflight = null;
+// ポップアップ無しでアクセストークンを再取得。成功 true / 失敗 false。
+async function silentRefreshAccessToken(){
+  const cid = _getGisClientId();
+  if(!cid){
+    console.log('[token] no OAuth client id configured — silent refresh unavailable');
+    return false;
+  }
+  if(typeof firebase === 'undefined' || !firebase.auth || !firebase.auth().currentUser) return false;
+  if(_silentRefreshInflight) return _silentRefreshInflight;
+  try{ await loadGoogleScript(); }catch(e){ return false; }
+
+  const p = new Promise((resolve)=>{
+    let settled = false;
+    const done = (v)=>{ if(!settled){ settled = true; resolve(v); } };
+    // 念のためタイムアウト（GIS が無反応のまま固まるのを防ぐ）
+    const to = setTimeout(()=>done(false), 15000);
+    try{
+      _silentTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: cid,
+        scope: 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.send',
+        callback: (resp)=>{
+          clearTimeout(to);
+          if(resp && resp.access_token){
+            _currentUser.accessToken = resp.access_token;
+            _currentUser.expiry = Date.now() + (Number(resp.expires_in)||3600)*1000;
+            _gAccessToken = resp.access_token;
+            _gTokenExpiry = _currentUser.expiry;
+            try{ saveSession(); }catch(_){}
+            try{ logSync('token.silentRefresh', {ok:true}); }catch(_){}
+            done(true);
+          } else {
+            try{ logSync('token.silentRefresh', {ok:false, err: resp && resp.error}); }catch(_){}
+            done(false);
+          }
+        },
+        error_callback: (err)=>{
+          clearTimeout(to);
+          console.warn('[token] silent refresh error:', err && (err.type||err.message||err));
+          done(false);
+        }
+      });
+      // hint でアカウントを固定し prompt:'' で UI 無し更新を試行
+      _silentTokenClient.requestAccessToken({ prompt: '', hint: _currentUser?.email || '' });
+    }catch(e){
+      clearTimeout(to);
+      console.warn('[token] silent refresh threw:', e);
+      done(false);
+    }
+  });
+  _silentRefreshInflight = p;
+  p.finally(()=>{ if(_silentRefreshInflight === p) _silentRefreshInflight = null; });
+  return p;
+}
+
+// ログイン中、期限の15分前を切ったら自動でサイレント更新するタイマー
+let _tokenAutoRefreshTimer = null;
+function startTokenAutoRefresh(){
+  if(_tokenAutoRefreshTimer) clearInterval(_tokenAutoRefreshTimer);
+  const tick = async ()=>{
+    try{
+      if(typeof firebase === 'undefined' || !firebase.auth || !firebase.auth().currentUser) return;
+      if(!_getGisClientId()) return; // クライアントID未設定なら何もしない（従来動作）
+      const exp = _currentUser?.expiry || 0;
+      // expiry 不明(0) もしくは 残り15分未満 → 更新
+      const needRefresh = !exp || (exp - Date.now() < 15*60*1000);
+      if(needRefresh){
+        const ok = await silentRefreshAccessToken();
+        try{ logSync('token.autoRefresh', {ok}); }catch(_){}
+      }
+    }catch(e){ console.warn('[token] auto-refresh tick failed:', e); }
+  };
+  _tokenAutoRefreshTimer = setInterval(tick, 10*60*1000); // 10分ごと
+  // ログイン直後にも一度温める
+  setTimeout(()=>{ tick(); }, 4000);
 }
 
 async function googleFetchEvents(silent){
@@ -6493,6 +6582,15 @@ const FB_DEFAULT_CONFIG = {
   "appId": "1:674161520247:web:fe0e0f9d0656008fbaa072",
   "measurementId": "G-VFS9X3L72E"
 };
+
+// ★ Google OAuth Web クライアントID（サイレント・トークン更新用）
+//   GIS トークンクライアントで prompt:'' によるバックグラウンド更新を行うために必要。
+//   Google Cloud Console → APIとサービス → 認証情報 → OAuth 2.0 クライアントID
+//   →「ウェブ アプリケーション」の クライアントID をここに貼り付ける。
+//   併せて「承認済みの JavaScript 生成元」に https://sarazawa-ui.github.io を追加すること。
+//   空のままだと従来通り（1時間ごとに手動で権限再取得が必要）。
+//   設定画面の「OAuth Client ID」を入力した場合はそちらも自動利用される。
+const GIS_CLIENT_ID = "";
 
 let _firebaseConfig = null;
 let _firebaseReady = false;
@@ -6839,6 +6937,8 @@ function initFirebase(){
         // ★ Firebase 認証が解決した時点で WS 切替プルダウンを必ず再表示
         // 予算管理からの遷移後など、auth 解決前に updateWsSwitcherLabel が走って隠れたままになるのを救済
         if(typeof refreshWorkspaceSwitcher === 'function') refreshWorkspaceSwitcher();
+        // ★ セッション復元時もトークンのサイレント自動更新を開始
+        try{ startTokenAutoRefresh(); }catch(e){ console.warn('startTokenAutoRefresh (restore) failed:', e); }
         // ワークスペース購読
         if(S.workspaceId && !_wsUnsubscribe){
           subscribeWorkspace();
@@ -8913,6 +9013,8 @@ async function onLoggedIn(){
   }
   // Auto-fetch Google Calendar events in background
   setTimeout(()=>{ try { googleFetchEvents(true); } catch(e){} }, 600);
+  // アクセストークンのサイレント自動更新を開始（1時間失効による再ログインを防止）
+  try{ startTokenAutoRefresh(); }catch(e){ console.warn('startTokenAutoRefresh failed:', e); }
 }
 
 async function registerCurrentMember(){
