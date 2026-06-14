@@ -9220,6 +9220,45 @@ function applyProfileToHeader(){
 // ============ Task edit modal ============
 let _editingTaskId = null;
 let _editingIsNew = false; // ★ 新規追加直後のモーダルかどうか（キャンセル時に該当タスクを削除）
+// マイタスク横断などからジャンプして開いたタスク：詳細を閉じた後、デイリータスク一覧に表示する対象 ID
+let _revealTaskInSideOnClose = null;
+
+// 指定タスクをデイリータスク（サイドバー）一覧に必ず表示し、スクロール＆ハイライトする。
+// サイドタブ・表示週・各種フィルタを、当該タスクが見える状態に自動調整する。
+function revealTaskInSidebar(taskId){
+  const t = (S.tasks||[]).find(x => x && x.id === taskId);
+  if(!t) return;
+  // 1) タスクの種別に応じて適切なサイドタブ／表示週を選択
+  if(isUnassigned(t)){
+    S.ui.sideTab = 'unscheduled';            // 未割当
+  } else if(t.startD){
+    S.ui.weekStart = weekStartOf(t.startD);  // タスクのある週を表示
+    S.ui.sideTab = 'week';                    // 表示週
+  } else {
+    S.ui.sideTab = 'all';
+  }
+  // 2) フィルタが該当タスクを隠さないようにクリア
+  const memSel = document.getElementById('taskMemberFilter'); if(memSel) memSel.value = '';
+  const stSel  = document.getElementById('taskStatusFilter'); if(stSel) stSel.value = '';
+  const txtSel = document.getElementById('taskFilter');       if(txtSel) txtSel.value = '';
+  const hideDone = document.getElementById('hideDone');
+  if(hideDone && t.status === '完了') hideDone.checked = false; // 完了タスクなら完了非表示を解除
+  save();
+  try{ renderCalendar(); }catch(e){}
+  renderSideTasks();
+  // 3) 描画後にスクロール＆ハイライト
+  setTimeout(() => {
+    let card = null;
+    document.querySelectorAll('.side-task').forEach(c => { if(c.dataset.taskId === taskId) card = c; });
+    if(card){
+      try{ card.scrollIntoView({ behavior:'smooth', block:'center' }); }catch(e){}
+      card.classList.remove('highlight');
+      void card.offsetWidth; // リフロー強制（連続実行でもアニメ再生）
+      card.classList.add('highlight');
+      setTimeout(() => card.classList.remove('highlight'), 1600);
+    }
+  }, 100);
+}
 function openTaskEditModal(taskId, opts){
   _editingTaskId = taskId;
   _editingIsNew = !!(opts && opts.isNew);
@@ -9271,8 +9310,16 @@ function closeTaskEditModal(){
     }
   }
   document.getElementById('taskEditModal').classList.remove('show');
+  const _closingId = _editingTaskId;
+  const _reveal = _revealTaskInSideOnClose;
+  _revealTaskInSideOnClose = null;
   _editingTaskId = null;
   _editingIsNew = false;
+  // マイタスク横断などからジャンプして開いたタスクは、閉じた後にデイリータスク一覧へ表示
+  // （今閉じたタスク自身が対象で、まだ存在する場合のみ）
+  if(_reveal && _reveal === _closingId && (S.tasks||[]).some(x => x && x.id === _reveal)){
+    try{ revealTaskInSidebar(_reveal); }catch(e){ console.warn('revealTaskInSidebar failed:', e); }
+  }
 }
 function saveEditingTask(){
   const t = S.tasks.find(x=>x.id===_editingTaskId);
@@ -10480,6 +10527,8 @@ async function openPersonalTask(wsId, taskId){
       await _waitForTask(taskId, 5000);
     }
     goToView('calendar');
+    // ★ 詳細ポップアップを閉じた後、当該タスクをデイリータスク一覧に表示するためのマーク
+    _revealTaskInSideOnClose = taskId;
     // 描画完了を待ってから詳細を開く
     setTimeout(() => {
       try{ focusTaskOnCalendar(taskId); }catch(e){ /* 未配置なら無視 */ }
