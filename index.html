@@ -6863,7 +6863,15 @@ function updateSyncStatus(state){
   el.classList.remove('synced','syncing','error','offline','quota');
   el.classList.add(state);
   el.title = '';
+  // 同期インジケーターはヘッダーから非表示化済み。.lbl が無い場合があるため
+  // null セーフにする（ここで throw すると save()→render の流れが止まる）
   const lbl = el.querySelector('.lbl');
+  if(!lbl){
+    if(state==='quota'){
+      el.title = 'Firestore無料枠の日次上限に達しました（書込20K/日）。約17時(JST)にリセットされます。継続利用するには Blaze プラン（従量制）への切替を検討してください。';
+    }
+    return;
+  }
   if(state==='synced') lbl.textContent = '同期済';
   else if(state==='syncing') lbl.textContent = '同期中';
   else if(state==='quota'){
