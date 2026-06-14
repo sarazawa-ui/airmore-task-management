@@ -35,10 +35,21 @@ service cloud.firestore {
     // - globalBudget/roles        : { roles: { email: 'admin'|'editor'|'viewer' } }
     // - globalBudget/userCompanies: { map: { email: 会社名 } }
     // 役割：viewer / editor / admin（admin はロール管理可）
-    // bootstrap admin: sarazawa@leaklab-japan.com は無条件 admin（初期セットアップ用）
+    // bootstrap admin: sarazawa@n-airmore.com は無条件 admin（初期セットアップ用）
     match /globalBudget/{doc=**} {
       allow read: if request.auth != null && _gbReadOk(request.auth.token.email);
       allow write: if request.auth != null && _gbWriteOk(request.auth.token.email);
+    }
+
+    // === Budget Access Requests（権限のないユーザーが申請を出す窓口） ===
+    // ドキュメントID = 申請者メール
+    //   - 本人：自分の申請は read/write 可
+    //   - admin：全申請を read/write 可（承認・拒否）
+    match /budgetAccessRequests/{email} {
+      allow read, write: if request.auth != null
+        && request.auth.token.email == email;
+      allow read, write: if request.auth != null
+        && _gbAdminOk(request.auth.token.email);
     }
 
     // === sentReminders（Cloud Functions のみ）===
@@ -55,7 +66,7 @@ service cloud.firestore {
 
   // === Global Budget ヘルパ ===
   function _isBootstrapAdmin(email) {
-    return email == 'sarazawa@leaklab-japan.com';
+    return email == 'sarazawa@n-airmore.com';
   }
   function _gbRole(email) {
     return exists(/databases/$(database)/documents/globalBudget/roles)
@@ -67,5 +78,8 @@ service cloud.firestore {
   }
   function _gbWriteOk(email) {
     return _isBootstrapAdmin(email) || _gbRole(email) in ['admin', 'editor'];
+  }
+  function _gbAdminOk(email) {
+    return _isBootstrapAdmin(email) || _gbRole(email) == 'admin';
   }
 }

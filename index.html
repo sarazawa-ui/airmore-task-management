@@ -567,13 +567,24 @@ body > main:has(#view-calendar.active){overflow:hidden}
 
 /* Dashboard period filter */
 .dash-period{background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:var(--shadow-sm)}
-/* Bulletin board (dashboard top) */
-.board-card{background:linear-gradient(135deg,#FFFBEA 0%,#FFF8DC 100%);border:1px solid #FFE082;border-left:5px solid #FFA000;border-radius:10px;padding:12px 16px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
+/* 担当者別進捗テーブル：数字セルクリック → タスク一覧ポップアップ */
+td.clickable-cell{cursor:pointer;transition:background .12s}
+td.clickable-cell:hover{background:var(--primary-soft);font-weight:600}
+/* プロジェクト一覧：進捗ゲージ（背景色で達成率を視覚化） */
+td.progress-gauge{position:relative;padding:8px 12px}
+td.progress-gauge .progress-bar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#E8F4EA 0%,#C8E6CC 100%);border-right:1px solid #A8D3AE;z-index:0;pointer-events:none}
+td.progress-gauge .progress-text{position:relative;z-index:1;font-weight:600;color:#1B4D2A;text-shadow:0 0 2px rgba(255,255,255,.8)}
+td.progress-gauge.gauge-low .progress-bar{background:linear-gradient(90deg,#FDECEA 0%,#F5C2BD 100%);border-right-color:#E89B91}
+td.progress-gauge.gauge-low .progress-text{color:#7E2418}
+td.progress-gauge.gauge-mid .progress-bar{background:linear-gradient(90deg,#FFF6D9 0%,#FCE4A0 100%);border-right-color:#E8C66B}
+td.progress-gauge.gauge-mid .progress-text{color:#6B4F00}
+/* Bulletin board (dashboard top) - white background */
+.board-card{background:#fff;border:1px solid var(--border);border-left:5px solid #FFA000;border-radius:10px;padding:12px 16px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
 .board-card .board-head{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#7E5109;margin-bottom:6px;flex-wrap:wrap}
 .board-card .board-icon{font-size:16px}
 .board-card .board-title{letter-spacing:.02em}
-.board-card .board-meta{font-size:11px;font-weight:500;color:#A07832;background:rgba(255,255,255,.6);padding:1px 8px;border-radius:9px;margin-left:6px}
-.board-card .board-body{font-size:13px;line-height:1.65;color:#5a4600;white-space:pre-wrap;word-break:break-word;background:rgba(255,255,255,.5);border-radius:6px;padding:8px 12px;min-height:24px}
+.board-card .board-meta{font-size:11px;font-weight:500;color:#A07832;background:#FFFBEA;padding:1px 8px;border-radius:9px;margin-left:6px;border:1px solid #FFE082}
+.board-card .board-body{font-size:13px;line-height:1.65;color:#333;white-space:pre-wrap;word-break:break-word;background:#fff;border-radius:6px;padding:8px 12px;min-height:24px}
 .board-card .board-body b,.board-card .board-body strong{font-weight:700}
 .board-card .board-body p,.board-card .board-body div{margin:0}
 .board-card .board-body ul,.board-card .board-body ol{margin:4px 0;padding-left:22px}
@@ -1069,6 +1080,14 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
     <span class="range" id="dashRangeLabel"></span>
   </div>
 
+  <div class="section">■ 担当者別 進捗状況</div>
+  <div class="card scroll-x" style="padding:0">
+    <table id="tblMember">
+      <thead><tr><th>担当者</th><th>未着手</th><th>着手中</th><th>完了</th><th>中止</th><th>遅延</th><th>合計</th><th>完了率</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
   <div class="section">■ 全社サマリー</div>
   <div class="kpi-grid">
     <div class="kpi k1" onclick="showKpiTasks('todo')" style="cursor:pointer" title="クリックで一覧表示"><div class="lbl">未着手</div><div class="val" id="kpiTodo">0</div></div>
@@ -1080,14 +1099,6 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
     <div><span class="l">全体完了率：</span><span class="v" id="kpiRate">0.0%</span></div>
     <div><span class="l">本日着手予定：</span><span class="v" id="kpiTodayStart">0</span></div>
     <div><span class="l">本日期日：</span><span class="v alert" id="kpiTodayDue">0</span></div>
-  </div>
-
-  <div class="section">■ 担当者別 進捗状況</div>
-  <div class="card scroll-x" style="padding:0">
-    <table id="tblMember">
-      <thead><tr><th>担当者</th><th>未着手</th><th>着手中</th><th>完了</th><th>中止</th><th>遅延</th><th>合計</th><th>完了率</th></tr></thead>
-      <tbody></tbody>
-    </table>
   </div>
 
 
@@ -1771,6 +1782,34 @@ function inDashRange(dateStr, range){
   if(range.end && dateStr > range.end) return false;
   return true;
 }
+// 担当者別 進捗状況テーブルのセルクリック → 該当タスク一覧をポップアップ
+function showMemberTasksPopup(ownerEnc, kind){
+  const owner = decodeURIComponent(ownerEnc);
+  const range = getDashRange();
+  const inRange = t => {
+    const key = t.startD || t.due;
+    return inDashRange(key, range);
+  };
+  let tasks = S.tasks.filter(t => t.owner === owner && inRange(t));
+  let label = '';
+  if(kind === 'todo'){ tasks = tasks.filter(t=>t.status==='未着手'); label = '未着手'; }
+  else if(kind === 'doing'){ tasks = tasks.filter(t=>t.status==='着手中'); label = '着手中'; }
+  else if(kind === 'done'){ tasks = tasks.filter(t=>t.status==='完了'); label = '完了'; }
+  else if(kind === 'canceled'){ tasks = tasks.filter(t=>t.status==='中止'); label = '中止'; }
+  else if(kind === 'late'){
+    tasks = tasks.filter(t=>t.due && diffDays(t.due,todayStr())<0 && t.status!=='完了' && t.status!=='中止');
+    label = '遅延';
+  }
+  else { label = '全件'; }
+  tasks.sort((a,b)=>{
+    const ad = a.due || '9999-12-31';
+    const bd = b.due || '9999-12-31';
+    if(ad !== bd) return ad.localeCompare(bd);
+    return (a.time||'99:99').localeCompare(b.time||'99:99');
+  });
+  showKpiTasksPopup(`${owner} の${label}タスク`, tasks);
+}
+
 function showKpiTasks(type){
   const range = getDashRange();
   const inRange = t => {
@@ -2290,12 +2329,21 @@ function renderDashboard(){
     const sum = c.未着手+c.着手中+c.完了+c.中止;
     const rate = (c.未着手+c.着手中+c.完了)?((c.完了/(c.未着手+c.着手中+c.完了))*100):0;
     const rateColor = rate>=80?"alert-green":rate>=50?"alert-yellow":"alert-red";
+    const ownerEnc = encodeURIComponent(m.name);
+    const cellClick = (n,k) => n>0
+      ? `<td class="center clickable-cell" onclick="showMemberTasksPopup('${ownerEnc}','${k}')" title="クリックで一覧表示">${n}</td>`
+      : `<td class="center">${n}</td>`;
+    const lateCell = lt>0
+      ? `<td class="center alert-red clickable-cell" onclick="showMemberTasksPopup('${ownerEnc}','late')" title="クリックで一覧表示">${lt}</td>`
+      : `<td class="center">${lt}</td>`;
+    const sumCell = sum>0
+      ? `<td class="center clickable-cell" onclick="showMemberTasksPopup('${ownerEnc}','all')" title="クリックで一覧表示">${sum}</td>`
+      : `<td class="center">${sum}</td>`;
     tb.insertAdjacentHTML('beforeend',
       `<tr><td class="center">${escapeHtml(m.name)}</td>
-       <td class="center">${c.未着手}</td><td class="center">${c.着手中}</td>
-       <td class="center">${c.完了}</td><td class="center">${c.中止}</td>
-       <td class="center ${lt>0?'alert-red':''}">${lt}</td>
-       <td class="center">${sum}</td>
+       ${cellClick(c.未着手,'todo')}${cellClick(c.着手中,'doing')}
+       ${cellClick(c.完了,'done')}${cellClick(c.中止,'canceled')}
+       ${lateCell}${sumCell}
        <td class="center ${sum?rateColor:''}">${sum?rate.toFixed(1)+'%':'-'}</td></tr>`);
   });
 
@@ -2374,7 +2422,7 @@ function renderGoals(){
       <td class="input"><div class="member-chips" data-goalidx="${i}"></div></td>
       <td class="input"><input type="date" value="${g.start||''}" data-f="start"></td>
       <td class="input"><input type="date" value="${g.due||''}" data-f="due"></td>
-      <td class="formula"><div class="progress-auto">${prog.value}%<small>${progSrc}</small></div><div class="progress" style="width:90%;margin:4px auto 0"><span style="width:${prog.value}%"></span></div></td>
+      <td class="progress-gauge ${prog.value<30?'gauge-low':prog.value<70?'gauge-mid':''}"><div class="progress-bar" style="width:${prog.value}%"></div><span class="progress-text">${prog.value}%<small style="display:block;font-weight:400;font-size:10px;opacity:.75">${progSrc}</small></span></td>
       <td class="input"><select data-f="status">${statusOptions(g.status)}</select></td>
       <td class="input drive-cell">
         <div class="drive-row" data-mode="view">
