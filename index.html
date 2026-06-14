@@ -645,6 +645,18 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
 .app-header .hittatsu-brand:hover{opacity:.75}
 .app-header .hittatsu-brand.hittatsu-brand-budget{margin-left:8px;border-left:1px solid var(--border);padding-left:10px;border-radius:0}
 .app-header .hittatsu-brand.hittatsu-brand-budget:hover{filter:drop-shadow(0 0 4px rgba(31,78,120,.35))}
+/* === ロゴフリップ切替（タスク↔予算） === */
+.logo-switcher{display:inline-flex;align-items:center;gap:6px;cursor:pointer;user-select:none;transition:opacity .15s}
+.logo-switcher:hover{opacity:.92}
+.logo-flip{width:140px;height:34px;perspective:800px}
+.logo-flip > .logo-face{position:absolute;width:140px;height:34px;backface-visibility:hidden;-webkit-backface-visibility:hidden;display:flex;align-items:center;transition:transform .55s cubic-bezier(.4,.2,.2,1)}
+.logo-flip > .logo-face img{height:34px;width:auto;display:block}
+.logo-flip > .logo-front{transform:rotateY(0deg)}
+.logo-flip > .logo-back{transform:rotateY(-180deg)}
+.logo-switcher:hover .logo-flip > .logo-front{transform:rotateY(180deg)}
+.logo-switcher:hover .logo-flip > .logo-back{transform:rotateY(0deg)}
+.logo-arrow{font-size:14px;color:var(--text-soft);transition:transform .35s,color .15s}
+.logo-switcher:hover .logo-arrow{transform:rotate(180deg);color:var(--primary)}
 .app-header .brand-sep{display:inline-block;width:1px;height:26px;background:var(--border);margin:0 4px}
 .app-header .company-logo{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,var(--primary-light),#fff);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--primary-dark);font-weight:700;font-size:15px;overflow:hidden;flex:0 0 40px}
 .app-header .company-logo img{width:100%;height:100%;object-fit:cover}
@@ -961,7 +973,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
 <!-- ============ LOGIN SCREEN ============ -->
 <div class="login-screen" id="loginScreen" style="display:none">
   <div class="login-card">
-    <img class="lg-logo" id="loginLogo" src="logo.png" alt="Hittatsu">
+    <img class="lg-logo" id="loginLogo" src="Hittatsu_Logo.png" alt="Hittatsu">
     <h1 id="loginTitle">タスク管理アプリ</h1>
     <div class="lg-sub" id="loginSub">Googleアカウントでログインしてください</div>
     <div class="invite-banner" id="inviteBanner" style="display:none">
@@ -989,8 +1001,16 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
 
 <header class="app-header" id="appHeader" style="display:none">
   <div class="logo-area">
-    <img src="logo.png" alt="Hittatsu - タスク管理" class="hittatsu-brand" title="Hittatsu - タスク管理（ホーム）" onclick="goToView('dashboard')">
-    <img src="logo-budget.png" alt="予実管理" class="hittatsu-brand hittatsu-brand-budget" id="hdrBudgetLogo" title="📊 予実管理ボードを開く" onclick="openBudgetApp()" style="display:none">
+    <!-- ロゴフリップ：通常はタスク管理ロゴ、ホバーで予算管理ロゴが回転で出現、クリックで予算管理へ -->
+    <div class="logo-switcher" id="hdrLogoSwitcher" title="クリックで予算管理に切替" onclick="openBudgetApp()">
+      <div class="logo-flip">
+        <div class="logo-face logo-front"><img src="logo.png" alt="Hittatsu - タスク管理"></div>
+        <div class="logo-face logo-back"><img src="logo-budget.png" alt="Hittatsu - 予算管理"></div>
+      </div>
+      <span class="logo-arrow" aria-hidden="true">▾</span>
+    </div>
+    <!-- 互換維持用ダミー（既存JSが参照） -->
+    <img src="logo-budget.png" alt="" class="hittatsu-brand hittatsu-brand-budget" id="hdrBudgetLogo" style="display:none">
     <span class="brand-sep"></span>
     <h1>
       <small id="todayLabel"></small>
@@ -6863,7 +6883,7 @@ function serializeWorkspace(){
   // 'profile'（会社名・ロゴ・メモ）はユーザー共通のためローカルにのみ保持
   // ★ v3: weeklyReports / history / board / kpt はサブコレクション or 専用 doc に分離 → main doc から除外
   //    （これらを main doc に詰めると 1 MiB 限界に到達して failed-precondition で全 write 失敗していた）
-  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','seq','ui','userPrefs','treePresets','agendaPresets','budgetRoles','userCompanies','_tombstones'];
+  const allowed = ['wsName','members','statuses','priorities','slots','areas','goals','tasks','authMembers','seq','ui','userPrefs','treePresets','agendaPresets','budgetRoles','_tombstones'];
   const out = {};
   allowed.forEach(k=>{ if(S[k] !== undefined) out[k] = JSON.parse(JSON.stringify(S[k])); });
   // goals.expanded はUI状態（個人別）のため同期から除外
@@ -9085,7 +9105,7 @@ function applyProfileToHeader(){
   // ログイン画面はデフォルトの Hittatsu ロゴをそのまま使用。
   const llg = document.getElementById('loginLogo');
   if(llg && llg.tagName === 'IMG'){
-    llg.src = 'logo.png';
+    llg.src = 'Hittatsu_Logo.png';
   }
   const lt = document.getElementById('loginTitle');
   if(lt) lt.textContent = 'タスク管理';
