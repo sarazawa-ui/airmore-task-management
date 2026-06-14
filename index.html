@@ -578,31 +578,20 @@ td.progress-gauge.gauge-low .progress-bar{background:linear-gradient(90deg,#FDEC
 td.progress-gauge.gauge-low .progress-text{color:#7E2418}
 td.progress-gauge.gauge-mid .progress-bar{background:linear-gradient(90deg,#FFF6D9 0%,#FCE4A0 100%);border-right-color:#E8C66B}
 td.progress-gauge.gauge-mid .progress-text{color:#6B4F00}
-/* Bulletin board (dashboard top) - white background */
-.board-card{background:#fff;border:1px solid var(--border);border-left:5px solid #FFA000;border-radius:10px;padding:12px 16px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
-.board-card .board-head{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#7E5109;margin-bottom:6px;flex-wrap:wrap}
+/* Bulletin board (dashboard top) - white / neutral, 会議メモと同じリッチエディタ */
+.board-card{background:#fff;border:1px solid var(--border);border-left:5px solid var(--primary);border-radius:10px;padding:12px 16px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
+.board-card .board-head{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--primary-dark);margin-bottom:6px;flex-wrap:wrap}
 .board-card .board-icon{font-size:16px}
 .board-card .board-title{letter-spacing:.02em}
-.board-card .board-meta{font-size:11px;font-weight:500;color:#A07832;background:#FFFBEA;padding:1px 8px;border-radius:9px;margin-left:6px;border:1px solid #FFE082}
+.board-card .board-meta{font-size:11px;font-weight:500;color:var(--muted);background:var(--primary-soft);padding:1px 8px;border-radius:9px;margin-left:6px;border:1px solid var(--border)}
 .board-card .board-body{font-size:13px;line-height:1.65;color:#333;white-space:pre-wrap;word-break:break-word;background:#fff;border-radius:6px;padding:8px 12px;min-height:24px}
 .board-card .board-body b,.board-card .board-body strong{font-weight:700}
 .board-card .board-body p,.board-card .board-body div{margin:0}
 .board-card .board-body ul,.board-card .board-body ol{margin:4px 0;padding-left:22px}
-.board-card .board-body:empty::before{content:"運用ルールや通達事項をここに書けます。「✎ 編集」で入力してください。";color:#A07832;font-style:italic;font-size:12px}
+.board-card .board-body:empty::before{content:"運用ルールや通達事項をここに書けます。「✎ 編集」で入力してください。";color:var(--muted);font-style:italic;font-size:12px}
 .board-card .board-body a{color:#0B5394;text-decoration:underline}
-.board-card .board-input{width:100%;min-height:90px;padding:8px 10px;border:1px solid #FFD966;border-radius:6px;background:#fff;font:inherit;font-size:13px;line-height:1.6;outline:none;box-sizing:border-box;overflow-y:auto;max-height:300px}
-.board-card .board-input:focus{border-color:#FFA000;box-shadow:0 0 0 2px rgba(255,160,0,.18)}
-.board-card .board-input:empty::before{content:attr(data-placeholder);color:#A07832;font-style:italic;white-space:pre-wrap}
-.board-card .board-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:6px 4px;margin-bottom:6px;background:rgba(255,255,255,.5);border-radius:6px;border:1px solid #FFE082}
-.board-card .board-toolbar button{background:#fff;border:1px solid var(--border);color:var(--text);padding:3px 9px;border-radius:5px;cursor:pointer;font:inherit;font-size:11.5px;line-height:1.3;transition:all .12s}
-.board-card .board-toolbar button:hover{background:var(--primary-soft);border-color:var(--primary-light)}
-.board-card .board-toolbar button:active{transform:scale(.96)}
-.board-card .board-toolbar button.color-btn{width:24px;height:24px;padding:0;border-radius:50%;color:#fff;font-size:9px;font-weight:700;line-height:1;display:inline-flex;align-items:center;justify-content:center;border-color:rgba(0,0,0,.1)}
-.board-card .board-toolbar button.color-btn[data-color=""]{background:#fff;color:#7E5109;border-color:#bbb}
-.board-card .board-toolbar .sep{display:inline-block;width:1px;height:18px;background:#FFE082;margin:0 4px}
-.board-card .board-toolbar .lbl{font-size:11px;color:#7E5109;font-weight:600;margin:0 4px 0 2px}
 .board-card .board-actions{display:flex;gap:6px;justify-content:flex-end;margin-top:8px}
-.board-card.board-empty{background:#FFFBEA;border-color:#FFE082}
+.board-card.board-empty{background:#fff;border-color:var(--border)}
 @media (max-width:768px){
   .board-card{padding:10px 12px}
   .board-card .board-head{font-size:12px}
@@ -1056,24 +1045,25 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
     </div>
     <div class="board-body" id="boardBody"></div>
     <div class="board-editor" id="boardEditor" style="display:none">
-      <div class="board-toolbar" id="boardToolbar">
-        <button type="button" data-cmd="bold" title="太字 (Ctrl+B)"><b>B</b></button>
+      <div class="rt-toolbar" id="boardToolbar">
+        <button type="button" data-rt="bold" title="太字 (Ctrl+B)"><b>B</b></button>
+        <button type="button" data-rt="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
+        <button type="button" data-rt="underline" title="下線 (Ctrl+U)"><u>U</u></button>
         <span class="sep"></span>
-        <label class="lbl">サイズ：</label>
-        <button type="button" data-size="s" title="小">小</button>
-        <button type="button" data-size="m" title="標準">標準</button>
-        <button type="button" data-size="l" title="大">大</button>
+        <input type="color" data-rt-color title="文字色" value="#000000">
+        <button type="button" data-rt="removeFormat" title="装飾を解除">⌫</button>
         <span class="sep"></span>
-        <label class="lbl">色：</label>
-        <button type="button" class="color-btn" data-color="" title="標準（自動）" style="background:#7E5109">標準</button>
-        <button type="button" class="color-btn" data-color="#C0392B" title="赤" style="background:#C0392B"></button>
-        <button type="button" class="color-btn" data-color="#E67E22" title="オレンジ" style="background:#E67E22"></button>
-        <button type="button" class="color-btn" data-color="#1E8449" title="緑" style="background:#1E8449"></button>
-        <button type="button" class="color-btn" data-color="#2874A6" title="青" style="background:#2874A6"></button>
+        <select data-rt-size title="文字サイズ">
+          <option value="2">小</option>
+          <option value="3" selected>標準</option>
+          <option value="5">大</option>
+          <option value="6">特大</option>
+        </select>
         <span class="sep"></span>
-        <button type="button" data-cmd="clear" title="書式をクリア">書式解除</button>
+        <button type="button" data-rt="insertUnorderedList" title="箇条書き">• 一覧</button>
+        <button type="button" data-rt="insertOrderedList" title="番号付き">1. 番号</button>
       </div>
-      <div id="boardInput" class="board-input" contenteditable="true" spellcheck="false" data-placeholder="例：
+      <div id="boardInput" class="rt-editor" contenteditable="true" spellcheck="false" data-placeholder="例：
 ・週次レビューは金曜 17:00
 ・タスクの担当者は自分の名前で登録
 ・お問い合わせ #general"></div>
@@ -2249,26 +2239,30 @@ function _bindBoardOnce(){
   if(editBtn && !editBtn._bound){ editBtn._bound = true; editBtn.addEventListener('click', openBoardEditor); }
   if(saveBtn && !saveBtn._bound){ saveBtn._bound = true; saveBtn.addEventListener('click', saveBoard); }
   if(cancelBtn && !cancelBtn._bound){ cancelBtn._bound = true; cancelBtn.addEventListener('click', closeBoardEditor); }
-  if(toolbar && !toolbar._bound){
+  if(toolbar && !toolbar._bound && input){
     toolbar._bound = true;
-    toolbar.addEventListener('mousedown', (e)=>{
-      // ツールバークリックでフォーカスが外れて selection が消えるのを防ぐ
-      if(e.target.tagName === 'BUTTON') e.preventDefault();
+    // 会議メモと同じリッチエディタ操作（execCommand ベース）
+    toolbar.querySelectorAll('button[data-rt]').forEach(btn => {
+      btn.addEventListener('mousedown', e => e.preventDefault()); // フォーカス維持
+      btn.addEventListener('click', () => {
+        input.focus();
+        document.execCommand(btn.dataset.rt, false, null);
+      });
     });
-    toolbar.addEventListener('click', (e)=>{
-      const btn = e.target.closest('button');
-      if(!btn) return;
-      const cmd = btn.dataset.cmd;
-      const size = btn.dataset.size;
-      const color = btn.dataset.color;
-      if(cmd === 'bold'){ _boardExec('bold'); }
-      else if(cmd === 'clear'){ _boardExec('removeFormat'); }
-      else if(size){ _boardApplySize(size); }
-      else if(color !== undefined){
-        if(color) _boardApplyColor(color);
-        else _boardExec('removeFormat');
-      }
-    });
+    const colorInp = toolbar.querySelector('input[data-rt-color]');
+    if(colorInp){
+      colorInp.addEventListener('input', () => {
+        input.focus();
+        document.execCommand('foreColor', false, colorInp.value);
+      });
+    }
+    const sizeSel = toolbar.querySelector('select[data-rt-size]');
+    if(sizeSel){
+      sizeSel.addEventListener('change', () => {
+        input.focus();
+        document.execCommand('fontSize', false, sizeSel.value);
+      });
+    }
   }
   if(input && !input._bound){
     input._bound = true;
@@ -2278,12 +2272,6 @@ function _bindBoardOnce(){
         e.preventDefault();
         _boardExec('bold');
       }
-    });
-    // ペーストはプレーンテキストにフォールバック（書式のコピーは許容しない）
-    input.addEventListener('paste', (e)=>{
-      e.preventDefault();
-      const text = (e.clipboardData || window.clipboardData).getData('text');
-      document.execCommand('insertText', false, text);
     });
   }
 }
