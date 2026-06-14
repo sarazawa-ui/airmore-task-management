@@ -1101,7 +1101,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
   <div class="section">■ 担当者別 進捗状況</div>
   <div class="card scroll-x" style="padding:0">
     <table id="tblMember">
-      <thead><tr><th>担当者</th><th>未着手</th><th>着手中</th><th>完了</th><th>中止</th><th>遅延</th><th>合計</th><th>完了率</th></tr></thead>
+      <thead><tr><th>担当者</th><th>未着手</th><th>着手中</th><th>完了</th><th>遅延</th><th>合計</th><th>完了率</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -2360,7 +2360,7 @@ function renderDashboard(){
     tb.insertAdjacentHTML('beforeend',
       `<tr><td class="center">${escapeHtml(m.name)}</td>
        ${cellClick(c.未着手,'todo')}${cellClick(c.着手中,'doing')}
-       ${cellClick(c.完了,'done')}${cellClick(c.中止,'canceled')}
+       ${cellClick(c.完了,'done')}
        ${lateCell}${sumCell}
        <td class="center ${sum?rateColor:''}">${sum?rate.toFixed(1)+'%':'-'}</td></tr>`);
   });
@@ -2440,7 +2440,7 @@ function renderGoals(){
       <td class="input"><div class="member-chips" data-goalidx="${i}"></div></td>
       <td class="input"><input type="date" value="${g.start||''}" data-f="start"></td>
       <td class="input"><input type="date" value="${g.due||''}" data-f="due"></td>
-      <td class="progress-gauge ${prog.value<30?'gauge-low':prog.value<70?'gauge-mid':''}"><div class="progress-bar" style="width:${prog.value}%"></div><span class="progress-text">${prog.value}%<small style="display:block;font-weight:400;font-size:10px;opacity:.75">${progSrc}</small></span></td>
+      <td class="progress-gauge ${prog.value<30?'gauge-low':prog.value<70?'gauge-mid':''}"><div class="progress-bar" style="width:${prog.value}%"></div><div class="progress-text">${prog.value}%<div style="font-weight:400;font-size:10px;opacity:.75">${progSrc}</div></div></td>
       <td class="input"><select data-f="status">${statusOptions(g.status)}</select></td>
       <td class="input drive-cell">
         <div class="drive-row" data-mode="view">
@@ -5533,9 +5533,19 @@ function renderSideTasks(){
     box.appendChild(el);
   });
 }
-document.querySelectorAll('.side-tab button').forEach(b=>{
-  b.addEventListener('click',()=>{ S.ui.sideTab = b.dataset.side; save(); renderSideTasks(); });
-});
+// 親要素にデリゲートして、ボタンが再描画されても常に動作するように
+{
+  const sideTabEl = document.querySelector('.side-tab');
+  if(sideTabEl){
+    sideTabEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-side]');
+      if(!btn) return;
+      S.ui.sideTab = btn.dataset.side;
+      save();
+      renderSideTasks();
+    });
+  }
+}
 
 // Drag/drop targets + live preview ghost
 let _dragTask = null;
