@@ -31,12 +31,26 @@ service cloud.firestore {
     }
 
     // === Global Budget（WS非依存・全ユーザー共通） ===
-    // - globalBudget/data         : 予実データ本体（JSON 文字列）
-    // - globalBudget/roles        : { roles: { email: 'admin'|'editor'|'viewer' } }
-    // - globalBudget/userCompanies: { map: { email: 会社名 } }
-    // 役割：viewer / editor / admin（admin はロール管理可）
+    // - globalBudget/data         : 予実データ本体（JSON 文字列）→ role 保有者のみ閲覧
+    // - globalBudget/roles        : { roles: { email: role } } → ★認証済みなら誰でも読める
+    //     （新規ユーザーが「自分にロールが無い」ことを判定して申請画面を出すために必須）
+    // - globalBudget/userCompanies: { map: { email: 会社名 } } → 認証済みなら読める
+    // 書込みは admin（roles/userCompanies）・editor以上（data）のみ。
     // bootstrap admin: sarazawa@n-airmore.com は無条件 admin（初期セットアップ用）
-    match /globalBudget/{doc=**} {
+    match /globalBudget/roles {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && _gbAdminOk(request.auth.token.email);
+    }
+    match /globalBudget/userCompanies {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && _gbAdminOk(request.auth.token.email);
+    }
+    match /globalBudget/data {
+      allow read: if request.auth != null && _gbReadOk(request.auth.token.email);
+      allow write: if request.auth != null && _gbWriteOk(request.auth.token.email);
+    }
+    // 将来用：上記以外の globalBudget 配下は role 保有者のみ
+    match /globalBudget/{doc} {
       allow read: if request.auth != null && _gbReadOk(request.auth.token.email);
       allow write: if request.auth != null && _gbWriteOk(request.auth.token.email);
     }

@@ -7,6 +7,7 @@
 //   firebase functions:secrets:set SENDGRID_KEY
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
@@ -176,6 +177,132 @@ async function getGoalName(db, wsId, goalId) {
     const g = await db.doc(`workspaces/${wsId}/goals/${goalId}`).get();
     return g.exists ? (g.data().name || goalId) : goalId;
   } catch { return goalId; }
+}
+
+// ============================================================
+// 予実管理（予算管理）アクセス申請の通知
+//   budgetAccessRequests/{email} の作成・更新を監視し、
+//   - pending になった瞬間：admin 全員へ「承認依頼」メール
+//   - approved になった瞬間：申請者へ「承認完了」メール
+//   - rejected になった瞬間：申請者へ「却下」メール
+// ============================================================
+const BUDGET_URL = APP_BASE_URL + "budget/";
+const BOOTSTRAP_ADMIN_EMAIL = "sarazawa@n-airmore.com";
+
+async function getBudgetAdminEmails(db) {
+  const set = new Set([BOOTSTRAP_ADMIN_EMAIL]);
+  try {
+    const snap = await db.doc("globalBudget/roles").get();
+    const roles = (snap.exists ? (snap.data() || {}).roles : {}) || {};
+    Object.entries(roles).forEach(([em, r]) => { if (r === "admin" && em) set.add(em); });
+  } catch (e) {
+    console.warn("[budgetAccess] read roles failed:", e.message);
+  }
+  return [...set];
+}
+
+exports.onBudgetAccessRequest = onDocumentWritten(
+  {
+    document: "budgetAccessRequests/{email}",
+    secrets: [SENDGRID_KEY],
+  },
+  async (event) => {
+    const after = event.data?.after?.exists ? event.data.after.data() : null;
+    const before = event.data?.before?.exists ? event.data.before.data() : null;
+    if (!after) return; // 削除は無視
+
+    const becamePending  = after.status === "pending"  && (!before || before.status !== "pending");
+    const becameApproved = after.status === "approved" && (!before || before.status !== "approved");
+    const becameRejected = after.status === "rejected" && (!before || before.status !== "rejected");
+    if (!becamePending && !becameApproved && !becameRejected) return;
+
+    sgMail.setApiKey(SENDGRID_KEY.value());
+    const db = admin.firestore();
+    const requester = after.email || event.params.email;
+    const name = after.name || requester;
+    const from = { email: SENDGRID_FROM_EMAIL, name: "予実管理 通知" };
+
+    try {
+      if (becamePending) {
+        // admin 全員へ承認依頼メール
+        const adminEmails = await getBudgetAdminEmails(db);
+        const reason = (after.message || "").trim() || "（理由の記載なし）";
+        const msgs = adminEmails.map(adminEmail => ({
+          to: adminEmail,
+          from,
+          subject: `【予実管理】アクセス申請：${name} さん`,
+          text:
+`予実管理ボードへのアクセス申請が届きました。
+
+■ 申請者：${name}
+■ メール：${requester}
+■ 理由　：${reason}
+
+▼ 承認はこちらから
+予実管理ボードを開き、右上の「👥 ユーザー管理」→ 一覧上部の申請を承認してください。
+${BUDGET_URL}
+`,
+          html:
+`<div style="font-family:sans-serif;line-height:1.7;color:#1C2733">
+<h2 style="font-size:16px;margin:0 0 12px">予実管理ボードへのアクセス申請</h2>
+<table style="font-size:14px;border-collapse:collapse">
+<tr><td style="padding:3px 10px 3px 0;color:#6B7785">申請者</td><td><b>${escapeHtml(name)}</b></td></tr>
+<tr><td style="padding:3px 10px 3px 0;color:#6B7785">メール</td><td>${escapeHtml(requester)}</td></tr>
+<tr><td style="padding:3px 10px 3px 0;color:#6B7785;vertical-align:top">理由</td><td>${escapeHtml(reason)}</td></tr>
+</table>
+<p style="margin:18px 0 8px;font-size:14px">予実管理ボードの「👥 ユーザー管理」から承認してください。</p>
+<p><a href="${BUDGET_URL}" style="display:inline-block;background:#155E8E;color:#fff;text-decoration:none;padding:9px 18px;border-radius:6px;font-size:14px">予実管理ボードを開く</a></p>
+</div>`,
+        }));
+        const results = await Promise.allSettled(msgs.map(m => sgMail.send(m)));
+        const ok = results.filter(r => r.status === "fulfilled").length;
+        console.log(`[budgetAccess] request from ${requester} → notified ${ok}/${adminEmails.length} admins`);
+      } else if (becameApproved) {
+        const roleLabel = after.approvedAs || "viewer";
+        await sgMail.send({
+          to: requester,
+          from,
+          subject: "【予実管理】アクセスが承認されました",
+          text:
+`${name} さん
+
+予実管理ボードへのアクセスが承認されました（権限：${roleLabel}）。
+下記URLからご利用いただけます。ページを開いて再読込してください。
+
+${BUDGET_URL}
+`,
+          html:
+`<div style="font-family:sans-serif;line-height:1.7;color:#1C2733">
+<h2 style="font-size:16px;margin:0 0 12px">✓ アクセスが承認されました</h2>
+<p style="font-size:14px">${escapeHtml(name)} さん、予実管理ボードへのアクセスが承認されました（権限：<b>${escapeHtml(roleLabel)}</b>）。</p>
+<p><a href="${BUDGET_URL}" style="display:inline-block;background:#1F6E40;color:#fff;text-decoration:none;padding:9px 18px;border-radius:6px;font-size:14px">予実管理ボードを開く</a></p>
+</div>`,
+        });
+        console.log(`[budgetAccess] approved ${requester} (${roleLabel}) → notified requester`);
+      } else if (becameRejected) {
+        await sgMail.send({
+          to: requester,
+          from,
+          subject: "【予実管理】アクセス申請の結果",
+          text:
+`${name} さん
+
+予実管理ボードへのアクセス申請は今回見送りとなりました。
+ご不明な点は管理者までお問い合わせください。
+`,
+        });
+        console.log(`[budgetAccess] rejected ${requester} → notified requester`);
+      }
+    } catch (e) {
+      console.error("[budgetAccess] mail send failed:", e.message);
+    }
+  }
+);
+
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 // 古い sentReminders を毎日掃除（3日経過分削除）
