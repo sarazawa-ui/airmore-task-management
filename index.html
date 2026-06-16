@@ -1063,6 +1063,9 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
         <span class="sep"></span>
         <button type="button" data-rt="insertUnorderedList" title="箇条書き">• 一覧</button>
         <button type="button" data-rt="insertOrderedList" title="番号付き">1. 番号</button>
+        <span class="sep"></span>
+        <button type="button" data-rt-link title="リンクを挿入／編集">🔗 リンク</button>
+        <button type="button" data-rt="unlink" title="リンクを解除">🔗✕</button>
       </div>
       <div id="boardInput" class="rt-editor" contenteditable="true" spellcheck="false" data-placeholder="例：
 ・週次レビューは金曜 17:00
@@ -2262,6 +2265,44 @@ function _bindBoardOnce(){
       sizeSel.addEventListener('change', () => {
         input.focus();
         document.execCommand('fontSize', false, sizeSel.value);
+      });
+    }
+    // 🔗 リンク挿入／編集
+    const linkBtn = toolbar.querySelector('[data-rt-link]');
+    if(linkBtn){
+      linkBtn.addEventListener('mousedown', e => e.preventDefault()); // 選択維持
+      linkBtn.addEventListener('click', () => {
+        input.focus();
+        const sel = window.getSelection();
+        // 編集領域内の選択範囲を保存（prompt でフォーカスが外れても復元できるように）
+        const savedRange = (sel && sel.rangeCount > 0 && input.contains(sel.anchorNode))
+          ? sel.getRangeAt(0).cloneRange() : null;
+        // 既存リンク上ならその URL を初期値に
+        let cur = 'https://';
+        const anchorEl = savedRange && (savedRange.startContainer.nodeType===1
+          ? savedRange.startContainer : savedRange.startContainer.parentElement);
+        const existingA = anchorEl && anchorEl.closest ? anchorEl.closest('a') : null;
+        if(existingA && existingA.getAttribute('href')) cur = existingA.getAttribute('href');
+        let url = prompt('リンク先URLを入力してください（https://...）', cur);
+        if(url === null) return;
+        url = url.trim();
+        if(!url){ // 空 → リンク解除
+          if(savedRange){ sel.removeAllRanges(); sel.addRange(savedRange); }
+          input.focus();
+          document.execCommand('unlink');
+          return;
+        }
+        if(!/^https?:\/\//i.test(url)) url = 'https://' + url.replace(/^\/+/, '');
+        // 選択を復元してからリンク化
+        if(savedRange){ sel.removeAllRanges(); sel.addRange(savedRange); }
+        input.focus();
+        if(savedRange && !savedRange.collapsed){
+          document.execCommand('createLink', false, url);
+        } else {
+          // 選択が無い場合は URL をテキストとして挿入＋リンク化
+          document.execCommand('insertHTML', false,
+            `<a href="${url.replace(/"/g,'&quot;')}">${escapeHtml(url)}</a>&nbsp;`);
+        }
       });
     }
   }
