@@ -1,34 +1,103 @@
-// Cloud Functions for Hittatsu reminder
-// メール送信（SendGrid）＋ プッシュ送信（FCM）の統合版
+// Cloud Functions for Hittatsu
+// メール送信（Gmail API + サービスアカウント / 送信元 info@nimomakezu.com）＋ プッシュ送信（FCM）
 //
 // このファイルを functions/index.js としてコピーしてください。
+// 依存：package.json に "googleapis" を追加（npm i googleapis）
 //
-// 必要な secrets:
-//   firebase functions:secrets:set SENDGRID_KEY
+// 必要な secrets（サービスアカウントの JSON キー全体を貼り付け）:
+//   firebase functions:secrets:set GMAIL_SA_KEY
+//
+// 事前設定（Google Workspace 管理コンソール → セキュリティ → API制御 → ドメイン全体の委任）:
+//   サービスアカウントのクライアントID に scope https://www.googleapis.com/auth/gmail.send を許可
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
-const sgMail = require("@sendgrid/mail");
+const { google } = require("googleapis");
 
 admin.initializeApp();
 setGlobalOptions({ region: "asia-northeast1" });
 
-const SENDGRID_KEY = defineSecret("SENDGRID_KEY");
-const SENDGRID_FROM_EMAIL = "sarazawa@n-airmore.com"; // ★ 認証済み送信元に書き換え
-const SENDGRID_FROM_NAME  = "Hittatsu リマインドBot";
 const APP_BASE_URL = "https://sarazawa-ui.github.io/airmore-task-management/";
+
+// ============================================================
+// メール送信：Gmail API + サービスアカウント（ドメイン全体委任）
+//   すべての Hittatsu メールを info@nimomakezu.com 発で送信する。
+//   GMAIL_SA_KEY = サービスアカウントの JSON キー全体（secrets に設定）
+//   ※ そのサービスアカウントを Google Workspace 管理コンソールで
+//     ドメイン全体委任に登録し、scope gmail.send を許可しておくこと。
+// ============================================================
+const GMAIL_SA_KEY = defineSecret("GMAIL_SA_KEY");
+const MAIL_SENDER_EMAIL = "info@nimomakezu.com";
+const MAIL_SENDER_NAME  = "Hittatsu";
+
+let _gmailClient = null;
+async function getGmail() {
+  if (_gmailClient) return _gmailClient;
+  const key = JSON.parse(GMAIL_SA_KEY.value());
+  const jwt = new google.auth.JWT({
+    email: key.client_email,
+    key: key.private_key,
+    scopes: ["https://www.googleapis.com/auth/gmail.send"],
+    subject: MAIL_SENDER_EMAIL, // この Workspace ユーザーとして送信
+  });
+  await jwt.authorize();
+  _gmailClient = google.gmail({ version: "v1", auth: jwt });
+  return _gmailClient;
+}
+
+function _b64url(buf) {
+  return Buffer.from(buf).toString("base64")
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// メール送信（プレーンテキスト）。to は文字列または配列。送信元は常に info@nimomakezu.com。
+async function sendMail(to, subject, text) {
+  const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean).join(", ");
+  if (!recipients) return false;
+  const gmail = await getGmail();
+  const subjEnc = "=?UTF-8?B?" + Buffer.from(subject, "utf8").toString("base64") + "?=";
+  const message = [
+    `From: ${MAIL_SENDER_NAME} <${MAIL_SENDER_EMAIL}>`,
+    `To: ${recipients}`,
+    `Subject: ${subjEnc}`,
+    "MIME-Version: 1.0",
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    Buffer.from(text || "", "utf8").toString("base64"),
+  ].join("\r\n");
+  await gmail.users.messages.send({ userId: "me", requestBody: { raw: _b64url(message) } });
+  return true;
+}
+
+// クライアント（タスク管理アプリ）から呼ぶ汎用メール送信（完了通知・リマインド等）。
+//   認証必須。宛先は最大20件。送信元は常に info@nimomakezu.com。
+exports.sendAppEmail = onCall({ secrets: [GMAIL_SA_KEY] }, async (req) => {
+  if (!req.auth) throw new HttpsError("unauthenticated", "ログインが必要です");
+  const { to, subject, text } = req.data || {};
+  const list = (Array.isArray(to) ? to : [to]).filter(Boolean);
+  if (!list.length || !subject) throw new HttpsError("invalid-argument", "to と subject は必須です");
+  if (list.length > 20) throw new HttpsError("invalid-argument", "宛先が多すぎます（最大20件）");
+  try {
+    await sendMail(list, String(subject), String(text || ""));
+    return { ok: true, sender: MAIL_SENDER_EMAIL };
+  } catch (e) {
+    console.error("[sendAppEmail] failed:", e.message);
+    throw new HttpsError("internal", "送信に失敗しました: " + e.message);
+  }
+});
 
 exports.sendReminders = onSchedule(
   {
     schedule: "every 1 minutes",
     timeZone: "Asia/Tokyo",
-    secrets: [SENDGRID_KEY],
+    secrets: [GMAIL_SA_KEY],
   },
   async () => {
-    sgMail.setApiKey(SENDGRID_KEY.value());
     const db = admin.firestore();
     const messaging = admin.messaging();
 
@@ -88,15 +157,10 @@ exports.sendReminders = onSchedule(
           `— Hittatsu | ${wsName} より自動送信`,
         ].join("\n");
 
-        // ===== メール送信（SendGrid） =====
+        // ===== メール送信（Gmail / info@nimomakezu.com） =====
         let emailOk = false;
         try {
-          await sgMail.send({
-            from: { email: SENDGRID_FROM_EMAIL, name: SENDGRID_FROM_NAME },
-            to: owner.email,
-            subject,
-            text: textBody,
-          });
+          await sendMail(owner.email, subject, textBody);
           totalEmails++;
           emailOk = true;
           console.log(`[email] sent: ${t.id} -> ${owner.email}`);
@@ -204,7 +268,7 @@ async function getBudgetAdminEmails(db) {
 exports.onBudgetAccessRequest = onDocumentWritten(
   {
     document: "budgetAccessRequests/{email}",
-    secrets: [SENDGRID_KEY],
+    secrets: [GMAIL_SA_KEY],
   },
   async (event) => {
     const after = event.data?.after?.exists ? event.data.after.data() : null;
@@ -216,22 +280,16 @@ exports.onBudgetAccessRequest = onDocumentWritten(
     const becameRejected = after.status === "rejected" && (!before || before.status !== "rejected");
     if (!becamePending && !becameApproved && !becameRejected) return;
 
-    sgMail.setApiKey(SENDGRID_KEY.value());
     const db = admin.firestore();
     const requester = after.email || event.params.email;
     const name = after.name || requester;
-    const from = { email: SENDGRID_FROM_EMAIL, name: "予実管理 通知" };
 
     try {
       if (becamePending) {
-        // admin 全員へ承認依頼メール
         const adminEmails = await getBudgetAdminEmails(db);
         const reason = (after.message || "").trim() || "（理由の記載なし）";
-        const msgs = adminEmails.map(adminEmail => ({
-          to: adminEmail,
-          from,
-          subject: `【予実管理】アクセス申請：${name} さん`,
-          text:
+        const subject = `【予実管理】アクセス申請：${name} さん`;
+        const text =
 `予実管理ボードへのアクセス申請が届きました。
 
 ■ 申請者：${name}
@@ -241,56 +299,27 @@ exports.onBudgetAccessRequest = onDocumentWritten(
 ▼ 承認はこちらから
 予実管理ボードを開き、右上の「👥 ユーザー管理」→ 一覧上部の申請を承認してください。
 ${BUDGET_URL}
-`,
-          html:
-`<div style="font-family:sans-serif;line-height:1.7;color:#1C2733">
-<h2 style="font-size:16px;margin:0 0 12px">予実管理ボードへのアクセス申請</h2>
-<table style="font-size:14px;border-collapse:collapse">
-<tr><td style="padding:3px 10px 3px 0;color:#6B7785">申請者</td><td><b>${escapeHtml(name)}</b></td></tr>
-<tr><td style="padding:3px 10px 3px 0;color:#6B7785">メール</td><td>${escapeHtml(requester)}</td></tr>
-<tr><td style="padding:3px 10px 3px 0;color:#6B7785;vertical-align:top">理由</td><td>${escapeHtml(reason)}</td></tr>
-</table>
-<p style="margin:18px 0 8px;font-size:14px">予実管理ボードの「👥 ユーザー管理」から承認してください。</p>
-<p><a href="${BUDGET_URL}" style="display:inline-block;background:#155E8E;color:#fff;text-decoration:none;padding:9px 18px;border-radius:6px;font-size:14px">予実管理ボードを開く</a></p>
-</div>`,
-        }));
-        const results = await Promise.allSettled(msgs.map(m => sgMail.send(m)));
-        const ok = results.filter(r => r.status === "fulfilled").length;
-        console.log(`[budgetAccess] request from ${requester} → notified ${ok}/${adminEmails.length} admins`);
+`;
+        await sendMail(adminEmails, subject, text);
+        console.log(`[budgetAccess] request from ${requester} → notified ${adminEmails.length} admins`);
       } else if (becameApproved) {
         const roleLabel = after.approvedAs || "viewer";
-        await sgMail.send({
-          to: requester,
-          from,
-          subject: "【予実管理】アクセスが承認されました",
-          text:
+        await sendMail(requester, "【予実管理】アクセスが承認されました",
 `${name} さん
 
 予実管理ボードへのアクセスが承認されました（権限：${roleLabel}）。
 下記URLからご利用いただけます。ページを開いて再読込してください。
 
 ${BUDGET_URL}
-`,
-          html:
-`<div style="font-family:sans-serif;line-height:1.7;color:#1C2733">
-<h2 style="font-size:16px;margin:0 0 12px">✓ アクセスが承認されました</h2>
-<p style="font-size:14px">${escapeHtml(name)} さん、予実管理ボードへのアクセスが承認されました（権限：<b>${escapeHtml(roleLabel)}</b>）。</p>
-<p><a href="${BUDGET_URL}" style="display:inline-block;background:#1F6E40;color:#fff;text-decoration:none;padding:9px 18px;border-radius:6px;font-size:14px">予実管理ボードを開く</a></p>
-</div>`,
-        });
+`);
         console.log(`[budgetAccess] approved ${requester} (${roleLabel}) → notified requester`);
       } else if (becameRejected) {
-        await sgMail.send({
-          to: requester,
-          from,
-          subject: "【予実管理】アクセス申請の結果",
-          text:
+        await sendMail(requester, "【予実管理】アクセス申請の結果",
 `${name} さん
 
 予実管理ボードへのアクセス申請は今回見送りとなりました。
 ご不明な点は管理者までお問い合わせください。
-`,
-        });
+`);
         console.log(`[budgetAccess] rejected ${requester} → notified requester`);
       }
     } catch (e) {
@@ -298,12 +327,6 @@ ${BUDGET_URL}
     }
   }
 );
-
-function escapeHtml(s) {
-  return String(s == null ? "" : s)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-}
 
 // 古い sentReminders を毎日掃除（3日経過分削除）
 exports.cleanupSentReminders = onSchedule(
