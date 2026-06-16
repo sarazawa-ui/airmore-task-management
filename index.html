@@ -1195,10 +1195,10 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
       <div class="side-filters">
         <input type="text" id="taskFilter" placeholder="🔍 検索（タスク名・担当者）" oninput="renderSideTasks()">
         <div class="row">
-          <select id="taskMemberFilter" onchange="renderSideTasks()"><option value="">全担当者</option></select>
+          <select id="taskMemberFilter" onchange="S.ui.sideMember=this.value; save(); renderSideTasks()"><option value="">全担当者</option></select>
           <select id="taskStatusFilter" onchange="renderSideTasks()"><option value="">全ステータス</option></select>
         </div>
-        <label class="cb"><input type="checkbox" id="hideDone" onchange="renderSideTasks()">完了を隠す</label>
+        <label class="cb"><input type="checkbox" id="hideDone" onchange="S.ui.sideHideDone=this.checked; save(); renderSideTasks()">完了を隠す</label>
       </div>
       <div id="sideTasks"></div>
     </aside>
@@ -1627,7 +1627,7 @@ const PER_USER_UI_FIELDS = new Set([
   'notifyOnComplete','notifyReminder',
   'calStartHour','calEndHour','weekStartDay',
   'viewAsMember','targetDate',
-  'sideTab','taskCols',
+  'sideTab','taskCols','sideMember','sideHideDone',
   'showCompletedProjects','showCanceledProjects','showHeldProjects'
 ]);
 
@@ -5265,10 +5265,17 @@ function renderSideTasks(){
   document.querySelectorAll('.side-tab button').forEach(b=>{
     b.classList.toggle('active', b.dataset.side===tab);
   });
+  // 既定値：担当者＝ログインユーザー本人、完了非表示＝ON（各ユーザー個別・保持）
+  if(S.ui.sideMember === undefined) S.ui.sideMember = (_currentUser && _currentUser.name) || '';
+  if(S.ui.sideHideDone === undefined) S.ui.sideHideDone = true;
+  const _memberNames = activeMembers().map(m=>m.name);
+  const effMember = _memberNames.includes(S.ui.sideMember) ? S.ui.sideMember : '';
+  const effHideDone = !!S.ui.sideHideDone;
+  { const _hd = document.getElementById('hideDone'); if(_hd) _hd.checked = effHideDone; }
   // ===== タブ別タスク数バッジ更新（担当者・ステータス・検索・完了非表示フィルタ連動）=====
   {
-    const hideDoneCb = (document.getElementById('hideDone')||{}).checked;
-    const memValForBadge = (document.getElementById('taskMemberFilter')||{}).value||"";
+    const hideDoneCb = effHideDone;
+    const memValForBadge = effMember;
     const stValForBadge = (document.getElementById('taskStatusFilter')||{}).value||"";
     const filterForBadge = ((document.getElementById('taskFilter')||{}).value||"").toLowerCase();
     const wkStart = S.ui.weekStart;
@@ -5302,17 +5309,16 @@ function renderSideTasks(){
   const memSel = document.getElementById('taskMemberFilter');
   const stSel = document.getElementById('taskStatusFilter');
   if(memSel){
-    const memVal = memSel.value;
-    memSel.innerHTML = '<option value="">全担当者</option>'+activeMembers().map(m=>`<option ${m.name===memVal?'selected':''}>${escapeHtml(m.name)}</option>`).join('');
+    memSel.innerHTML = '<option value="">全担当者</option>'+_memberNames.map(n=>`<option ${n===effMember?'selected':''}>${escapeHtml(n)}</option>`).join('');
   }
   if(stSel){
     const stVal = stSel.value;
     stSel.innerHTML = '<option value="">全ステータス</option>'+S.statuses.map(s=>`<option ${s===stVal?'selected':''}>${escapeHtml(s)}</option>`).join('');
   }
   const filter = ((document.getElementById('taskFilter')||{}).value||"").toLowerCase();
-  const memVal = (document.getElementById('taskMemberFilter')||{}).value||"";
+  const memVal = effMember;
   const stVal = (document.getElementById('taskStatusFilter')||{}).value||"";
-  const hideDone = (document.getElementById('hideDone')||{}).checked;
+  const hideDone = effHideDone;
 
   const wkStart = S.ui.weekStart;
   const wkEnd = addDays(wkStart, 6);
