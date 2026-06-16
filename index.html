@@ -2143,6 +2143,11 @@ function renderBoard(){
   const html = _boardCurrentHTML();
   card.classList.toggle('board-empty', !html);
   body.innerHTML = html;
+  // すべてのリンクを新しいタブで開く（過去に保存された target 無しリンクも含めて強制付与）
+  body.querySelectorAll('a[href]').forEach(a=>{
+    a.setAttribute('target','_blank');
+    a.setAttribute('rel','noopener noreferrer');
+  });
   if(b.updatedAt){
     const dt = new Date(b.updatedAt);
     const dtStr = isNaN(dt.getTime()) ? '' : `${dt.getMonth()+1}/${dt.getDate()} ${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
