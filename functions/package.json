@@ -1,0 +1,14 @@
+{
+  "name": "hittatsu-functions",
+  "description": "Cloud Functions for Hittatsu (reminders, completion mail, budget access, app mail via info@nimomakezu.com)",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^5.1.1",
+    "googleapis": "^144.0.0"
+  },
+  "private": true
+}
