@@ -1,5 +1,5 @@
 // Cloud Functions for Hittatsu
-// メール送信（Gmail API + サービスアカウント / 送信元 info@nimomakezu.com）＋ プッシュ送信（FCM）
+// メール送信（Gmail API + サービスアカウント / 送信元はタスク担当者本人）＋ プッシュ送信（FCM）
 //
 // このファイルを functions/index.js としてコピーしてください。
 // 依存：package.json に "googleapis" を追加（npm i googleapis）
@@ -25,28 +25,29 @@ const APP_BASE_URL = "https://sarazawa-ui.github.io/airmore-task-management/";
 
 // ============================================================
 // メール送信：Gmail API + サービスアカウント（ドメイン全体委任）
-//   すべての Hittatsu メールを info@nimomakezu.com 発で送信する。
+//   各メールを「指定した Workspace ユーザー（＝タスク担当者など）」として送信する。
 //   GMAIL_SA_KEY = サービスアカウントの JSON キー全体（secrets に設定）
 //   ※ そのサービスアカウントを Google Workspace 管理コンソールで
 //     ドメイン全体委任に登録し、scope gmail.send を許可しておくこと。
+//   ※ 送信元（fromEmail）は Workspace 内の実在ユーザーのメールボックスである必要がある
+//     （グループ／エイリアスは不可）。
 // ============================================================
 const GMAIL_SA_KEY = defineSecret("GMAIL_SA_KEY");
-const MAIL_SENDER_EMAIL = "info@nimomakezu.com";
-const MAIL_SENDER_NAME  = "Hittatsu";
 
-let _gmailClient = null;
-async function getGmail() {
-  if (_gmailClient) return _gmailClient;
+// fromEmail（成り代わるユーザー）ごとに Gmail クライアントを生成・キャッシュ
+const _gmailClients = {};
+async function getGmail(fromEmail) {
+  if (_gmailClients[fromEmail]) return _gmailClients[fromEmail];
   const key = JSON.parse(GMAIL_SA_KEY.value());
   const jwt = new google.auth.JWT({
     email: key.client_email,
     key: key.private_key,
     scopes: ["https://www.googleapis.com/auth/gmail.send"],
-    subject: MAIL_SENDER_EMAIL, // この Workspace ユーザーとして送信
+    subject: fromEmail, // この Workspace ユーザーとして送信
   });
   await jwt.authorize();
-  _gmailClient = google.gmail({ version: "v1", auth: jwt });
-  return _gmailClient;
+  _gmailClients[fromEmail] = google.gmail({ version: "v1", auth: jwt });
+  return _gmailClients[fromEmail];
 }
 
 function _b64url(buf) {
@@ -54,14 +55,14 @@ function _b64url(buf) {
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-// メール送信（プレーンテキスト）。to は文字列または配列。送信元は常に info@nimomakezu.com。
-async function sendMail(to, subject, text) {
+// メール送信（プレーンテキスト）。fromEmail として送信。to は文字列または配列。
+async function sendMail(fromEmail, to, subject, text) {
   const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean).join(", ");
-  if (!recipients) return false;
-  const gmail = await getGmail();
+  if (!recipients || !fromEmail) return false;
+  const gmail = await getGmail(fromEmail);
   const subjEnc = "=?UTF-8?B?" + Buffer.from(subject, "utf8").toString("base64") + "?=";
   const message = [
-    `From: ${MAIL_SENDER_NAME} <${MAIL_SENDER_EMAIL}>`,
+    `From: ${fromEmail}`,
     `To: ${recipients}`,
     `Subject: ${subjEnc}`,
     "MIME-Version: 1.0",
@@ -75,16 +76,17 @@ async function sendMail(to, subject, text) {
 }
 
 // クライアント（タスク管理アプリ）から呼ぶ汎用メール送信（完了通知・リマインド等）。
-//   認証必須。宛先は最大20件。送信元は常に info@nimomakezu.com。
+//   認証必須。宛先は最大20件。from（送信元）未指定時は呼び出しユーザー本人。
 exports.sendAppEmail = onCall({ secrets: [GMAIL_SA_KEY] }, async (req) => {
   if (!req.auth) throw new HttpsError("unauthenticated", "ログインが必要です");
-  const { to, subject, text } = req.data || {};
+  const { from, to, subject, text } = req.data || {};
+  const fromEmail = String(from || req.auth.token.email || "").trim();
   const list = (Array.isArray(to) ? to : [to]).filter(Boolean);
-  if (!list.length || !subject) throw new HttpsError("invalid-argument", "to と subject は必須です");
+  if (!fromEmail || !list.length || !subject) throw new HttpsError("invalid-argument", "from/to/subject は必須です");
   if (list.length > 20) throw new HttpsError("invalid-argument", "宛先が多すぎます（最大20件）");
   try {
-    await sendMail(list, String(subject), String(text || ""));
-    return { ok: true, sender: MAIL_SENDER_EMAIL };
+    await sendMail(fromEmail, list, String(subject), String(text || ""));
+    return { ok: true, from: fromEmail };
   } catch (e) {
     console.error("[sendAppEmail] failed:", e.message);
     throw new HttpsError("internal", "送信に失敗しました: " + e.message);
@@ -157,13 +159,13 @@ exports.sendReminders = onSchedule(
           `— Hittatsu | ${wsName} より自動送信`,
         ].join("\n");
 
-        // ===== メール送信（Gmail / info@nimomakezu.com） =====
+        // ===== メール送信（Gmail / 担当者本人として送信） =====
         let emailOk = false;
         try {
-          await sendMail(owner.email, subject, textBody);
+          await sendMail(owner.email, owner.email, subject, textBody);
           totalEmails++;
           emailOk = true;
-          console.log(`[email] sent: ${t.id} -> ${owner.email}`);
+          console.log(`[email] sent: ${t.id} from/to ${owner.email}`);
         } catch (err) {
           console.error(`[email] failed ${t.id}:`, err.message);
         }
@@ -300,11 +302,11 @@ exports.onBudgetAccessRequest = onDocumentWritten(
 予実管理ボードを開き、右上の「👥 ユーザー管理」→ 一覧上部の申請を承認してください。
 ${BUDGET_URL}
 `;
-        await sendMail(adminEmails, subject, text);
+        await sendMail(requester, adminEmails, subject, text); // 申請者本人として admin へ
         console.log(`[budgetAccess] request from ${requester} → notified ${adminEmails.length} admins`);
       } else if (becameApproved) {
         const roleLabel = after.approvedAs || "viewer";
-        await sendMail(requester, "【予実管理】アクセスが承認されました",
+        await sendMail(BOOTSTRAP_ADMIN_EMAIL, requester, "【予実管理】アクセスが承認されました",
 `${name} さん
 
 予実管理ボードへのアクセスが承認されました（権限：${roleLabel}）。
@@ -314,7 +316,7 @@ ${BUDGET_URL}
 `);
         console.log(`[budgetAccess] approved ${requester} (${roleLabel}) → notified requester`);
       } else if (becameRejected) {
-        await sendMail(requester, "【予実管理】アクセス申請の結果",
+        await sendMail(BOOTSTRAP_ADMIN_EMAIL, requester, "【予実管理】アクセス申請の結果",
 `${name} さん
 
 予実管理ボードへのアクセス申請は今回見送りとなりました。

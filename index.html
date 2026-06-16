@@ -5751,11 +5751,11 @@ function _isAuthError(resStatus, msgText){
 // ============ メール送信（サーバー集約・送信元 info@nimomakezu.com） ============
 // ① Cloud Function `sendAppEmail` 経由で送信（info@nimomakezu.com 発）を優先。
 // ② 未デプロイ等で失敗した場合のみ、従来どおりログインユーザーの Gmail で送信（フォールバック）。
-async function _sendViaServer(recipients, subject, bodyText){
+async function _sendViaServer(fromEmail, recipients, subject, bodyText){
   if(!_firebaseReady || typeof firebase === 'undefined' || !firebase.functions) return false;
   try{
     const callable = firebase.app().functions('asia-northeast1').httpsCallable('sendAppEmail');
-    await callable({ to: recipients, subject, text: bodyText });
+    await callable({ from: fromEmail, to: recipients, subject, text: bodyText });
     return true;
   }catch(e){
     console.warn('[mail] server send failed, will fall back to client Gmail:', e && (e.message||e.code||e));
@@ -5794,11 +5794,13 @@ async function _sendViaClientGmail(recipients, subject, bodyText){
     return true;
   }catch(e){ console.warn('client gmail send error:', e); return false; }
 }
-// 統合送信：サーバー（info@）優先 → 失敗時クライアント（本人）。{ok, via} を返す。
-async function sendMail(recipients, subject, bodyText){
+// 統合送信：サーバー（fromEmail＝担当者として送信）優先 → 失敗時クライアント（ログイン本人）。
+// fromEmail 省略時はログインユーザー本人を送信元にする。{ok, via} を返す。
+async function sendMail(fromEmail, recipients, subject, bodyText){
   const list = Array.isArray(recipients) ? recipients.filter(Boolean) : [recipients].filter(Boolean);
   if(list.length === 0) return { ok:false, via:'none' };
-  if(await _sendViaServer(list, subject, bodyText)) return { ok:true, via:'server' };
+  const from = (fromEmail || _currentUser?.email || '').trim();
+  if(await _sendViaServer(from, list, subject, bodyText)) return { ok:true, via:'server' };
   if(await _sendViaClientGmail(list, subject, bodyText)) return { ok:true, via:'client' };
   return { ok:false, via:'none' };
 }
@@ -5843,10 +5845,12 @@ async function sendCompletionEmail(t){
   ];
   const body = lines.join('\r\n');
 
-  const result = await sendMail(recipients, subject, body);
+  // 送信元＝完了したタスクの担当者（authMembers から名前→メール）。無ければログイン本人。
+  const fromEmail = authMap[t.owner] || _currentUser?.email || '';
+  const result = await sendMail(fromEmail, recipients, subject, body);
   if(result.ok){
     toast(`✉️ ${recipients.length}名に通知メールを送信しました`);
-    logHistory('email', `${t.id} 完了通知メール送信（宛先 ${recipients.length}名・${result.via==='server'?'info@nimomakezu.com':'本人アカウント'}）`);
+    logHistory('email', `${t.id} 完了通知メール送信（宛先 ${recipients.length}名・送信元 ${result.via==='server'?(fromEmail||'担当者'):'本人アカウント'}）`);
   }else{
     alert('メール送信に失敗しました。\nGoogleログインまたはCloud Functionの設定をご確認ください。');
   }
@@ -5878,10 +5882,11 @@ async function sendReminderEmail(t){
   ];
   const body = lines.join('\r\n');
 
-  const result = await sendMail([ownerEmail], subject, body);
+  // 送信元・宛先とも担当者本人
+  const result = await sendMail(ownerEmail, [ownerEmail], subject, body);
   if(result.ok){
     toast(`⏰ ${t.id} 10分前リマインド送信（${ownerEmail}）`);
-    logHistory('reminder', `${t.id} 10分前リマインド送信（${ownerEmail}・${result.via==='server'?'info@':'本人'}）`);
+    logHistory('reminder', `${t.id} 10分前リマインド送信（${ownerEmail}）`);
     return true;
   }
   console.warn('Reminder send failed for', t.id);
