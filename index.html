@@ -9036,8 +9036,19 @@ async function onLoggedIn(){
       const ok = await joinOrCreateWorkspace(targetWsId);
       if(!ok){ /* still proceed in offline mode */ }
     } else {
-      // ★ 初回（招待URLなし・ローカルキャッシュなし）→ 作成/参加の選択画面を表示
-      await chooseFirstWorkspace();
+      // 招待URLなし・ローカルキャッシュなし。
+      // ★ 別端末/別ブラウザ/キャッシュ削除のケースに備え、参加済みワークスペースをクラウドで照会。
+      //   既に参加しているWSがあれば自動で入る。どこにも未参加なら初回として選択画面を出す。
+      let myWss = [];
+      try{ myWss = await fetchMyWorkspaces({ force: true }); }catch(e){ console.warn('fetchMyWorkspaces (login) failed:', e); }
+      if(Array.isArray(myWss) && myWss.length > 0){
+        // 複数参加している場合は先頭（名前順）に入る。後でヘッダーの切替メニューから変更可能。
+        const ok = await joinOrCreateWorkspace(myWss[0].id);
+        if(!ok){ /* still proceed in offline mode */ }
+      } else {
+        // 本当の初回（どのWSにも未参加）→ 作成/参加の選択画面を表示
+        await chooseFirstWorkspace();
+      }
     }
     // Clear ws=... from URL
     if(inviteWs){
