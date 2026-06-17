@@ -1534,6 +1534,41 @@ service cloud.firestore {
 </div><!-- /.modal-backdrop -->
 
 </main>
+
+<!-- ============ 初回ワークスペース選択 MODAL（main の外。ログイン直後・showApp 前に表示するため）============ -->
+<!-- ログイン画面(z-index:1000)より前面に出すため z-index を上げる -->
+<div class="modal-backdrop" id="wsChoiceModal" style="z-index:1100">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <h2>👋 ようこそ Hittatsu へ</h2>
+    </div>
+    <div class="modal-body" style="padding:22px 24px">
+      <p style="margin:0 0 18px;color:var(--text-soft);font-size:13px;line-height:1.7">
+        ワークスペースは、チームでタスク・プロジェクトを共有する単位です。<br>
+        新しく作るか、招待されている既存のワークスペースに参加するかを選んでください。
+      </p>
+
+      <div style="border:1px solid var(--border);border-radius:9px;padding:16px;margin-bottom:14px">
+        <div style="font-weight:700;font-size:14px;margin-bottom:4px;color:var(--primary-dark)">➕ 新規ワークスペースを作成</div>
+        <div style="font-size:12px;color:var(--text-soft);margin-bottom:10px">自分がオーナーになり、後からメンバーを招待できます。</div>
+        <input type="text" id="wsChoiceName" placeholder="ワークスペース名（例：営業チーム）" autocomplete="off"
+          style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font:inherit;box-sizing:border-box;margin-bottom:10px">
+        <button class="btn" style="width:100%" onclick="wsChoiceCreate()">このワークスペースを作成</button>
+      </div>
+
+      <div style="border:1px solid var(--border);border-radius:9px;padding:16px">
+        <div style="font-weight:700;font-size:14px;margin-bottom:4px;color:var(--primary-dark)">🔗 既存のワークスペースに参加</div>
+        <div style="font-size:12px;color:var(--text-soft);margin-bottom:10px">管理者から共有された <strong>ワークスペースID</strong> または <strong>招待URL</strong> を入力してください。</div>
+        <input type="text" id="wsChoiceJoinId" placeholder="ワークスペースID または 招待URL" autocomplete="off"
+          style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font:inherit;box-sizing:border-box;margin-bottom:10px">
+        <button class="btn ghost" style="width:100%" onclick="wsChoiceJoin()">このワークスペースに参加</button>
+      </div>
+
+      <div id="wsChoiceMsg" style="margin-top:12px;font-size:12px;color:var(--danger,#C0392B);min-height:16px"></div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -8997,14 +9032,19 @@ async function onLoggedIn(){
         targetWsId = S.workspaceId;
       }
     }
-    const ok = await joinOrCreateWorkspace(targetWsId);
+    if(targetWsId){
+      const ok = await joinOrCreateWorkspace(targetWsId);
+      if(!ok){ /* still proceed in offline mode */ }
+    } else {
+      // ★ 初回（招待URLなし・ローカルキャッシュなし）→ 作成/参加の選択画面を表示
+      await chooseFirstWorkspace();
+    }
     // Clear ws=... from URL
     if(inviteWs){
       const url = new URL(window.location);
       url.searchParams.delete('ws');
       history.replaceState(null,"",url.pathname + (url.search?url.search:'') + url.hash);
     }
-    if(!ok){ /* still proceed in offline mode */ }
   } else {
     // Legacy invite handling (local-only mode)
     const inv = readInviteFromHash();
@@ -9033,6 +9073,59 @@ async function onLoggedIn(){
   setTimeout(()=>{ try { googleFetchEvents(true); } catch(e){} }, 600);
   // アクセストークンのサイレント自動更新を開始（1時間失効による再ログインを防止）
   try{ startTokenAutoRefresh(); }catch(e){ console.warn('startTokenAutoRefresh failed:', e); }
+}
+
+// ===== 初回ワークスペース選択（新規作成 / 既存に参加）=====
+let _wsChoiceResolve = null;
+function chooseFirstWorkspace(){
+  return new Promise(resolve => {
+    _wsChoiceResolve = resolve;
+    const nameEl = document.getElementById('wsChoiceName');
+    const joinEl = document.getElementById('wsChoiceJoinId');
+    const msg = document.getElementById('wsChoiceMsg');
+    if(nameEl){ nameEl.value = ''; }
+    if(joinEl){ joinEl.value = ''; }
+    if(msg){ msg.textContent = ''; }
+    const modal = document.getElementById('wsChoiceModal');
+    if(!modal){ resolve(); return; } // 念のため：モーダルが無ければ自動作成へフォールバック
+    modal.classList.add('show');
+    setTimeout(()=>{ try{ nameEl && nameEl.focus(); }catch(e){} }, 60);
+  });
+}
+function _closeWsChoice(){
+  const modal = document.getElementById('wsChoiceModal');
+  if(modal) modal.classList.remove('show');
+  const r = _wsChoiceResolve; _wsChoiceResolve = null;
+  if(r) r();
+}
+async function wsChoiceCreate(){
+  const msg = document.getElementById('wsChoiceMsg');
+  const name = (document.getElementById('wsChoiceName')?.value || '').trim();
+  S.wsName = name || (_currentUser?.name ? `${_currentUser.name}のワークスペース` : 'マイワークスペース');
+  if(msg){ msg.style.color = ''; msg.textContent = '作成中...'; }
+  try{
+    const ok = await joinOrCreateWorkspace(null); // null → 新規作成
+    if(ok){ _closeWsChoice(); }
+    else if(msg){ msg.textContent = '作成に失敗しました。通信状況を確認して再度お試しください。'; }
+  }catch(e){
+    if(msg) msg.textContent = '作成に失敗しました：'+(e.message||e);
+  }
+}
+async function wsChoiceJoin(){
+  const msg = document.getElementById('wsChoiceMsg');
+  let raw = (document.getElementById('wsChoiceJoinId')?.value || '').trim();
+  if(!raw){ if(msg) msg.textContent = 'ワークスペースID または 招待URL を入力してください。'; return; }
+  // 招待URLが貼られた場合は ?ws=xxx を抽出
+  const m = raw.match(/[?&]ws=([^&\s]+)/);
+  const wsId = m ? m[1] : raw;
+  if(msg){ msg.style.color = ''; msg.textContent = '参加中...'; }
+  try{
+    const ok = await joinOrCreateWorkspace(wsId);
+    if(ok){ _closeWsChoice(); }
+    else if(msg){ msg.textContent = '参加できませんでした。ワークスペースIDをご確認ください。'; }
+  }catch(e){
+    if(msg) msg.textContent = '参加に失敗しました：'+(e.message||e);
+  }
 }
 
 async function registerCurrentMember(){
