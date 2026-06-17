@@ -6147,7 +6147,11 @@ function testPushNotification(){
 // ★ 1分ごとにチェック：本日のタスクで開始時刻の10〜11分前ならリマインド送信
 //   timer の遅延 / バックグラウンド再開で範囲を逸脱するのを防ぐため 8〜12分に拡張。
 //   _reminded10 で重複送信を防止。
+// リマインドはサーバー側 Cloud Function（5分毎・当日分）で送信するため、
+// クライアント側からの送信は無効化（二重送信防止）。true に戻すとブラウザからも送る。
+const CLIENT_SIDE_REMINDERS = false;
 async function checkUpcomingReminders(){
+  if(!CLIENT_SIDE_REMINDERS) return;
   const today = todayStr();
   const now = new Date();
   const nowMin = now.getHours()*60 + now.getMinutes();

@@ -1,6 +1,5 @@
 // Cloud Functions for Hittatsu
-// メール送信（Gmail API + サービスアカウント / 送信元はタスク担当者本人）
-// ※ リマインドはクライアント側（ブラウザ）で実行するため、毎分実行のサーバー関数は廃止。
+// メール送信（Gmail API + サービスアカウント / 送信元はタスク担当者本人）＋ リマインド（5分毎・当日分のみ）
 //
 // このファイルを functions/index.js としてコピーしてください。
 // 依存：package.json に "googleapis" を追加（npm i googleapis）
@@ -10,7 +9,12 @@
 //
 // 事前設定（Google Workspace 管理コンソール → セキュリティ → API制御 → ドメイン全体の委任）:
 //   サービスアカウントのクライアントID に scope https://www.googleapis.com/auth/gmail.send を許可
+//
+// リマインド用インデックス（必須）:
+//   collectionGroup "tasks" の startD（COLLECTION_GROUP スコープ）。
+//   firestore.indexes.json を deploy するか、初回実行時のログのリンクから作成。
 
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { setGlobalOptions } = require("firebase-functions/v2");
@@ -175,6 +179,162 @@ ${BUDGET_URL}
     } catch (e) {
       console.error("[budgetAccess] mail send failed:", e.message);
     }
+  }
+);
+
+// ============================================================
+// リマインド（10分前）：5分毎・当日分のタスクのみを読む
+//   collectionGroup("tasks").where("startD","==",今日) で「当日のタスク」だけ取得し、
+//   全タスクを毎分読む方式に比べ Firestore 読み取りを ~99% 削減。
+//   送信元は担当者本人（sendMail）。重複防止は sentReminders。
+//   ※ クライアント側（ブラウザ）のリマインド送信は無効化済み（二重送信防止）。
+// ============================================================
+async function getGoalName(db, wsId, goalId) {
+  try {
+    const g = await db.doc(`workspaces/${wsId}/goals/${goalId}`).get();
+    return g.exists ? (g.data().name || goalId) : goalId;
+  } catch { return goalId; }
+}
+
+exports.sendReminders = onSchedule(
+  {
+    schedule: "every 5 minutes",
+    timeZone: "Asia/Tokyo",
+    secrets: [GMAIL_SA_KEY],
+  },
+  async () => {
+    const db = admin.firestore();
+    const messaging = admin.messaging();
+
+    // 今日（JST）と現在分
+    const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const today = jst.toISOString().slice(0, 10);
+    const nowMin = jst.getUTCHours() * 60 + jst.getUTCMinutes();
+    console.log(`[reminder] check ${today} ${jst.getUTCHours()}:${String(jst.getUTCMinutes()).padStart(2,"0")} JST`);
+
+    // ★ 当日分のタスクだけを collectionGroup で取得（全タスク読みを回避）
+    const tasksSnap = await db.collectionGroup("tasks").where("startD", "==", today).get();
+    const wsCache = {}; // wsId -> workspace data（authMembers 等）
+    let totalEmails = 0, totalPushes = 0;
+
+    for (const tDoc of tasksSnap.docs) {
+      const t = tDoc.data() || {};
+      if (t.status === "完了" || t.status === "中止") continue;
+      if (!t.time || !t.owner) continue;
+      const m = String(t.time).match(/^(\d{1,2}):(\d{2})/);
+      if (!m) continue;
+      const taskMin = Number(m[1]) * 60 + Number(m[2]);
+      const diff = taskMin - nowMin;
+      if (diff < 8 || diff > 12) continue; // 8〜12分前のみ
+
+      const wsRef = tDoc.ref.parent.parent; // workspaces/{wsId}
+      if (!wsRef) continue;
+      const wsId = wsRef.id;
+
+      // 重複防止
+      const reminderKey = `${today}_${wsId}_${t.id}`;
+      const reminderRef = db.collection("sentReminders").doc(reminderKey);
+      if ((await reminderRef.get()).exists) continue;
+
+      // workspace 情報をキャッシュ（同一WSの複数タスクで使い回し）
+      if (!wsCache[wsId]) {
+        const wsSnap = await wsRef.get();
+        wsCache[wsId] = wsSnap.exists ? (wsSnap.data() || {}) : {};
+      }
+      const wsData = wsCache[wsId];
+      const authMembers = Array.isArray(wsData.authMembers) ? wsData.authMembers : [];
+      const owner = authMembers.find(a => a && a.name === t.owner);
+      if (!owner || !owner.email) {
+        console.warn(`[reminder] no email for owner=${t.owner} in ws=${wsId}`);
+        continue;
+      }
+
+      const taskName = t.act || t.mid || "(無題)";
+      const wsName = wsData.wsName || wsId;
+      const goalName = t.goal ? await getGoalName(db, wsId, t.goal) : "";
+      const subject = `⚠️10分前リマインド⚠️‐${taskName}`;
+      const textBody = [
+        `「${taskName}」開始の 10分前リマインドです。`,
+        "",
+        `■ ワークスペース：${wsName}`,
+        `■ 紐付プロジェクト：${goalName || "(未紐付)"}`,
+        `■ タスク：${taskName}`,
+        `■ 開始時刻：${t.time}`,
+        `■ 所要時間：${t.est ? t.est + "分" : "(未設定)"}`,
+        "",
+        `アプリで開く：${APP_BASE_URL}`,
+        `— Hittatsu | ${wsName} より自動送信`,
+      ].join("\n");
+
+      // メール（担当者本人として送信）
+      let emailOk = false;
+      try {
+        await sendMail(owner.email, owner.email, subject, textBody);
+        totalEmails++; emailOk = true;
+        console.log(`[reminder][email] ${t.id} from/to ${owner.email}`);
+      } catch (err) {
+        console.error(`[reminder][email] failed ${t.id}:`, err.message);
+      }
+
+      // プッシュ（FCM）
+      let pushOk = false;
+      try {
+        const tokensSnap = await db.collection(`workspaces/${wsId}/pushTokens`)
+          .where("email", "==", owner.email).get();
+        if (!tokensSnap.empty) {
+          const tokenDocs = [];
+          tokensSnap.forEach(d => tokenDocs.push({ ref: d.ref, token: d.data().token }));
+          const tokens = tokenDocs.map(td => td.token).filter(Boolean);
+          if (tokens.length > 0) {
+            const result = await messaging.sendEachForMulticast({
+              tokens,
+              notification: {
+                title: `⏰ 10分後: ${taskName}`,
+                body: `${t.time} 開始 / ${goalName || "(未紐付)"}`,
+              },
+              data: { taskId: t.id, wsId, url: APP_BASE_URL },
+              webpush: { fcmOptions: { link: APP_BASE_URL } },
+            });
+            totalPushes += result.successCount;
+            pushOk = result.successCount > 0;
+            await Promise.all(result.responses.map(async (resp, idx) => {
+              if (!resp.success) {
+                const code = resp.error && resp.error.code;
+                if (code === "messaging/invalid-registration-token" ||
+                    code === "messaging/registration-token-not-registered") {
+                  try { await tokenDocs[idx].ref.delete(); } catch {}
+                }
+              }
+            }));
+          }
+        }
+      } catch (err) {
+        console.error(`[reminder][push] failed ${t.id}:`, err.message);
+      }
+
+      if (emailOk || pushOk) {
+        await reminderRef.set({
+          sentAt: admin.firestore.FieldValue.serverTimestamp(),
+          taskId: t.id, wsId, ownerEmail: owner.email, taskName,
+          emailSent: emailOk, pushSent: pushOk,
+        });
+      }
+    }
+    console.log(`[reminder] done. tasks(today)=${tasksSnap.size}, emails=${totalEmails}, pushes=${totalPushes}`);
+  }
+);
+
+// 古い sentReminders を毎日掃除（3日経過分削除）
+exports.cleanupSentReminders = onSchedule(
+  { schedule: "every day 03:00", timeZone: "Asia/Tokyo" },
+  async () => {
+    const db = admin.firestore();
+    const threshold = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const snap = await db.collection("sentReminders").where("sentAt", "<", threshold).get();
+    const batch = db.batch();
+    snap.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    console.log(`[cleanup] deleted ${snap.size} old sentReminders`);
   }
 );
 
