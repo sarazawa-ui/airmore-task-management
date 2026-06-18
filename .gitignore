@@ -18,3 +18,8 @@ start-server.ps1
 
 # Logs
 *.log
+
+# サービスアカウントキー（機密・絶対にコミットしない）
+airmore-task-management-app-*.json
+*serviceaccount*.json
+*-key.json
