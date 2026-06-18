@@ -88,6 +88,14 @@ exports.sendAppEmail = onCall({ secrets: [GMAIL_SA_KEY] }, async (req) => {
   const list = (Array.isArray(to) ? to : [to]).filter(Boolean);
   if (!fromEmail || !list.length || !subject) throw new HttpsError("invalid-argument", "from/to/subject は必須です");
   if (list.length > 20) throw new HttpsError("invalid-argument", "宛先が多すぎます（最大20件）");
+  // 旧クライアント（キャッシュ未更新の端末）が送る「10分前リマインド」をサーバーで遮断する。
+  //   リマインドはサーバーの sendReminders（内部 sendMail を直接呼ぶ）が唯一の送信元とし、
+  //   クライアント経由の callable では受け付けない。これによりリロード不要で二重送信を停止できる。
+  //   ※ サーバー側 sendReminders はこの callable を通らないため影響なし。
+  if (/リマインド/.test(String(subject))) {
+    console.log("[sendAppEmail] reminder via client blocked:", subject);
+    return { ok: true, from: fromEmail, skipped: "client-reminder-blocked" };
+  }
   try {
     await sendMail(fromEmail, list, String(subject), String(text || ""));
     return { ok: true, from: fromEmail };
