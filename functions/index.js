@@ -231,10 +231,18 @@ exports.sendReminders = onSchedule(
       if (!wsRef) continue;
       const wsId = wsRef.id;
 
-      // 重複防止
-      const reminderKey = `${today}_${wsId}_${t.id}`;
-      const reminderRef = db.collection("sentReminders").doc(reminderKey);
-      if ((await reminderRef.get()).exists) continue;
+      // 重複防止＆同時実行ガード：create() で原子的に予約する。
+      //   既に同じキーが存在すれば create が失敗 → skip。
+      //   （スケジューラの at-least-once 配信で同一トリガーが二重起動しても二重送信しない）
+      const reminderRef = db.collection("sentReminders").doc(`${today}_${wsId}_${t.id}`);
+      try {
+        await reminderRef.create({
+          reservedAt: admin.firestore.FieldValue.serverTimestamp(),
+          taskId: t.id, wsId,
+        });
+      } catch (e) {
+        continue; // 既に他の実行が予約済み → 二重送信防止のためスキップ
+      }
 
       // workspace 情報をキャッシュ（同一WSの複数タスクで使い回し）
       if (!wsCache[wsId]) {
@@ -246,6 +254,7 @@ exports.sendReminders = onSchedule(
       const owner = authMembers.find(a => a && a.name === t.owner);
       if (!owner || !owner.email) {
         console.warn(`[reminder] no email for owner=${t.owner} in ws=${wsId}`);
+        try { await reminderRef.delete(); } catch {} // 送信対象外 → 予約を解除
         continue;
       }
 
@@ -317,7 +326,10 @@ exports.sendReminders = onSchedule(
           sentAt: admin.firestore.FieldValue.serverTimestamp(),
           taskId: t.id, wsId, ownerEmail: owner.email, taskName,
           emailSent: emailOk, pushSent: pushOk,
-        });
+        }, { merge: true });
+      } else {
+        // 送信に失敗 → 予約を解除して次回の実行で再試行できるようにする
+        try { await reminderRef.delete(); } catch {}
       }
     }
     console.log(`[reminder] done. tasks(today)=${tasksSnap.size}, emails=${totalEmails}, pushes=${totalPushes}`);
