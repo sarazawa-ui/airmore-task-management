@@ -2832,7 +2832,7 @@ function renderMeetings(){
         const existing = editorDiv.innerHTML.trim();
         // プリセット内容を前に挿入。既存と区切りを入れる
         const sep = existing ? '<br><hr><br>' : '';
-        editorDiv.innerHTML = (preset.content||'') + sep + existing;
+        editorDiv.innerHTML = _agendaPresetToHtml(preset.content) + sep + existing;
         editorDiv.focus();
         // blur 相当の保存処理を手動でトリガー
         const editor = editorDiv.closest('.meeting-editor');
@@ -4120,7 +4120,9 @@ function duplicateTask(taskId){
     act: (src.act||src.mid||'') + '（複製）',
     status: '未着手',
     act_min: '',
+    startD: '',   // ★ 複製は未割当にする（カレンダーに配置しない／終日扱いを防ぐ）
     time: '',
+    slot: '',
     interrupt: '',
     _expanded: false,
     _prevStatus: undefined,
@@ -4464,6 +4466,13 @@ function addTreePreset(){
 }
 
 // ===== 会議メモのアジェンダプリセット マスタ =====
+// プリセット内容を会議メモ（HTMLエディタ）へ挿入する用の変換。
+//   HTMLタグを含む場合はそのまま、プレーンテキストの場合は改行を <br> に変換して反映する。
+function _agendaPresetToHtml(content){
+  const c = String(content || '');
+  if(/<[a-z!/][\s\S]*>/i.test(c)) return c; // 既に HTML を含む
+  return escapeHtml(c).replace(/\r\n|\r|\n/g, '<br>');
+}
 function renderAgendaPresetsList(){
   const host = document.getElementById('lstAgendaPresets');
   if(!host) return;
@@ -9112,7 +9121,20 @@ function _closeWsChoice(){
 async function wsChoiceCreate(){
   const msg = document.getElementById('wsChoiceMsg');
   const name = (document.getElementById('wsChoiceName')?.value || '').trim();
+  // ★ サンプルの初期データ（DEFAULT_STATE のプロジェクト等）を引き継がず、空のWSとして作成する。
+  const keepUserPrefs = S.userPrefs;
+  const keepProfile = S.profile;
+  try{ _resetWorkspaceLocalCaches(); }catch(e){}
+  delete S.workspaceId; delete S.ownerEmail; delete S.memberEmails;
   S.wsName = name || (_currentUser?.name ? `${_currentUser.name}のワークスペース` : 'マイワークスペース');
+  S.profile = keepProfile || { companyName:'', companyLogo:'', companyMemo:'' };
+  S.goals = [];
+  S.tasks = [];
+  S.members = [{ name: _currentUser.name, dept: 'オーナー' }];
+  S.authMembers = [{ email:_currentUser.email, name:_currentUser.name, picture:_currentUser.picture||'', role:'owner', joinedAt:new Date().toISOString() }];
+  S.events = [];
+  S.userPrefs = keepUserPrefs || {};
+  ensureDefaults();
   if(msg){ msg.style.color = ''; msg.textContent = '作成中...'; }
   try{
     const ok = await joinOrCreateWorkspace(null); // null → 新規作成
@@ -9287,6 +9309,26 @@ function showApp(){
   if(typeof updateWsSwitcherLabel === 'function') updateWsSwitcherLabel();
   if(typeof renderFbUsageBadge === 'function') renderFbUsageBadge();
   try{ updateBudgetNavVisibility(); }catch(e){}
+  // マイタスク横断からWSを跨いで開いたタスクを、リロード後に直接カレンダー詳細で開く
+  try{ _handlePendingOpenTask(); }catch(e){ console.warn('pending open task failed:', e); }
+}
+
+// マイタスク横断→別WSのタスク詳細：switchWorkspace のリロードを跨いで開く対象を処理
+async function _handlePendingOpenTask(){
+  if(_handlePendingOpenTask._done) return;
+  let pending = null;
+  try{ pending = JSON.parse(sessionStorage.getItem('hittatsu_pending_open_task') || 'null'); }catch(e){}
+  if(!pending || !pending.taskId) return;
+  _handlePendingOpenTask._done = true;
+  try{ sessionStorage.removeItem('hittatsu_pending_open_task'); }catch(e){}
+  // サブコレ読込で対象タスクが現れるまで待つ
+  await _waitForTask(pending.taskId, 7000);
+  goToView('calendar');
+  _revealTaskInSideOnClose = pending.taskId;
+  setTimeout(() => {
+    try{ focusTaskOnCalendar(pending.taskId); }catch(e){}
+    try{ openTaskEditModal(pending.taskId); }catch(e){ console.warn('pending openTaskEditModal failed:', e); }
+  }, 250);
 }
 
 // ===== 予実管理アプリへの遷移（ヘッダー右側の予算ロゴボタン）=====
@@ -10656,14 +10698,16 @@ async function openPersonalTask(wsId, taskId){
   try{
     if(wsId && wsId !== S.workspaceId){
       toast('ワークスペースを切替中...');
-      await switchWorkspace(wsId);
-      // サブコレクションのタスク読込を待つ（最大5秒）
-      await _waitForTask(taskId, 5000);
+      // switchWorkspace はページをリロードするため、開く対象を保存しておき、
+      // リロード後（showApp → _handlePendingOpenTask）に直接カレンダー詳細を開く。
+      // → ダッシュボードを経由せず、そのまま週間カレンダーのタスク詳細に遷移。
+      try{ sessionStorage.setItem('hittatsu_pending_open_task', JSON.stringify({ wsId, taskId })); }catch(e){}
+      await switchWorkspace(wsId); // 以降は実行されない（リロード）
+      return;
     }
+    // 同一WS：その場でカレンダー詳細を開く
     goToView('calendar');
-    // ★ 詳細ポップアップを閉じた後、当該タスクをデイリータスク一覧に表示するためのマーク
-    _revealTaskInSideOnClose = taskId;
-    // 描画完了を待ってから詳細を開く
+    _revealTaskInSideOnClose = taskId; // 詳細を閉じた後にデイリータスク一覧へ表示
     setTimeout(() => {
       try{ focusTaskOnCalendar(taskId); }catch(e){ /* 未配置なら無視 */ }
       try{ openTaskEditModal(taskId); }
