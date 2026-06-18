@@ -6025,29 +6025,30 @@ async function registerServiceWorker(){
   }
 }
 // Push 通知を有効化（ユーザーが Settings → 通知 → ボタンを押した時）
-async function enablePushNotifications(){
+async function enablePushNotifications(silent){
   if(!_pushSupported()){
-    alert('このブラウザはプッシュ通知に対応していません');
+    if(!silent) alert('このブラウザはプッシュ通知に対応していません');
     return false;
   }
   if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser){
-    alert('まず Google ログインしてください');
+    if(!silent) alert('まず Google ログインしてください');
     return false;
   }
   if(FCM_VAPID_KEY === 'REPLACE_WITH_YOUR_VAPID_PUBLIC_KEY'){
-    alert('VAPID キーが設定されていません。管理者にお問い合わせください。\n\n（Firebase Console → Cloud Messaging → 「ウェブプッシュ証明書」から取得し、コード内 FCM_VAPID_KEY を更新する必要があります）');
+    if(!silent) alert('VAPID キーが設定されていません。管理者にお問い合わせください。\n\n（Firebase Console → Cloud Messaging → 「ウェブプッシュ証明書」から取得し、コード内 FCM_VAPID_KEY を更新する必要があります）');
     return false;
   }
   try{
-    // 通知許可
+    // 通知許可。silent（自動有効化）時は、既に拒否されている場合はプロンプトを出さずに静かに終了
+    if(silent && Notification.permission === 'denied') return false;
     const perm = await Notification.requestPermission();
     if(perm !== 'granted'){
-      alert('通知が許可されませんでした。ブラウザの設定から許可してください。');
+      if(!silent) alert('通知が許可されませんでした。ブラウザの設定から許可してください。');
       return false;
     }
     // SW 登録（未登録なら）
     if(!_swRegistration){ _swRegistration = await registerServiceWorker(); }
-    if(!_swRegistration){ alert('Service Worker の登録に失敗しました'); return false; }
+    if(!_swRegistration){ if(!silent) alert('Service Worker の登録に失敗しました'); return false; }
     // FCM 初期化
     if(!_fcmMessaging){ _fcmMessaging = firebase.messaging(); }
     // トークン取得
@@ -6056,7 +6057,7 @@ async function enablePushNotifications(){
       serviceWorkerRegistration: _swRegistration
     });
     if(!token){
-      alert('プッシュトークン取得に失敗しました。再度お試しください。');
+      if(!silent) alert('プッシュトークン取得に失敗しました。再度お試しください。');
       return false;
     }
     _fcmToken = token;
@@ -6081,14 +6082,14 @@ async function enablePushNotifications(){
         });
       }
     });
-    toast('✅ プッシュ通知を有効化しました');
+    if(!silent) toast('✅ プッシュ通知を有効化しました');
     if(!S.ui) S.ui = {};
     S.ui.pushEnabled = true;
     save();
     return true;
   }catch(e){
     console.error('Push enable failed:', e);
-    alert('プッシュ通知の有効化に失敗しました：\n' + (e.message || e));
+    if(!silent) alert('プッシュ通知の有効化に失敗しました：\n' + (e.message || e));
     return false;
   }
 }
@@ -9311,6 +9312,28 @@ function showApp(){
   try{ updateBudgetNavVisibility(); }catch(e){}
   // マイタスク横断からWSを跨いで開いたタスクを、リロード後に直接カレンダー詳細で開く
   try{ _handlePendingOpenTask(); }catch(e){ console.warn('pending open task failed:', e); }
+  // ★ プッシュ通知を自動で常時有効化（ワークスペース確定後・サイレント）
+  try{ _autoEnablePush(); }catch(e){ console.warn('auto push enable failed:', e); }
+}
+
+// ログイン後、プッシュ通知を自動で有効化（手動ボタン不要）。
+//   端末・WS確定を待ち、許可済み or 未設定なら静かに登録。拒否済みなら何もしない。
+let _autoPushTries = 0;
+function _autoEnablePush(){
+  if(_autoEnablePush._done) return;
+  if(!_pushSupported()) return;
+  if(typeof Notification !== 'undefined' && Notification.permission === 'denied') return;
+  // WS とログインが確定するまでリトライ（最大 ~20秒）
+  if(!(_firebaseReady && firebase.auth && firebase.auth().currentUser && S.workspaceId)){
+    if(_autoPushTries++ > 20) return;
+    setTimeout(_autoEnablePush, 1000);
+    return;
+  }
+  _autoEnablePush._done = true;
+  // silent=true でアラートを出さずに有効化（トークン取得→Firestore保存）
+  enablePushNotifications(true)
+    .then(ok => { try{ updatePushStatusBox(); }catch(e){} })
+    .catch(e => console.warn('auto push enable error:', e));
 }
 
 // マイタスク横断→別WSのタスク詳細：switchWorkspace のリロードを跨いで開く対象を処理
