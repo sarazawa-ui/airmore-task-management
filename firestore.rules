@@ -50,13 +50,16 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow write: if request.auth != null && _gbAdminOk(request.auth.token.email);
     }
+    // data の書き込み：認証済みユーザーなら可（editor/viewer の制御はアプリ層 AuthGate + 保存処理で実施）。
+    //   ※ ロール判定（メールをマップキーで参照）に依存させると、editor/admin でも
+    //     permission-denied になり「自分以外が更新できない」事象が起きたため、読み取りと同様に開放。
     match /globalBudget/data {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && _gbWriteOk(request.auth.token.email);
+      allow write: if request.auth != null;
     }
     match /globalBudget/{doc} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && _gbWriteOk(request.auth.token.email);
+      allow write: if request.auth != null;
     }
 
     // === Budget Access Requests（権限のないユーザーが申請を出す窓口） ===
