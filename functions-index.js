@@ -106,6 +106,174 @@ exports.sendAppEmail = onCall({ secrets: [GMAIL_SA_KEY] }, async (req) => {
 });
 
 // ============================================================
+// 売上：Googleスプレッドシート自動取込（方式B・サーバー側）
+//   各社の参照URL（globalBudget/data の salesSheetUrl[cid]）を、
+//   サービスアカウント（GMAIL_SA_KEY）で読み取り、売上に反映する。
+//   ※ 各スプレッドシートを、SAのメールアドレス
+//       hittatsu-mailer@airmore-task-management-app.iam.gserviceaccount.com
+//     に「閲覧者」で共有しておくこと（非公開のまま読める）。
+//   ※ Google Cloud で Sheets API を有効化しておくこと。
+//   - 定期実行：平日 23:59（Asia/Tokyo）
+//   - 手動実行：onCall refreshSalesNow（更新ボタンから呼ぶ）
+//   解析ロジックはクライアント（budget/src/App.jsx の parseSalesRows）と同等。
+// ============================================================
+const SHIP_CODES = ["*5", "*555"];
+function _num(v) {
+  const n = parseFloat(String(v == null ? "" : v).replace(/[,¥\s"']/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+function _normYM(v) {
+  const s = String(v == null ? "" : v).trim();
+  const sep = s.match(/(\d{4})\s*[年./\-]\s*(\d{1,2})(?!\d)/);
+  if (sep) { const mm = +sep[2]; if (mm >= 1 && mm <= 12) return `${sep[1]}-${String(mm).padStart(2, "0")}`; }
+  const d = s.replace(/[^0-9]/g, "");
+  if (d.length === 6 || d.length === 8) { const y = d.slice(0, 4), mm = +d.slice(4, 6); if (mm >= 1 && mm <= 12) return `${y}-${String(mm).padStart(2, "0")}`; }
+  if (d.length === 5) { const y = d.slice(0, 4), mm = +d.slice(4); if (mm >= 1 && mm <= 9) return `${y}-0${mm}`; }
+  return null;
+}
+function _parseSalesRows(rows, fields) {
+  const normH = (s) => String(s).replace(/\s/g, "");
+  const codeKey = fields.find(f => ["商品ｺｰﾄﾞ", "商品コード", "商品CD", "品番", "商品番号", "商品№"].includes(normH(f)))
+    || fields.find(f => /商品.*(コード|ｺｰﾄﾞ|CD)/.test(normH(f))) || null;
+  const prodNameKey = fields.find(f => ["商品名１", "商品名1", "商品名(1)", "商品名（1）", "商品名（１）"].includes(normH(f)))
+    || fields.find(f => /商品名.*[1１]/.test(normH(f))) || fields.find(f => /商品名/.test(normH(f))) || null;
+  const byMonth = {};
+  const reps = new Set();
+  for (const r of rows) {
+    const ym = _normYM(r["年月度"]) || _normYM(r["伝票日付"]);
+    if (!ym) continue;
+    const rep = (String(r["担当営業名"] == null ? "" : r["担当営業名"]).trim()) || "担当未設定";
+    const amt = _num(r["金額"]);
+    const cost = _num(r["原価金額"]);
+    const gpCol = r["粗利"];
+    const gp = gpCol !== undefined && String(gpCol).trim() !== "" ? _num(gpCol) : amt - cost;
+    const isShip = codeKey ? SHIP_CODES.includes(String(r[codeKey] == null ? "" : r[codeKey]).trim()) : false;
+    const isTax = prodNameKey ? String(r[prodNameKey] == null ? "" : r[prodNameKey]).includes("消費税") : false;
+    if (!byMonth[ym]) byMonth[ym] = { byRep: {} };
+    if (!byMonth[ym].byRep[rep]) byMonth[ym].byRep[rep] = { amt: 0, cost: 0, gp: 0, cnt: 0, ship: { amt: 0, cost: 0, gp: 0, cnt: 0 }, tax: { amt: 0, cost: 0, gp: 0, cnt: 0 } };
+    const t = byMonth[ym].byRep[rep];
+    t.amt += amt; t.cost += cost; t.gp += gp; t.cnt += 1;
+    if (isShip) { t.ship.amt += amt; t.ship.cost += cost; t.ship.gp += gp; t.ship.cnt += 1; }
+    if (isTax) { t.tax.amt += amt; t.tax.cost += cost; t.tax.gp += gp; t.tax.cnt += 1; }
+    reps.add(rep);
+  }
+  return { byMonth, reps: [...reps], months: Object.keys(byMonth) };
+}
+function _parseSalesValues(values) {
+  if (!values || !values.length) throw new Error("シートにデータがありません");
+  const fields = (values[0] || []).map(h => String(h == null ? "" : h).trim());
+  const rows = values.slice(1).map(arr => {
+    const o = {};
+    fields.forEach((h, i) => { if (h) o[h] = arr[i]; });
+    return o;
+  });
+  return _parseSalesRows(rows, fields);
+}
+function _parseSheetUrl(url) {
+  const idM = String(url || "").match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!idM) throw new Error("URL形式が不正です");
+  const gidM = String(url).match(/[#&?]gid=(\d+)/);
+  return { id: idM[1], gid: gidM ? Number(gidM[1]) : null };
+}
+let _sheetsClient = null;
+async function getSheets() {
+  if (_sheetsClient) return _sheetsClient;
+  const key = JSON.parse(GMAIL_SA_KEY.value());
+  const jwt = new google.auth.JWT({
+    email: key.client_email,
+    key: key.private_key,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+  });
+  await jwt.authorize();
+  _sheetsClient = google.sheets({ version: "v4", auth: jwt });
+  return _sheetsClient;
+}
+async function fetchSheetValues(url) {
+  const { id, gid } = _parseSheetUrl(url);
+  const sheets = await getSheets();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: id, fields: "sheets(properties(sheetId,title))" });
+  const list = (meta.data && meta.data.sheets) || [];
+  if (!list.length) throw new Error("シートが見つかりません");
+  let target = gid != null ? list.find(s => s.properties && s.properties.sheetId === gid) : null;
+  if (!target) target = list[0];
+  const title = target.properties.title;
+  const valRes = await sheets.spreadsheets.values.get({
+    spreadsheetId: id, range: title, majorDimension: "ROWS", valueRenderOption: "FORMATTED_VALUE",
+  });
+  return { values: (valRes.data && valRes.data.values) || [], sheetTitle: title };
+}
+// 売上スプレッドシートを取込（targetCid 指定でその会社のみ／省略で全社）
+async function refreshSalesSheetsCore(targetCid) {
+  const db = admin.firestore();
+  const ref = db.doc("globalBudget/data");
+  const snap = await ref.get();
+  if (!snap.exists) return { ok: false, reason: "no-data", results: [] };
+  let parsed0;
+  try { parsed0 = JSON.parse((snap.data() || {}).value || "{}"); } catch (e) { return { ok: false, reason: "parse", results: [] }; }
+  const urls = parsed0.salesSheetUrl || {};
+  const cids = Object.keys(urls).filter(c => urls[c] && (!targetCid || c === targetCid));
+  const fetched = {};
+  const results = [];
+  for (const cid of cids) {
+    try {
+      const { values } = await fetchSheetValues(urls[cid]);
+      const res = _parseSalesValues(values);
+      if (!res.months.length) { results.push({ cid, ok: false, reason: "対象月の行なし" }); continue; }
+      fetched[cid] = res;
+      results.push({ cid, ok: true, months: res.months.length });
+    } catch (e) {
+      results.push({ cid, ok: false, reason: e.message });
+    }
+  }
+  const okCids = Object.keys(fetched);
+  if (okCids.length) {
+    await db.runTransaction(async (tx) => {
+      const s = await tx.get(ref);
+      let p;
+      try { p = JSON.parse((s.data() || {}).value || "{}"); } catch (e) { p = parsed0; }
+      p.sales = p.sales || {};
+      p.repMap = p.repMap || {};
+      p.lastImport = p.lastImport || {};
+      p.lastImport.sales = p.lastImport.sales || {};
+      const stamp = new Date().toISOString();
+      okCids.forEach(cid => {
+        const res = fetched[cid];
+        Object.keys(res.byMonth).forEach(ym => { p.sales[ym] = Object.assign({}, p.sales[ym], { [cid]: res.byMonth[ym] }); });
+        res.reps.forEach(r => { if (!(r in p.repMap)) p.repMap[r] = ""; });
+        p.lastImport.sales[cid] = stamp;
+      });
+      tx.set(ref, {
+        value: JSON.stringify(p),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        _writer: "server-sheet-refresh",
+      }, { merge: true });
+    });
+  }
+  return { ok: true, updated: okCids.length, results };
+}
+
+// 定期実行：平日 23:59（日本時間）
+exports.refreshSalesSheets = onSchedule(
+  { schedule: "59 23 * * 1-5", timeZone: "Asia/Tokyo", secrets: [GMAIL_SA_KEY] },
+  async () => {
+    const r = await refreshSalesSheetsCore(null);
+    console.log("[refreshSalesSheets]", JSON.stringify(r));
+  }
+);
+
+// 手動実行：更新ボタンから呼ぶ（cid 指定でその会社のみ）
+exports.refreshSalesNow = onCall({ secrets: [GMAIL_SA_KEY] }, async (req) => {
+  if (!req.auth) throw new HttpsError("unauthenticated", "ログインが必要です");
+  const cid = req.data && req.data.cid ? String(req.data.cid) : null;
+  try {
+    return await refreshSalesSheetsCore(cid);
+  } catch (e) {
+    console.error("[refreshSalesNow] failed:", e.message);
+    throw new HttpsError("internal", "更新に失敗しました: " + e.message);
+  }
+});
+
+// ============================================================
 // 予実管理（予算管理）アクセス申請の通知
 //   budgetAccessRequests/{email} の作成・更新を監視し、
 //   - pending になった瞬間：admin 全員へ「承認依頼」メール
