@@ -1201,7 +1201,11 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
           <select id="taskMemberFilter" onchange="S.ui.sideMember=this.value; save(); renderSideTasks()"><option value="">全担当者</option></select>
           <select id="taskStatusFilter" onchange="renderSideTasks()"><option value="">全ステータス</option></select>
         </div>
-        <label class="cb"><input type="checkbox" id="hideDone" onchange="S.ui.sideHideDone=this.checked; save(); renderSideTasks()">完了を隠す</label>
+        <div class="row" style="flex-wrap:wrap;gap:10px">
+          <label class="cb"><input type="checkbox" id="hideDone" onchange="S.ui.sideHideDone=this.checked; save(); renderSideTasks()">完了を隠す</label>
+          <label class="cb"><input type="checkbox" id="hideHeld" onchange="S.ui.sideHideHeld=this.checked; save(); renderSideTasks()">保留を隠す</label>
+          <label class="cb"><input type="checkbox" id="hideCanceled" onchange="S.ui.sideHideCanceled=this.checked; save(); renderSideTasks()">中止を隠す</label>
+        </div>
       </div>
       <div id="sideTasks"></div>
     </aside>
@@ -1665,7 +1669,7 @@ const PER_USER_UI_FIELDS = new Set([
   'notifyOnComplete','notifyReminder',
   'calStartHour','calEndHour','weekStartDay',
   'viewAsMember','targetDate',
-  'sideTab','taskCols','sideMember','sideHideDone',
+  'sideTab','taskCols','sideMember','sideHideDone','sideHideHeld','sideHideCanceled',
   'showCompletedProjects','showCanceledProjects','showHeldProjects'
 ]);
 
@@ -5361,7 +5365,11 @@ function renderSideTasks(){
   const _memberNames = activeMembers().map(m=>m.name);
   const effMember = _memberNames.includes(S.ui.sideMember) ? S.ui.sideMember : '';
   const effHideDone = !!S.ui.sideHideDone;
+  const effHideHeld = !!S.ui.sideHideHeld;
+  const effHideCanceled = !!S.ui.sideHideCanceled;
   { const _hd = document.getElementById('hideDone'); if(_hd) _hd.checked = effHideDone; }
+  { const _hh = document.getElementById('hideHeld'); if(_hh) _hh.checked = effHideHeld; }
+  { const _hc = document.getElementById('hideCanceled'); if(_hc) _hc.checked = effHideCanceled; }
   // ===== タブ別タスク数バッジ更新（担当者・ステータス・検索・完了非表示フィルタ連動）=====
   {
     const hideDoneCb = effHideDone;
@@ -5373,6 +5381,8 @@ function renderSideTasks(){
     const today = todayStr();
     const passesFilters = t => {
       if(hideDoneCb && t.status === '完了') return false;
+      if(effHideHeld && t.status === '保留') return false;
+      if(effHideCanceled && t.status === '中止') return false;
       if(memValForBadge && t.owner !== memValForBadge) return false;
       if(stValForBadge && t.status !== stValForBadge) return false;
       if(filterForBadge){
@@ -5419,6 +5429,8 @@ function renderSideTasks(){
   if(memVal) list = list.filter(t=>t.owner===memVal);
   if(stVal) list = list.filter(t=>t.status===stVal);
   if(hideDone) list = list.filter(t=>t.status!=='完了');
+  if(effHideHeld) list = list.filter(t=>t.status!=='保留');
+  if(effHideCanceled) list = list.filter(t=>t.status!=='中止');
   if(filter) list = list.filter(t=>[t.id,t.mid,t.act,t.owner,t.note,t.defn,t.goal].join(" ").toLowerCase().includes(filter));
 
   list.sort((a,b)=>{
