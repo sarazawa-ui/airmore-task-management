@@ -955,6 +955,11 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
   .kpi-mini > div{width:100%}
   .summary-bar{grid-template-columns:1fr 1fr;gap:6px}
   .report-stats{grid-template-columns:1fr 1fr}
+  /* 週間カレンダー：時刻列を狭め、日列を確保（横スクロール量を軽減） */
+  .cal-row-head,.cal-row-allday,.cal-body{grid-template-columns:40px repeat(7,1fr)}
+  .cal-table{min-width:560px}
+  .cal-head{padding:7px 2px;font-size:11px}
+  .cal-head .d{font-size:10px}
 }
 </style>
 </head>
