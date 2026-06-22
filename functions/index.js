@@ -207,7 +207,8 @@ async function getGoalName(db, wsId, goalId) {
 
 exports.sendReminders = onSchedule(
   {
-    schedule: "every 5 minutes",
+    // B：5分→10分間隔（リマインド窓は 8〜17分前に拡張して取りこぼし防止）
+    schedule: "every 10 minutes",
     timeZone: "Asia/Tokyo",
     secrets: [GMAIL_SA_KEY],
   },
@@ -219,7 +220,16 @@ exports.sendReminders = onSchedule(
     const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
     const today = jst.toISOString().slice(0, 10);
     const nowMin = jst.getUTCHours() * 60 + jst.getUTCMinutes();
-    console.log(`[reminder] check ${today} ${jst.getUTCHours()}:${String(jst.getUTCMinutes()).padStart(2,"0")} JST`);
+    const dow = jst.getUTCDay(); // 0=日 .. 6=土（JST基準）
+    const hour = jst.getUTCHours();
+
+    // A：実働時間帯（平日 6:00–22:00 JST）のみ実行。
+    //   それ以外は当日タスクの読み取り（collectionGroup）自体を行わず、読み取りを節約する。
+    if (dow === 0 || dow === 6 || hour < 6 || hour >= 22) {
+      console.log(`[reminder] skip (outside business hours) ${today} dow=${dow} ${hour}h JST`);
+      return;
+    }
+    console.log(`[reminder] check ${today} ${hour}:${String(jst.getUTCMinutes()).padStart(2,"0")} JST`);
 
     // ★ 当日分のタスクだけを collectionGroup で取得（全タスク読みを回避）
     const tasksSnap = await db.collectionGroup("tasks").where("startD", "==", today).get();
@@ -234,7 +244,8 @@ exports.sendReminders = onSchedule(
       if (!m) continue;
       const taskMin = Number(m[1]) * 60 + Number(m[2]);
       const diff = taskMin - nowMin;
-      if (diff < 8 || diff > 12) continue; // 8〜12分前のみ
+      // 10分間隔に合わせ 8〜17分前（幅10分・半開区間）で各タスクをちょうど1回拾う
+      if (diff < 8 || diff >= 18) continue;
 
       const wsRef = tDoc.ref.parent.parent; // workspaces/{wsId}
       if (!wsRef) continue;
