@@ -2778,20 +2778,44 @@ function renderMeetings(){
       m[inp.dataset.mf] = inp.value;
       m.updatedAt = new Date().toISOString();
       save(true, `会議メモ更新：${m.name||m.id}`);
+      // 編集中に保留した他端末の更新があれば反映（change は blur 相当）
+      if(_meetingsRenderPending){
+        _meetingsRenderPending = false;
+        withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
+      }
     });
   });
-  // contenteditable（リッチエディタ） → blur 時に innerHTML を保存
+  // contenteditable（リッチエディタ）
+  //   - focus 時点の内容を記録し、ユーザーが実際に変更した時だけ保存（リモート反映の巻き戻し防止）
+  //   - 入力中も自動保存（デバウンス）→ 他端末へ早く反映＆未保存テキスト消失の窓を縮小
+  //   - blur 時に確定保存し、編集中に保留していた他端末の更新を反映（flush）
   list.querySelectorAll('div.rt-editor[data-mf]').forEach(div => {
-    div.addEventListener('blur', () => {
+    let _inputTimer = null;
+    div.addEventListener('focus', () => { div._startVal = div.innerHTML; });
+    const commit = () => {
       const editor = div.closest('.meeting-editor'); if(!editor) return;
       const mid = editor.dataset.mid;
       const m = (S.meetings||[]).find(x => x.id === mid);
       if(!m) return;
       const newVal = div.innerHTML;
-      if(m[div.dataset.mf] === newVal) return; // 変更なし
+      if(div._startVal !== undefined && newVal === div._startVal) return; // ユーザー未変更 → 何もしない
+      div._startVal = newVal;
+      if(m[div.dataset.mf] === newVal) return; // 既に同値
       m[div.dataset.mf] = newVal;
       m.updatedAt = new Date().toISOString();
       save(true, `会議メモ更新：${m.name||m.id}`);
+    };
+    div.addEventListener('input', () => {
+      if(_inputTimer) clearTimeout(_inputTimer);
+      _inputTimer = setTimeout(() => { _inputTimer = null; commit(); }, 1200);
+    });
+    div.addEventListener('blur', () => {
+      if(_inputTimer){ clearTimeout(_inputTimer); _inputTimer = null; }
+      commit();
+      if(_meetingsRenderPending){
+        _meetingsRenderPending = false;
+        withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
+      }
     });
     // 右クリック：選択テキストがあればタスク化／プロジェクト化メニュー
     div.addEventListener('contextmenu', (e) => {
@@ -7905,6 +7929,17 @@ async function syncSharedToSubcoll(wsId){
 }
 
 // ============ 会議メモ サブコレクション ============
+// 現在ユーザーが編集中（フォーカス中）の会議メモ ID を返す（無ければ null）。
+//   会議メモのリッチエディタ（contenteditable）は blur 時に保存するため、
+//   入力途中に他端末の更新で renderMeetings が走るとDOM上の未保存テキストが消える。
+//   そのため「編集中の会議」への上書き・再描画は編集終了まで保留する。
+function _editingMeetingId(){
+  const ae = document.activeElement;
+  if(!ae) return null;
+  const ed = ae.closest && ae.closest('.meeting-editor[data-mid]');
+  return ed ? (ed.dataset.mid || null) : null;
+}
+let _meetingsRenderPending = false; // 編集中に保留した会議メモの再描画があるか
 function subscribeMeetings(wsId){
   if(_wsMeetingsUnsubscribe){ _wsMeetingsUnsubscribe(); _wsMeetingsUnsubscribe = null; }
   if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
@@ -7912,6 +7947,7 @@ function subscribeMeetings(wsId){
   _wsMeetingsUnsubscribe = db.collection(`workspaces/${wsId}/meetings`).onSnapshot(qs => {
     if(!Array.isArray(S.meetings)) S.meetings = [];
     let mutated = false;
+    const editingId = _editingMeetingId(); // 編集中の会議があれば再描画を保留する
     qs.docChanges().forEach(c => {
       const id = c.doc.id;
       const data = c.doc.data() || {};
@@ -7935,9 +7971,16 @@ function subscribeMeetings(wsId){
       }
     });
     if(mutated){
-      logSync('snapshot.meetings', {changes: qs.docChanges().length});
+      logSync('snapshot.meetings', {changes: qs.docChanges().length, deferredRender: !!editingId});
       try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
-      withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
+      // ★ 誰かが会議メモを編集中（フォーカス中）の場合は、アクティブなエディタDOMを
+      //   作り直すと入力途中の未保存テキストが消えるため、再描画を編集終了まで保留する。
+      //   （モデル S.meetings へは反映済み。編集終了の blur で flush する）
+      if(editingId){
+        _meetingsRenderPending = true;
+      } else {
+        withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
+      }
     }
   }, err => {
     logSync('subscribe.error', {kind:'meetings', code: err && err.code});
