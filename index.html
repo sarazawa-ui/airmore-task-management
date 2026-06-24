@@ -322,6 +322,9 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .rt-toolbar button:hover{background:#e8eef5}
 .rt-toolbar button.active{background:#d0e2f5;border-color:var(--primary-light)}
 .rt-toolbar input[type="color"]{width:28px;height:24px;padding:0;border:1px solid #ccd5e0;border-radius:3px;cursor:pointer}
+.rt-toolbar .rt-colors{display:inline-flex;gap:3px;align-items:center}
+.rt-toolbar .rt-color-btn{width:18px;height:18px;padding:0;border:1px solid #ccd5e0;border-radius:4px;cursor:pointer}
+.rt-toolbar .rt-color-btn:hover{outline:2px solid rgba(0,0,0,.18)}
 .rt-toolbar .sep{border-left:1px solid #ccd5e0;height:18px;margin:0 4px}
 .rt-editor{width:100%;min-height:180px;border:1px solid var(--border);border-top:none;border-radius:0 0 5px 5px;padding:9px 12px;background:#fff;font:inherit;line-height:1.6;overflow-y:auto;box-sizing:border-box}
 .rt-editor:focus{outline:none;border-color:var(--primary-light)}
@@ -1056,7 +1059,13 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
         <button type="button" data-rt="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
         <button type="button" data-rt="underline" title="下線 (Ctrl+U)"><u>U</u></button>
         <span class="sep"></span>
-        <input type="color" data-rt-color title="文字色" value="#000000">
+        <span class="rt-colors" title="文字色">
+          <button type="button" class="rt-color-btn" data-rt-color="#C0392B" style="background:#C0392B" title="赤"></button>
+          <button type="button" class="rt-color-btn" data-rt-color="#2E7D32" style="background:#2E7D32" title="緑"></button>
+          <button type="button" class="rt-color-btn" data-rt-color="#E6B800" style="background:#E6B800" title="黄"></button>
+          <button type="button" class="rt-color-btn" data-rt-color="#1976D2" style="background:#1976D2" title="青"></button>
+          <button type="button" class="rt-color-btn" data-rt-color="#000000" style="background:#000000" title="黒"></button>
+        </span>
         <button type="button" data-rt="removeFormat" title="装飾を解除">⌫</button>
         <span class="sep"></span>
         <select data-rt-size title="文字サイズ">
@@ -1741,7 +1750,11 @@ function slotOptions(sel=""){
   return '<option value=""></option>'+S.slots.map(s=>`<option ${s===sel?'selected':''}>${escapeHtml(s)}</option>`).join('');
 }
 function goalOptions(sel=""){
-  return '<option value=""></option>'+S.goals.map(g=>`<option value="${g.id}" ${g.id===sel?'selected':''}>${escapeHtml(g.id)} ${escapeHtml(g.name).slice(0,18)}</option>`).join('');
+  // 完了・中止・保留のプロジェクトは選択肢から除外（ただし現在紐付中のものは残す＝既存紐付を失わない）
+  const HIDE = ['完了','中止','保留'];
+  return '<option value=""></option>'+S.goals
+    .filter(g => g && (g.id===sel || !HIDE.includes(g.status)))
+    .map(g=>`<option value="${g.id}" ${g.id===sel?'selected':''}>${escapeHtml(g.id)} ${escapeHtml(g.name).slice(0,18)}</option>`).join('');
 }
 function areaOptions(sel=""){
   const list = S.areas || [];
@@ -2302,13 +2315,15 @@ function _bindBoardOnce(){
         document.execCommand(btn.dataset.rt, false, null);
       });
     });
-    const colorInp = toolbar.querySelector('input[data-rt-color]');
-    if(colorInp){
-      colorInp.addEventListener('input', () => {
+    toolbar.querySelectorAll('button[data-rt-color]').forEach(cb => {
+      cb.addEventListener('mousedown', e => e.preventDefault()); // フォーカス維持
+      cb.addEventListener('click', () => {
         input.focus();
-        document.execCommand('foreColor', false, colorInp.value);
+        try{ document.execCommand('styleWithCSS', false, true); }catch(e){}
+        document.execCommand('foreColor', false, cb.dataset.rtColor);
+        try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
       });
-    }
+    });
     const sizeSel = toolbar.querySelector('select[data-rt-size]');
     if(sizeSel){
       sizeSel.addEventListener('change', () => {
@@ -2732,7 +2747,13 @@ function renderMeetings(){
             <button type="button" data-rt="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
             <button type="button" data-rt="underline" title="下線 (Ctrl+U)"><u>U</u></button>
             <span class="sep"></span>
-            <input type="color" data-rt-color title="文字色" value="#000000">
+            <span class="rt-colors" title="文字色">
+          <button type="button" class="rt-color-btn" data-rt-color="#C0392B" style="background:#C0392B" title="赤"></button>
+          <button type="button" class="rt-color-btn" data-rt-color="#2E7D32" style="background:#2E7D32" title="緑"></button>
+          <button type="button" class="rt-color-btn" data-rt-color="#E6B800" style="background:#E6B800" title="黄"></button>
+          <button type="button" class="rt-color-btn" data-rt-color="#1976D2" style="background:#1976D2" title="青"></button>
+          <button type="button" class="rt-color-btn" data-rt-color="#000000" style="background:#000000" title="黒"></button>
+        </span>
             <button type="button" data-rt="removeFormat" title="装飾を解除">⌫</button>
             <span class="sep"></span>
             <select data-rt-size title="文字サイズ">
@@ -2840,13 +2861,16 @@ function renderMeetings(){
         // blur イベントで保存される
       });
     });
-    const colorInp = toolbar.querySelector('input[data-rt-color]');
-    if(colorInp){
-      colorInp.addEventListener('input', () => {
+    toolbar.querySelectorAll('button[data-rt-color]').forEach(cb => {
+      cb.addEventListener('mousedown', e => e.preventDefault()); // フォーカス維持
+      cb.addEventListener('click', () => {
         editorDiv.focus();
-        document.execCommand('foreColor', false, colorInp.value);
+        try{ document.execCommand('styleWithCSS', false, true); }catch(e){}
+        document.execCommand('foreColor', false, cb.dataset.rtColor);
+        try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
+        // blur イベントで保存される
       });
-    }
+    });
     const sizeSel = toolbar.querySelector('select[data-rt-size]');
     if(sizeSel){
       sizeSel.addEventListener('change', () => {
@@ -2913,13 +2937,19 @@ let _meetingCtxEditorDiv = null;
 function _applyColorToSavedMeetingRange(color, label){
   if(!_meetingCtxSavedRange || !_meetingCtxEditorDiv) return;
   try{
-    // 選択範囲を復元
+    // エディタや選択範囲が再描画等で切り離されていたら着色できない → 中止（誤動作防止）
+    if(!_meetingCtxEditorDiv.isConnected) return;
+    const rangeNode = _meetingCtxSavedRange.startContainer;
+    if(!rangeNode || !rangeNode.isConnected || !_meetingCtxEditorDiv.contains(rangeNode)) return;
+    // ★ 先にフォーカス → 選択範囲を復元（順序を逆にすると一部ブラウザで選択が解除され着色されない）
+    _meetingCtxEditorDiv.focus();
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(_meetingCtxSavedRange);
-    _meetingCtxEditorDiv.focus();
-    // foreColor で色付け
+    // CSS の color で確実に着色（font 要素のゆれを回避）
+    try{ document.execCommand('styleWithCSS', false, true); }catch(e){}
     document.execCommand('foreColor', false, color);
+    try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
     // 編集内容を保存
     const editor = _meetingCtxEditorDiv.closest('.meeting-editor');
     if(editor){
