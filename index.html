@@ -298,6 +298,8 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .meetings-header.expanded + .meetings-body{display:block}
 .meeting-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
 .meeting-toolbar .meeting-select{flex:1;min-width:240px;padding:6px 9px;border:1px solid var(--border);border-radius:5px;background:#fff;font:inherit;font-size:13px;cursor:pointer}
+.meeting-toolbar .meeting-search{flex:0 0 auto;width:200px;padding:6px 9px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:13px}
+.meeting-toolbar .meeting-search-count{font-size:11px;color:var(--muted);min-width:auto}
 .meeting-editor{background:#fff;border:1px solid var(--border);border-radius:6px;padding:12px}
 .meeting-editor-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)}
 .meeting-editor-head .meeting-id{font-size:11px;color:var(--muted);font-family:monospace}
@@ -328,6 +330,9 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .rt-toolbar .sep{border-left:1px solid #ccd5e0;height:18px;margin:0 4px}
 .rt-editor{width:100%;min-height:180px;border:1px solid var(--border);border-top:none;border-radius:0 0 5px 5px;padding:9px 12px;background:#fff;font:inherit;line-height:1.6;overflow-y:auto;box-sizing:border-box}
 .rt-editor:focus{outline:none;border-color:var(--primary-light)}
+/* 会議メモ：エディタ内スクロールにして、装飾ツールバーを常に上部に固定表示 */
+.meeting-editor .rt-toolbar{position:sticky;top:0;z-index:5}
+.meeting-editor .rt-editor{max-height:48vh}
 .rt-editor:empty:before{content:attr(data-placeholder);color:var(--muted);font-style:italic}
 /* 会議メモの右クリックメニュー */
 .meeting-ctx-menu{position:fixed;background:#fff;border:1px solid #ccd5e0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:4px;z-index:10000;min-width:220px}
@@ -2680,6 +2685,7 @@ function renderGoals(){
 // ============ 会議メモ（プルダウン選択方式） ============
 // 開閉状態はセッション中だけ保持（毎回ページ読込時はデフォルト閉じる）
 let _meetingsExpandedSession = false;
+let _meetingSearch = ''; // 会議メモ検索キーワード（セッション内保持）
 function renderMeetings(){
   const list = document.getElementById('meetingsList');
   const countEl = document.getElementById('meetingsCount');
@@ -2710,6 +2716,7 @@ function renderMeetings(){
   // ツールバー（select + 新規）
   const toolbarHtml = `
     <div class="meeting-toolbar">
+      <input type="search" class="meeting-search" id="meetingSearch" placeholder="🔍 検索（会議名・本文）" value="${escapeHtml(_meetingSearch||'')}">
       <select class="meeting-select" id="meetingSelect"${sorted.length===0?' disabled':''}>
         ${sorted.length===0
           ? '<option value="">（会議メモなし）</option>'
@@ -2719,6 +2726,7 @@ function renderMeetings(){
             }).join('')
         }
       </select>
+      <span class="meeting-search-count" id="meetingSearchCount"></span>
       <button class="btn sm" onclick="addMeeting()">＋ 新規</button>
     </div>
   `;
@@ -2788,6 +2796,49 @@ function renderMeetings(){
       save();
       renderMeetings();
     });
+  }
+  // 検索：会議名・本文（アジェンダ）でプルダウンを絞り込み（再描画せずプルダウンのみ更新）
+  const searchInp = list.querySelector('#meetingSearch');
+  if(searchInp){
+    const applySearch = () => {
+      _meetingSearch = searchInp.value || '';
+      const kw = _meetingSearch.trim().toLowerCase();
+      const matches = sorted.filter(m => {
+        if(!kw) return true;
+        const hay = [m.name, m.id, m.date, String(m.agenda||'').replace(/<[^>]*>/g, ' ')].join(' ').toLowerCase();
+        return hay.includes(kw);
+      });
+      if(sel){
+        const curSel = (S.ui && S.ui.selectedMeetingId) || '';
+        sel.innerHTML = matches.length === 0
+          ? '<option value="">（一致する会議メモなし）</option>'
+          : matches.map(m => {
+              const label = `${m.date||'----/--/--'}  ${(m.name||'(無題)')}  [${m.id}]`;
+              return `<option value="${escapeHtml(m.id)}"${m.id===curSel?' selected':''}>${escapeHtml(label)}</option>`;
+            }).join('');
+        sel.disabled = matches.length === 0;
+      }
+      const cntEl = list.querySelector('#meetingSearchCount');
+      if(cntEl) cntEl.textContent = kw ? `${matches.length}件` : '';
+    };
+    searchInp.addEventListener('input', applySearch);
+    // Enter / 候補1件のとき即開く
+    searchInp.addEventListener('keydown', (e) => {
+      if(e.key !== 'Enter') return;
+      const kw = (searchInp.value||'').trim().toLowerCase();
+      const matches = sorted.filter(m => {
+        if(!kw) return true;
+        const hay = [m.name, m.id, m.date, String(m.agenda||'').replace(/<[^>]*>/g, ' ')].join(' ').toLowerCase();
+        return hay.includes(kw);
+      });
+      if(matches.length >= 1){
+        if(!S.ui) S.ui = {};
+        S.ui.selectedMeetingId = matches[0].id;
+        save();
+        renderMeetings();
+      }
+    });
+    if(_meetingSearch) applySearch(); // セッションの検索語を復元時に再適用
   }
   // 通常 input/select 変更 → 自動保存
   list.querySelectorAll('input[data-mf], select[data-mf]').forEach(inp => {
