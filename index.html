@@ -8333,7 +8333,27 @@ function subscribeWorkspaceCollections(wsId){
   });
 }
 
+// Path 1：変更フィールドだけを抽出し、merge 書込みするための差分ペイロードを作る。
+//   ・追加/変更されたフィールド → その値
+//   ・削除されたフィールド → FieldValue.delete()
+//   これにより batch.set(ref, payload, {merge:true}) が「フィールド単位の上書き」になり、
+//   2人が同一ドキュメントの別フィールドを同時編集しても、相手のフィールドを壊さない。
+function _fieldDiffPayload(curClean, prevJson){
+  let prev = {};
+  try{ prev = prevJson ? JSON.parse(prevJson) : {}; }catch(e){ prev = {}; }
+  const payload = {};
+  Object.keys(curClean).forEach(k => {
+    if(JSON.stringify(curClean[k]) !== JSON.stringify(prev[k])) payload[k] = curClean[k];
+  });
+  Object.keys(prev).forEach(k => {
+    if(!(k in curClean)) payload[k] = firebase.firestore.FieldValue.delete();
+  });
+  return payload;
+}
+
 // per-doc 書込：S.tasks / S.goals を診て、変更のあったものだけ Firestore に書く
+//   ★ Path 1：既存ドキュメントは「変更フィールドのみ」を merge 書込み（全文上書きをやめる）。
+//     新規ドキュメントのみ全体を set する。これで別フィールド同時編集の消失が構造的に消える。
 async function syncTasksGoalsToSubcollections(wsId){
   if(!wsId || !_firebaseReady) return 0;
   const db = firebase.firestore();
@@ -8348,8 +8368,9 @@ async function syncTasksGoalsToSubcollections(wsId){
     curTaskIds.add(t.id);
     const clean = _stripUiForSync(t);
     const json = JSON.stringify(clean);
-    if(_lastSyncedTasks.get(t.id) !== json){
-      writes.push({path:`workspaces/${wsId}/tasks/${t.id}`, data:clean, kind:'tasks', id:t.id, json});
+    const prevJson = _lastSyncedTasks.get(t.id);
+    if(prevJson !== json){
+      writes.push({path:`workspaces/${wsId}/tasks/${t.id}`, clean, prevJson, kind:'tasks', id:t.id, json});
     }
   });
   // ローカルから消えたタスク → 削除
@@ -8366,8 +8387,9 @@ async function syncTasksGoalsToSubcollections(wsId){
     curGoalIds.add(g.id);
     const clean = _stripUiForSync(g);
     const json = JSON.stringify(clean);
-    if(_lastSyncedGoals.get(g.id) !== json){
-      writes.push({path:`workspaces/${wsId}/goals/${g.id}`, data:clean, kind:'goals', id:g.id, json});
+    const prevJson = _lastSyncedGoals.get(g.id);
+    if(prevJson !== json){
+      writes.push({path:`workspaces/${wsId}/goals/${g.id}`, clean, prevJson, kind:'goals', id:g.id, json});
     }
   });
   _lastSyncedGoals.forEach((json, id) => {
@@ -8379,8 +8401,13 @@ async function syncTasksGoalsToSubcollections(wsId){
   const total = writes.length + deletes.length;
   if(total === 0) return 0;
   logSync('write.start', {wsId, writes: writes.length, deletes: deletes.length});
-  // 400件単位でバッチ送信
-  const ops = writes.map(w => ({type:'set', ...w})).concat(deletes.map(d => ({type:'delete', ...d})));
+  // 書込みオペレーションを組み立て：既存=フィールドmerge、新規=全体set、削除=delete
+  const ops = writes.map(w => {
+    if(!w.prevJson){
+      return {type:'set', path:w.path, data:w.clean, kind:w.kind, id:w.id, json:w.json};
+    }
+    return {type:'merge', path:w.path, data:_fieldDiffPayload(w.clean, w.prevJson), kind:w.kind, id:w.id, json:w.json};
+  }).concat(deletes.map(d => ({type:'delete', ...d})));
   const CHUNK = 400;
   try{
     for(let i=0; i<ops.length; i+=CHUNK){
@@ -8388,6 +8415,8 @@ async function syncTasksGoalsToSubcollections(wsId){
       ops.slice(i, i+CHUNK).forEach(op => {
         if(op.type === 'set'){
           batch.set(db.doc(op.path), op.data);
+        } else if(op.type === 'merge'){
+          batch.set(db.doc(op.path), op.data, {merge:true});
         } else {
           batch.delete(db.doc(op.path));
         }
