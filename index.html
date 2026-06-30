@@ -2636,6 +2636,7 @@ function renderGoals(){
       _addTombstone('goals', cur.id);
       removedTaskIds.forEach(id => _addTombstone('tasks', id));
       save(true, `プロジェクト削除：${cur.id}${removedCount?`（タスク${removedCount}件含む）`:''}`);
+      try{ _revertMeetingGoalColor(cur.id); }catch(e){} // 会議メモ由来の着色を取消（生成をやめた場合）
       flushPendingSync(); // ★ 削除は即時 FS 反映（リフレッシュで復活を防ぐ）
       renderAll();
       toast(`プロジェクト ${cur.id} を削除${removedCount?`（タスク${removedCount}件も削除）`:''}`);
@@ -2985,6 +2986,57 @@ function renderMeetings(){
 // 会議メモ右クリックの選択範囲保持 + 色付け
 let _meetingCtxSavedRange = null;
 let _meetingCtxEditorDiv = null;
+// 生成を確定/取消するまで着色を保留するための状態
+let _meetingColorPendingTask = null; // {mid, coloredHtml} … タスク保存時に着色を適用
+let _meetingColorGoalRevert = null;  // {mid, prevHtml, goalId} … プロジェクト削除時に着色を取消
+
+// 選択範囲に色を付けた「着色後HTML」を計算して返す（表示は元に戻す＝まだ着色しない）。
+function _computeMeetingColoredHtml(color){
+  if(!_meetingCtxSavedRange || !_meetingCtxEditorDiv) return null;
+  const div = _meetingCtxEditorDiv;
+  if(!div.isConnected) return null;
+  const node = _meetingCtxSavedRange.startContainer;
+  if(!node || !node.isConnected || !div.contains(node)) return null;
+  const prev = div.innerHTML;
+  try{
+    div.focus();
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(_meetingCtxSavedRange);
+    try{ document.execCommand('styleWithCSS', false, true); }catch(e){}
+    document.execCommand('foreColor', false, color);
+    try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
+    const colored = div.innerHTML;
+    div.innerHTML = prev; // 確定まで着色しない（表示を戻す）
+    return colored;
+  }catch(e){ try{ div.innerHTML = prev; }catch(_){} return null; }
+}
+// タスク確定（保存）時：保留していた着色を会議メモへ適用。
+function _applyPendingMeetingTaskColor(){
+  if(!_meetingColorPendingTask) return;
+  const {mid, coloredHtml} = _meetingColorPendingTask;
+  _meetingColorPendingTask = null;
+  const m = (S.meetings||[]).find(x => x && x.id === mid);
+  if(m && m.agenda !== coloredHtml){
+    m.agenda = coloredHtml;
+    m.updatedAt = new Date().toISOString();
+    save(true, `会議メモ：タスク化テキストを着色`);
+    try{ renderMeetings(); }catch(e){}
+  }
+}
+// プロジェクト削除時：そのプロジェクト生成時に付けた着色を元に戻す。
+function _revertMeetingGoalColor(goalId){
+  if(!_meetingColorGoalRevert || _meetingColorGoalRevert.goalId !== goalId) return;
+  const {mid, prevHtml} = _meetingColorGoalRevert;
+  _meetingColorGoalRevert = null;
+  const m = (S.meetings||[]).find(x => x && x.id === mid);
+  if(m && m.agenda !== prevHtml){
+    m.agenda = prevHtml;
+    m.updatedAt = new Date().toISOString();
+    save(true, `会議メモ：プロジェクト化の着色を取消`);
+    try{ renderMeetings(); }catch(e){}
+  }
+}
 function _applyColorToSavedMeetingRange(color, label){
   if(!_meetingCtxSavedRange || !_meetingCtxEditorDiv) return;
   try{
@@ -3045,16 +3097,25 @@ function showMeetingCtxMenu(x, y, text){
   menu.style.visibility = '';
   menu.querySelector('[data-action="project"]').onclick = (e) => {
     e.stopPropagation();
-    // 選択範囲を青色に塗ってからプロジェクトを作成
+    // プロジェクトは即時生成されるため着色も即時。生成したプロジェクトが削除されたら着色を取消す。
+    const mEl = _meetingCtxEditorDiv && _meetingCtxEditorDiv.closest('.meeting-editor');
+    const mid = mEl ? mEl.dataset.mid : null;
+    const prevHtml = _meetingCtxEditorDiv ? _meetingCtxEditorDiv.innerHTML : null;
     _applyColorToSavedMeetingRange('#1976D2', 'プロジェクト化');
-    createProjectFromMeetingText(text);
+    const newId = createProjectFromMeetingText(text);
+    _meetingColorGoalRevert = (mid && prevHtml != null && newId) ? {mid, prevHtml, goalId:newId} : null;
     menu.remove();
   };
   menu.querySelector('[data-action="task"]').onclick = (e) => {
     e.stopPropagation();
-    // 選択範囲を緑色に塗ってからタスクを作成
-    _applyColorToSavedMeetingRange('#2E7D32', 'タスク化');
+    // ★ タスクは編集モーダルで確定（保存）するまで着色しない。
+    //   着色後のHTMLだけ用意し、保存時に適用／キャンセル・削除時は破棄。
+    const mEl = _meetingCtxEditorDiv && _meetingCtxEditorDiv.closest('.meeting-editor');
+    const mid = mEl ? mEl.dataset.mid : null;
+    const coloredHtml = _computeMeetingColoredHtml('#2E7D32');
+    _meetingCtxSavedRange = null; _meetingCtxEditorDiv = null;
     createTaskFromMeetingText(text);
+    _meetingColorPendingTask = (mid && coloredHtml != null) ? {mid, coloredHtml} : null;
     menu.remove();
   };
   // 外部クリックで閉じる（未選択の場合は range もクリア）
@@ -3154,6 +3215,7 @@ function createProjectFromMeetingText(text){
     }, 150);
   }catch(e){ console.warn(e); }
   toast(`プロジェクト ${newId} を作成しました`);
+  return newId;
 }
 
 function toggleMeetingsSection(){
@@ -9649,6 +9711,8 @@ function closeTaskEditModal(){
       toast(`${_tid} の追加をキャンセルしました`);
     }
   }
+  // 会議メモ由来の保留着色は、保存時のみ適用済み。ここに残っていれば=キャンセル/削除 → 破棄（着色しない）。
+  _meetingColorPendingTask = null;
   document.getElementById('taskEditModal').classList.remove('show');
   const _closingId = _editingTaskId;
   const _reveal = _revealTaskInSideOnClose;
@@ -9673,6 +9737,7 @@ function saveEditingTask(){
   save(true,`タスク編集：${t.id}`);
   renderGoals(); renderCalendar(); renderSideTasks(); renderDashboard();
   _editingIsNew = false; // ★ 明示保存したので isNew をクリア（キャンセル削除を抑制）
+  _applyPendingMeetingTaskColor(); // 会議メモ由来のタスク：保存確定時に着色を適用
   closeTaskEditModal();
   toast(`${t.id} を保存しました`);
 }
