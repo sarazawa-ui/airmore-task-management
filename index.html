@@ -2787,7 +2787,19 @@ function renderMeetings(){
       </div>
     `;
   }
+  // 再描画でエディタ内スクロールが先頭へ飛ぶのを防ぐため、現在のスクロール位置を保持
+  const _prevMidEl = list.querySelector('.meeting-editor[data-mid]');
+  const _prevMid = _prevMidEl ? _prevMidEl.dataset.mid : null;
+  const _prevEditorEl = list.querySelector('.meeting-editor[data-mid] .rt-editor[data-mf]');
+  const _prevScrollTop = _prevEditorEl ? _prevEditorEl.scrollTop : 0;
+
   list.innerHTML = toolbarHtml + editorHtml;
+
+  // 同じ会議を表示し続ける場合はエディタ内スクロール位置を復元（最上部に飛ばない）
+  if(_prevMid && _prevMid === selectedId && _prevScrollTop > 0){
+    const _newEditorEl = list.querySelector('.meeting-editor[data-mid] .rt-editor[data-mf]');
+    if(_newEditorEl) _newEditorEl.scrollTop = _prevScrollTop;
+  }
   // select の change → 選択保存 + 再描画
   const sel = list.querySelector('#meetingSelect');
   if(sel){
