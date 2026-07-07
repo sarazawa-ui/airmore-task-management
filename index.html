@@ -1325,8 +1325,9 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
       <div class="label">ワークスペース設定</div>
       <button class="active" data-pane="workspace">🏢 ワークスペース情報</button>
       <button data-pane="master">📋 マスタ管理</button>
-      <button data-pane="firebase">☁️ クラウド同期</button>
-      <button data-pane="data">💾 データ管理</button>
+      <button data-pane="firebase" id="paneBtnFirebase" style="display:none">☁️ クラウド同期</button>
+      <button data-pane="data" id="paneBtnData" style="display:none">💾 データ管理</button>
+      <button data-pane="admin" id="paneBtnAdmin" style="display:none">🔐 管理者</button>
       <div class="divider"></div>
       <div class="label">プロフィール</div>
       <button data-pane="display">👤 個人設定</button>
@@ -1563,6 +1564,35 @@ service cloud.firestore {
         <button class="btn ghost" onclick="document.getElementById('importFile').click()">📂 インポート（JSON）</button>
         <button class="btn danger" onclick="if(confirm('全データを初期化します。バックアップは取りましたか？'))resetAll()">⚠ 全データ初期化</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 管理者ペイン（admin のみ表示） -->
+  <div class="settings-pane" id="pane-admin">
+    <h3>🔐 管理者設定</h3>
+    <p class="help" style="font-size:12px;line-height:1.7">
+      アプリ全体の管理項目です（adminのみ表示）。認証ドメインの変更は全ユーザーのログイン可否に影響します。
+    </p>
+
+    <h4 style="margin-top:16px;color:var(--primary-dark);font-size:13.5px">🌐 認証ドメインの追加・削除</h4>
+    <p class="help" style="font-size:11.5px">ここに載っているドメインのGoogleアカウントのみログイン・データアクセスできます。固定5ドメインはセキュリティルールに直書きされており削除できません。</p>
+    <div id="adminDomainList" style="max-width:480px"></div>
+    <div style="display:flex;gap:6px;margin-top:8px;max-width:480px">
+      <input type="text" id="newAuthDomain" placeholder="追加するドメイン（例：example.co.jp）"
+        style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font:inherit;font-size:12.5px">
+      <button class="btn sm" onclick="addAuthDomain()">追加</button>
+    </div>
+
+    <h4 style="margin-top:22px;padding-top:16px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">🛡 権限付与（一般ユーザー / admin）</h4>
+    <p class="help" style="font-size:11.5px">admin は本ペイン・クラウド同期・データ管理を操作できます。まず下の「メンバーを読み込む」でメール一覧を取得してください。</p>
+    <div id="adminRoleList" style="max-width:520px"></div>
+
+    <h4 style="margin-top:22px;padding-top:16px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">👥 全ワークスペースのログインメンバー</h4>
+    <div style="margin:6px 0 10px">
+      <button class="btn sm ghost" onclick="renderAdminWsMembers()">🔄 メンバーを読み込む／再読込</button>
+    </div>
+    <div id="adminWsMembers" style="max-width:640px">
+      <div style="color:var(--muted);font-size:12px">「メンバーを読み込む」を押すと、全ワークスペースのログインメンバー一覧を表示します。</div>
     </div>
   </div>
     </div><!-- /.settings-content -->
@@ -7484,6 +7514,8 @@ function initFirebase(){
     // Firebase Auth 状態の変化を監視
     firebase.auth().onAuthStateChanged(user=>{
       if(user){
+        // ★ 認証ドメインゲート：許可外ドメインはサインアウト（非同期・許可なら admin UI 表示も更新）
+        try{ enforceDomainGate(user); }catch(e){ console.warn('domainGate failed:', e); }
         // _currentUser が未設定なら Firebase Auth から復元
         if(!_currentUser){
           _currentUser = {
@@ -9403,6 +9435,178 @@ const CLIENTID_KEY = "airmore_oauth_clientid";
 let _currentUser = null; // {email, name, picture, accessToken, expiry}
 let _authTokenClient = null;
 
+// =============================================================
+// ===== アプリ管理（認証ドメイン制限・admin 権限） =====
+//   - 固定許可ドメイン（Firestoreルールにも同一リストを直書き＝ハードバックストップ）
+//   - 追加ドメイン／admin 一覧は appConfig/{authDomains,admins} で管理（admin のみ書込可）
+// =============================================================
+const FIXED_AUTH_DOMAINS = ['nimomakezu.com','leaklab-japan.com','n-mobily.com','n-airmore.com','dustlabo.com'];
+const BOOTSTRAP_APP_ADMINS = ['sarazawa@n-airmore.com','sarazawa@leaklab-japan.com'];
+let _appConfig = { admins: [], domains: [], loaded: false };
+
+async function loadAppConfig(force){
+  if(_appConfig.loaded && !force) return _appConfig;
+  if(!_firebaseReady || !firebase.firestore) return _appConfig;
+  try{
+    const db = firebase.firestore();
+    const [a, d] = await Promise.all([
+      db.doc('appConfig/admins').get(),
+      db.doc('appConfig/authDomains').get()
+    ]);
+    _appConfig.admins = (a.exists && Array.isArray(a.data().emails)) ? a.data().emails : [];
+    _appConfig.domains = (d.exists && Array.isArray(d.data().domains)) ? d.data().domains : [];
+    _appConfig.loaded = true;
+  }catch(e){ console.warn('[appConfig] load failed:', e); }
+  return _appConfig;
+}
+function isAppAdmin(email){
+  const em = String(email || (_currentUser && _currentUser.email) || '').toLowerCase();
+  if(!em) return false;
+  return BOOTSTRAP_APP_ADMINS.includes(em) || (_appConfig.admins||[]).some(x => String(x).toLowerCase() === em);
+}
+function isAllowedDomain(email){
+  const dom = String(email||'').toLowerCase().split('@')[1] || '';
+  if(!dom) return false;
+  return FIXED_AUTH_DOMAINS.includes(dom) || (_appConfig.domains||[]).some(x => String(x).toLowerCase() === dom);
+}
+// ログイン直後のドメインゲート：許可外ドメインはサインアウト
+async function enforceDomainGate(user){
+  try{
+    await loadAppConfig();
+    if(user && user.email && !isAllowedDomain(user.email)){
+      try{ alert(`このアカウント（${user.email}）は利用が許可されていません。\n会社のメールアドレスでログインし直してください。`); }catch(e){}
+      _currentUser = null;
+      try{ localStorage.removeItem(AUTH_KEY); }catch(e){}
+      try{ await firebase.auth().signOut(); }catch(e){}
+      location.reload();
+      return false;
+    }
+  }catch(e){ console.warn('[domainGate] failed:', e); }
+  try{ updateAdminUIVisibility(); }catch(e){}
+  return true;
+}
+// admin 専用UI（管理者ペイン・クラウド同期・データ管理）の表示切替
+function updateAdminUIVisibility(){
+  const admin = isAppAdmin();
+  ['paneBtnAdmin','paneBtnFirebase','paneBtnData'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.style.display = admin ? '' : 'none';
+  });
+}
+// ===== 管理者ペインの描画 =====
+let _adminAllEmails = [];
+async function renderAdminPane(){
+  if(!isAppAdmin()) return;
+  await loadAppConfig(true);
+  renderAdminDomainList();
+  renderAdminRoleList();
+  renderAdminWsMembers();
+}
+async function renderAdminWsMembers(){
+  const host = document.getElementById('adminWsMembers');
+  if(!host) return;
+  host.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px">読込中...</div>';
+  try{
+    const snap = await firebase.firestore().collection('workspaces').get();
+    bumpFbUsage('read', Math.max(1, snap.size));
+    const emails = new Set();
+    let html = '';
+    snap.forEach(doc => {
+      const d = doc.data() || {};
+      const wsName = d.wsName || (d.profile && d.profile.companyName) || doc.id;
+      const members = Array.isArray(d.authMembers) ? d.authMembers : [];
+      members.forEach(m => { if(m && m.email) emails.add(m.email); });
+      html += `<div style="border:1px solid var(--border);border-radius:7px;padding:10px;margin-bottom:8px">
+        <div style="font-weight:700;font-size:13px;margin-bottom:6px">${escapeHtml(wsName)} <span style="color:var(--muted);font-weight:400;font-size:11px">[${escapeHtml(doc.id)}]・${members.length}名</span></div>
+        ${members.length === 0 ? '<div style="color:var(--muted);font-size:12px">ログインメンバーなし</div>'
+          : members.map(m => `<div style="font-size:12px;padding:2px 0;display:flex;gap:8px">
+              <span style="min-width:120px">${escapeHtml(m.name||'(名前未設定)')}</span>
+              <span style="color:var(--muted)">${escapeHtml(m.email||'')}</span>
+              ${m.role === 'owner' ? '<span style="color:var(--primary);font-size:11px">owner</span>' : ''}
+              ${isAppAdmin(m.email) ? '<span style="color:#C0392B;font-size:11px;font-weight:700">admin</span>' : ''}
+            </div>`).join('')}
+      </div>`;
+    });
+    _adminAllEmails = [...emails].sort();
+    host.innerHTML = html || '<div style="color:var(--muted);font-size:12px">ワークスペースがありません</div>';
+    renderAdminRoleList(); // メール一覧が揃ったのでロール一覧を更新
+  }catch(e){
+    host.innerHTML = `<div style="color:#C0392B;font-size:12px">読込に失敗しました：${escapeHtml(e.message||String(e))}</div>`;
+  }
+}
+function renderAdminRoleList(){
+  const host = document.getElementById('adminRoleList');
+  if(!host) return;
+  const all = [...new Set([...BOOTSTRAP_APP_ADMINS, ...(_appConfig.admins||[]), ..._adminAllEmails])].sort();
+  if(all.length === 0){ host.innerHTML = '<div style="color:var(--muted);font-size:12px">（上の「再読込」でメンバーを読み込むと表示されます）</div>'; return; }
+  host.innerHTML = all.map(em => {
+    const isBoot = BOOTSTRAP_APP_ADMINS.includes(String(em).toLowerCase());
+    const isAdm = isAppAdmin(em);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border-soft);font-size:12.5px">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(em)}</span>
+      ${isBoot
+        ? '<span style="color:#C0392B;font-size:11px;font-weight:700">admin（固定）</span>'
+        : `<select data-admin-role="${escapeHtml(em)}" style="padding:4px 8px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:12px">
+            <option value="user" ${!isAdm?'selected':''}>一般ユーザー</option>
+            <option value="admin" ${isAdm?'selected':''}>admin</option>
+          </select>`}
+    </div>`;
+  }).join('');
+  host.querySelectorAll('select[data-admin-role]').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const em = sel.dataset.adminRole;
+      const set = new Set((_appConfig.admins||[]).map(x=>String(x).toLowerCase()));
+      if(sel.value === 'admin') set.add(String(em).toLowerCase()); else set.delete(String(em).toLowerCase());
+      try{
+        await firebase.firestore().doc('appConfig/admins').set({ emails: [...set], updatedAt: new Date().toISOString() });
+        _appConfig.admins = [...set];
+        toast(`${em} を${sel.value==='admin'?'admin':'一般ユーザー'}に変更しました`);
+      }catch(e){ alert('権限の保存に失敗しました：' + (e.message||e)); renderAdminRoleList(); }
+    });
+  });
+}
+function renderAdminDomainList(){
+  const host = document.getElementById('adminDomainList');
+  if(!host) return;
+  const extra = (_appConfig.domains||[]).map(x=>String(x).toLowerCase()).filter(d => !FIXED_AUTH_DOMAINS.includes(d));
+  host.innerHTML =
+    FIXED_AUTH_DOMAINS.map(d => `<div style="display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12.5px">
+      <span style="flex:1">@${escapeHtml(d)}</span><span style="color:var(--muted);font-size:11px">固定（ルール直書き）</span>
+    </div>`).join('') +
+    extra.map(d => `<div style="display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12.5px">
+      <span style="flex:1">@${escapeHtml(d)}</span>
+      <button data-del-domain="${escapeHtml(d)}" style="background:none;border:1px solid var(--border);color:#C0392B;border-radius:5px;cursor:pointer;font-size:11px;padding:2px 8px">削除</button>
+    </div>`).join('');
+  host.querySelectorAll('[data-del-domain]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const d = btn.dataset.delDomain;
+      if(!confirm(`追加ドメイン「@${d}」を削除しますか？\nこのドメインのユーザーはログインできなくなります。`)) return;
+      const next = (_appConfig.domains||[]).filter(x => String(x).toLowerCase() !== d);
+      try{
+        await firebase.firestore().doc('appConfig/authDomains').set({ domains: next, updatedAt: new Date().toISOString() });
+        _appConfig.domains = next;
+        renderAdminDomainList();
+        toast(`@${d} を削除しました`);
+      }catch(e){ alert('保存に失敗しました：' + (e.message||e)); }
+    });
+  });
+}
+async function addAuthDomain(){
+  const inp = document.getElementById('newAuthDomain');
+  if(!inp) return;
+  const d = String(inp.value||'').trim().toLowerCase().replace(/^@/, '');
+  if(!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(d)){ alert('ドメインの形式が正しくありません（例：example.co.jp）'); return; }
+  if(FIXED_AUTH_DOMAINS.includes(d) || (_appConfig.domains||[]).map(x=>String(x).toLowerCase()).includes(d)){ alert('既に許可されています'); return; }
+  const next = [...(_appConfig.domains||[]), d];
+  try{
+    await firebase.firestore().doc('appConfig/authDomains').set({ domains: next, updatedAt: new Date().toISOString() });
+    _appConfig.domains = next;
+    inp.value = '';
+    renderAdminDomainList();
+    toast(`@${d} を許可ドメインに追加しました`);
+  }catch(e){ alert('保存に失敗しました：' + (e.message||e)); }
+}
+
 function saveSession(){
   if(_currentUser) localStorage.setItem(AUTH_KEY, JSON.stringify(_currentUser));
   else localStorage.removeItem(AUTH_KEY);
@@ -10116,6 +10320,7 @@ function openSettingsModal(pane){
   document.getElementById('settingsModal').classList.add('show');
   // 旧呼び出し（'profile'）はワークスペース設定にリダイレクト
   if(pane === 'profile' || !pane) pane = 'workspace';
+  try{ updateAdminUIVisibility(); }catch(e){}
   switchSettingsPane(pane);
   renderProfileForm();
   renderMemberPane();
@@ -10131,6 +10336,8 @@ function closeSettingsModal(){
   _clearProfileDraft();
 }
 function switchSettingsPane(pane){
+  // admin 専用ペイン（管理者・クラウド同期・データ管理）は admin 以外開けない
+  if(['admin','firebase','data'].includes(pane) && !isAppAdmin()) pane = 'workspace';
   document.querySelectorAll('.settings-nav button').forEach(b=>b.classList.toggle('active', b.dataset.pane===pane));
   document.querySelectorAll('.settings-pane').forEach(p=>p.classList.toggle('active', p.id==='pane-'+pane));
   // ワークスペース情報ペインは ID/招待URL も表示するので renderFirebaseSettings も呼ぶ
@@ -10141,6 +10348,7 @@ function switchSettingsPane(pane){
   else if(pane==='display') renderDisplaySettings();
   else if(pane==='notifications'){ renderDisplaySettings(); try{ updatePushStatusBox(); }catch(e){} }
   else if(pane==='firebase') renderFirebaseSettings();
+  else if(pane==='admin'){ try{ renderAdminPane(); }catch(e){ console.warn('renderAdminPane failed:', e); } }
 }
 document.addEventListener('click', e=>{
   if(e.target.matches('.settings-nav button')){

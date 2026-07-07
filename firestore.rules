@@ -2,78 +2,86 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // =========================================================
+    // ドメイン制限（①）：許可ドメインのアカウントのみ読み書き可
+    //   - 固定5ドメインはルールに直書き（ハードバックストップ）
+    //   - 追加ドメインは appConfig/authDomains.domains（admin が UI で管理）
+    // =========================================================
+    function _fixedDomainOk(email) {
+      return email.lower().matches('.*@(nimomakezu\\.com|leaklab-japan\\.com|n-mobily\\.com|n-airmore\\.com|dustlabo\\.com)');
+    }
+    function _extraDomainOk(email) {
+      return exists(/databases/$(database)/documents/appConfig/authDomains)
+        && email.lower().split('@')[1] in get(/databases/$(database)/documents/appConfig/authDomains).data.domains;
+    }
+    function _domainOk() {
+      return request.auth != null
+        && (_fixedDomainOk(request.auth.token.email) || _extraDomainOk(request.auth.token.email));
+    }
+
+    // =========================================================
+    // アプリ管理者（admin）：ブートストラップ＋appConfig/admins.emails
+    // =========================================================
+    function _isAppAdmin(email) {
+      return email in ['sarazawa@n-airmore.com', 'sarazawa@leaklab-japan.com']
+        || (exists(/databases/$(database)/documents/appConfig/admins)
+            && email in get(/databases/$(database)/documents/appConfig/admins).data.emails);
+    }
+
+    // === アプリ設定（許可ドメイン・admin 一覧） ===
+    //   読み取り：ログイン時のドメイン判定に必要なため認証済みなら可（中身はドメイン/メール一覧のみ）
+    //   書き込み：admin のみ
+    match /appConfig/{doc} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && _isAppAdmin(request.auth.token.email);
+    }
+
     // === Workspace 本体 ===
-    // 認証済みユーザーは workspace の読み書き可（既存仕様の維持）
-    // ※ Hittatsu はクライアント側で memberEmails をチェックするため、ここはオープン
+    // 許可ドメインのユーザーのみ読み書き可（メンバーシップはクライアント側で管理）
     match /workspaces/{wsId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if _domainOk();
 
-      // === tasks / goals / weeklyReports / history / meetings / shared など全 subcoll ===
-      // budget subcollection 以外は今まで通り、認証済みなら自由
-      match /tasks/{doc=**}          { allow read, write: if request.auth != null; }
-      match /goals/{doc=**}          { allow read, write: if request.auth != null; }
-      match /weeklyReports/{doc=**}  { allow read, write: if request.auth != null; }
-      match /history/{doc=**}        { allow read, write: if request.auth != null; }
-      match /meetings/{doc=**}       { allow read, write: if request.auth != null; }
-      match /shared/{doc=**}         { allow read, write: if request.auth != null; }
-      match /pushTokens/{doc=**}     { allow read, write: if request.auth != null; }
+      match /tasks/{doc=**}          { allow read, write: if _domainOk(); }
+      match /goals/{doc=**}          { allow read, write: if _domainOk(); }
+      match /weeklyReports/{doc=**}  { allow read, write: if _domainOk(); }
+      match /history/{doc=**}        { allow read, write: if _domainOk(); }
+      match /meetings/{doc=**}       { allow read, write: if _domainOk(); }
+      match /shared/{doc=**}         { allow read, write: if _domainOk(); }
+      match /pushTokens/{doc=**}     { allow read, write: if _domainOk(); }
 
-      // === Budget subcollection ===
-      // 予実管理データ：role 必須
-      //   - 読込：viewer / editor / admin
-      //   - 書込：editor / admin
+      // === Budget subcollection（旧パス互換） ===
       match /budget/{doc=**} {
-        allow read: if request.auth != null
+        allow read: if _domainOk()
           && _budgetRole(wsId, request.auth.token.email) in ['admin', 'editor', 'viewer'];
-        allow write: if request.auth != null
+        allow write: if _domainOk()
           && _budgetRole(wsId, request.auth.token.email) in ['admin', 'editor'];
       }
     }
 
     // === Global Budget（WS非依存・全ユーザー共通） ===
-    // - globalBudget/data         : 予実データ本体（JSON 文字列）→ role 保有者のみ閲覧
-    // - globalBudget/roles        : { roles: { email: role } } → ★認証済みなら誰でも読める
-    //     （新規ユーザーが「自分にロールが無い」ことを判定して申請画面を出すために必須）
-    // - globalBudget/userCompanies: { map: { email: 会社名 } } → 認証済みなら読める
-    // 書込みは admin（roles/userCompanies）・editor以上（data）のみ。
-    // bootstrap admin: sarazawa@n-airmore.com は無条件 admin（初期セットアップ用）
-    // 読み取り：認証済みユーザーなら可（閲覧の可否はアプリ層の AuthGate で制御）。
-    //   ※ data の読取をロール判定（メールをマップキーで参照）に依存させると、
-    //     承認済みユーザーでも環境により permission-denied になる事象があったため、
-    //     roles/userCompanies と同様に認証済みなら読めるよう統一する。
-    // 書き込み：roles/userCompanies は admin のみ、data は editor 以上。
+    // 許可ドメインのユーザーのみ。ロール細分はアプリ層（AuthGate）で制御
     match /globalBudget/roles {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && _gbAdminOk(request.auth.token.email);
+      allow read: if _domainOk();
+      allow write: if _domainOk() && _gbAdminOk(request.auth.token.email);
     }
-    // userCompanies の書き込み：認証済みユーザーなら可。
-    //   タスク管理の個人設定から各自が自分の所属会社を保存する（クライアントは自分のキーのみ更新）。
-    //   ロール判定（メールをマップキー参照）に依存させると一般ユーザーが保存できず、
-    //   予算管理のユーザー管理に反映されないため開放する。
     match /globalBudget/userCompanies {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if _domainOk();
+      allow write: if _domainOk();
     }
-    // data の書き込み：認証済みユーザーなら可（editor/viewer の制御はアプリ層 AuthGate + 保存処理で実施）。
-    //   ※ ロール判定（メールをマップキーで参照）に依存させると、editor/admin でも
-    //     permission-denied になり「自分以外が更新できない」事象が起きたため、読み取りと同様に開放。
     match /globalBudget/data {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if _domainOk();
+      allow write: if _domainOk();
     }
     match /globalBudget/{doc} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow read: if _domainOk();
+      allow write: if _domainOk();
     }
 
-    // === Budget Access Requests（権限のないユーザーが申請を出す窓口） ===
-    // ドキュメントID = 申請者メール
-    //   - 本人：自分の申請は read/write 可
-    //   - admin：全申請を read/write 可（承認・拒否）
+    // === Budget Access Requests ===
     match /budgetAccessRequests/{email} {
-      allow read, write: if request.auth != null
+      allow read, write: if _domainOk()
         && request.auth.token.email == email;
-      allow read, write: if request.auth != null
+      allow read, write: if _domainOk()
         && _gbAdminOk(request.auth.token.email);
     }
 
