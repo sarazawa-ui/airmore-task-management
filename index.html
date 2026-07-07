@@ -209,6 +209,10 @@ tr.done td input,tr.done td select,tr.done td textarea{color:#B2BABB;text-decora
 .cal-block.task.due-3d{background:#FCE5CD;border-left-color:#E67E22;color:#7E5109}     /* 3日前：オレンジ */
 .cal-block.task.due-overdue{background:#FADBD8;border-left-color:#E74C3C;color:#943126} /* 期限切れ：赤 */
 .cal-block.event{background:var(--primary-light);border-left-color:var(--primary);color:var(--primary-dark)}
+/* 他ワークスペースの自分タスク：紫のストライプで明確に区別（読み取り専用） */
+.cal-block.other-ws{background:repeating-linear-gradient(45deg,#EDE7F6,#EDE7F6 6px,#E0D3F1 6px,#E0D3F1 12px);border-left-color:#8E44AD;color:#5B2C6F;cursor:pointer}
+.cal-block.other-ws:hover{filter:brightness(.96)}
+.cal-block.other-ws.allday{position:static;display:block;margin:0;font-size:10px;padding:3px 7px;border-radius:10px;max-width:100%;width:auto;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cal-block.event.allday{position:static;display:block;margin:0;font-size:10px;padding:3px 7px;border-radius:10px;max-width:100%;width:auto;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cal-block.task.allday{position:static;display:block;margin:0;font-size:10px;padding:3px 7px;background:#FCF3CF;border-left-color:#D4AC0D;border-radius:10px;max-width:100%;width:auto;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cal-block.allday .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -330,9 +334,24 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .rt-toolbar .sep{border-left:1px solid #ccd5e0;height:18px;margin:0 4px}
 .rt-editor{width:100%;min-height:180px;border:1px solid var(--border);border-top:none;border-radius:0 0 5px 5px;padding:9px 12px;background:#fff;font:inherit;line-height:1.6;overflow-y:auto;box-sizing:border-box}
 .rt-editor:focus{outline:none;border-color:var(--primary-light)}
-/* 会議メモ：エディタ内スクロールにして、装飾ツールバーを常に上部に固定表示 */
-.meeting-editor .rt-toolbar{position:sticky;top:0;z-index:5}
-.meeting-editor .rt-editor{max-height:48vh}
+/* 会議メモ：ページスクロール方式。装飾ツールバーはヘッダー直下に固定表示。
+   （内部スクロール(max-height)方式は、更新時のスクロール位置ジャンプと
+     テキストボックス外でホイールが効かない問題を生むため廃止） */
+.meeting-editor .rt-toolbar{position:sticky;top:calc(var(--hdrH, 58px) + 2px);z-index:5;box-shadow:0 2px 4px rgba(44,62,80,.08);border-radius:5px;border-bottom:1px solid var(--border)}
+/* 会議メモ 表形式（担当・議題・議事録） */
+.meeting-rows-wrap{overflow-x:auto;margin-top:6px}
+.meeting-rows{display:grid;grid-template-columns:130px 190px 1fr 34px;min-width:640px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#fff}
+.meeting-rows .mr-head{background:var(--primary-light);color:var(--primary-dark);font-size:11px;font-weight:700;padding:7px 9px;border-bottom:1px solid var(--border)}
+.meeting-rows .mr-cell{border-bottom:1px solid var(--border-soft);border-right:1px solid var(--border-soft);min-width:0}
+.meeting-rows .mr-cell:nth-child(4n){border-right:none}
+.meeting-rows input.mr-inp{width:100%;border:none;padding:8px;font:inherit;font-size:12.5px;box-sizing:border-box;background:transparent}
+.meeting-rows input.mr-inp:focus{outline:2px solid var(--primary-light);outline-offset:-2px}
+.meeting-rows .rt-editor{border:none;border-radius:0;min-height:60px;padding:8px 10px}
+.meeting-rows .mr-del-cell{display:flex;align-items:flex-start;justify-content:center;padding-top:6px}
+.meeting-rows .mr-del{background:none;border:none;color:#C0392B;cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px}
+.meeting-rows .mr-del:hover{background:#FADBD8}
+.rt-editor img{max-width:100%;height:auto;border-radius:4px}
+.rt-editor a{color:#1976D2;text-decoration:underline;cursor:pointer}
 .rt-editor:empty:before{content:attr(data-placeholder);color:var(--muted);font-style:italic}
 /* 会議メモの右クリックメニュー */
 .meeting-ctx-menu{position:fixed;background:#fff;border:1px solid #ccd5e0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:4px;z-index:10000;min-width:220px}
@@ -1170,14 +1189,14 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
     <table id="tblGoals">
       <thead><tr>
         <th style="width:90px">ID</th><th style="min-width:220px">プロジェクト名</th>
-        <th style="width:110px">領域</th><th style="width:110px">主担当者</th>
+        <th style="width:110px">主担当者</th>
         <th style="width:190px">チームメンバー</th>
         <th style="width:115px">開始日</th><th style="width:115px">目標期限</th>
         <th style="width:100px">進捗率<br><small style="font-weight:400;font-size:10px">（自動）</small></th>
         <th style="width:100px">ステータス</th>
         <th style="min-width:180px">📁 Googleドライブ</th>
         <th style="width:90px">タスク</th>
-        <th class="del-cell">削除</th>
+        <th class="del-cell">操作</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -1235,6 +1254,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
     <span><i style="background:#FADBD8;border-left-color:#E74C3C"></i>遅延タスク</span>
     <span><i style="background:#F4F6F7;border-left-color:#BDC3C7"></i>完了タスク</span>
     <span><i style="background:var(--primary-light);border-left-color:var(--primary)"></i>カレンダー予定</span>
+    <span><i style="background:repeating-linear-gradient(45deg,#EDE7F6,#EDE7F6 3px,#E0D3F1 3px,#E0D3F1 6px);border-left-color:#8E44AD"></i>他WSの自分タスク</span>
     <span style="color:var(--muted)">※ タスクの時刻はタイムスロット＋見積分から推定。サイドバーで個別調整可。</span>
   </div>
 </section>
@@ -1455,11 +1475,6 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
         <h4>ステータス</h4>
         <ul id="lstStatuses"></ul>
         <div class="add"><input type="text" id="newStatus" placeholder="ステータス名"><button class="btn sm" onclick="addStatus()">追加</button></div>
-      </div>
-      <div class="master-col">
-        <h4>領域</h4>
-        <ul id="lstAreas"></ul>
-        <div class="add"><input type="text" id="newArea" placeholder="領域名"><button class="btn sm" onclick="addArea()">追加</button></div>
       </div>
     </div>
 
@@ -2534,7 +2549,6 @@ function renderGoals(){
     tr.innerHTML = `
       <td class="input"><input value="${escapeHtml(g.id)}" data-f="id"></td>
       <td class="input"><input value="${escapeHtml(g.name)}" data-f="name"></td>
-      <td class="input"><select data-f="area">${areaOptions(g.area)}</select></td>
       <td class="input"><select data-f="owner">${memberOptions(g.owner)}</select></td>
       <td class="input"><div class="member-chips" data-goalidx="${i}"></div></td>
       <td class="input"><input type="date" value="${g.start||''}" data-f="start"></td>
@@ -2657,16 +2671,16 @@ function renderGoals(){
     const memHost = tr.querySelector('.member-chips');
     renderMemberChips(memHost, getCurGoal() || g);
     // 期限超過は row-overdue（行全体の赤背景）でカバー済み。
-    // 7日以内警告のみ「目標期限」セル（td[6]）に適用。
+    // 7日以内警告のみ「目標期限」セル（td[5]：領域列削除後のインデックス）に適用。
     if(!isOverdue && g.due && diffDays(g.due,todayStr())<=7 && diffDays(g.due,todayStr())>=0 && g.status!=="完了"){
-      tr.querySelectorAll('td')[6].classList.add('alert-orange');
+      tr.querySelectorAll('td')[5].classList.add('alert-orange');
     }
     tb.appendChild(tr);
     // Breakdown row
     if(g.expanded){
       const dt = document.createElement('tr');
       dt.className = 'goal-tree-row' + (isOverdue ? ' row-overdue' : '');
-      dt.innerHTML = `<td colspan="12"><div class="tree" id="tree-${escapeHtml(g.id)}"></div></td>`;
+      dt.innerHTML = `<td colspan="11"><div class="tree" id="tree-${escapeHtml(g.id)}"></div></td>`;
       tb.appendChild(dt);
       renderTree(g);
     }
@@ -2687,6 +2701,96 @@ function renderGoals(){
 // 開閉状態はセッション中だけ保持（毎回ページ読込時はデフォルト閉じる）
 let _meetingsExpandedSession = false;
 let _meetingSearch = ''; // 会議メモ検索キーワード（セッション内保持）
+
+// ===== 会議メモ 行構造（担当・議題・議事録の3列） =====
+function _newRowId(){ return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+// 表示用の行配列（未移行メモは旧 agenda を先頭行として表示。この時点ではデータを変更しない）
+function _meetingDisplayRows(m){
+  if(Array.isArray(m.rows) && m.rows.length) return m.rows;
+  return [{ rid:'r0', who:'', topic:'', minutes: m.agenda || '' }];
+}
+// 編集確定時に旧 agenda → rows へ実体化（rid 'r0' が表示側と一致するよう決定的に生成）
+function _ensureMeetingRows(m){
+  if(Array.isArray(m.rows) && m.rows.length) return;
+  m.rows = [{ rid:'r0', who:'', topic:'', minutes: m.agenda || '' }];
+  m.agenda = ''; // 二重ソース防止（内容は rows[0].minutes に移行済み）
+}
+// 検索用のプレーンテキスト（行構造＋旧 agenda 両対応）
+function _meetingPlainText(m){
+  const parts = [String(m.agenda||'')];
+  (m.rows||[]).forEach(r => parts.push(r.who||'', r.topic||'', String(r.minutes||'')));
+  return parts.join(' ').replace(/<[^>]*>/g, ' ');
+}
+// エディタdiv（行の議事録 or 旧 agenda）へ HTML を書き戻す
+function _writeMeetingEditorHtml(m, div, html){
+  if(div.dataset.rowf === 'minutes'){
+    _ensureMeetingRows(m);
+    const row = m.rows.find(r => r.rid === div.dataset.rid);
+    if(!row) return false;
+    row.minutes = html;
+    return true;
+  }
+  if(div.dataset.mf){ m[div.dataset.mf] = html; return true; }
+  return false;
+}
+// リンクの target=_blank 付与（保存前の後処理）
+function _addLinkTargets(html){
+  return String(html||'').replace(/<a (?![^>]*target=)/gi, '<a target="_blank" rel="noopener" ');
+}
+// 画像貼付：縮小して dataURL 化（最大辺1024px・JPEG）。サイズ超過は null を返す
+function _resizeImageToDataUrl(file, cb){
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    try{
+      const MAX = 1024;
+      let w = img.width, h = img.height;
+      if(w > MAX || h > MAX){ const sc = MAX / Math.max(w, h); w = Math.round(w*sc); h = Math.round(h*sc); }
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      const dataUrl = cv.toDataURL('image/jpeg', 0.75);
+      URL.revokeObjectURL(url);
+      cb(dataUrl.length > 500000 ? null : dataUrl); // 約500KB超は拒否（Firestore 1MB/doc対策）
+    }catch(e){ URL.revokeObjectURL(url); cb(null); }
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); cb(null); };
+  img.src = url;
+}
+// 貼付処理：画像→縮小埋込／URLテキスト→リンク化。それ以外は既定動作
+function _handleMeetingPaste(e, div, commitFn){
+  const cd = e.clipboardData;
+  if(!cd) return;
+  // 画像
+  for(const item of cd.items || []){
+    if(item.type && item.type.startsWith('image/')){
+      e.preventDefault();
+      const file = item.getAsFile();
+      if(!file) return;
+      const editor = div.closest('.meeting-editor');
+      const mid = editor ? editor.dataset.mid : null;
+      const m = (S.meetings||[]).find(x => x.id === mid);
+      _resizeImageToDataUrl(file, (dataUrl) => {
+        if(!dataUrl){ toast('⚠ 画像が大きすぎるため貼り付けできません（縮小後500KB以内）'); return; }
+        if(m && (JSON.stringify(m).length + dataUrl.length) > 850000){
+          toast('⚠ この会議メモの容量が上限に近いため画像を追加できません'); return;
+        }
+        div.focus();
+        document.execCommand('insertHTML', false, `<img src="${dataUrl}" style="max-width:100%">`);
+        commitFn();
+      });
+      return;
+    }
+  }
+  // URLのみのテキスト → リンクとして挿入
+  const text = (cd.getData('text/plain') || '').trim();
+  if(/^https?:\/\/\S+$/.test(text)){
+    e.preventDefault();
+    const esc = escapeHtml(text);
+    document.execCommand('insertHTML', false, `<a href="${esc}" target="_blank" rel="noopener">${esc}</a>`);
+    commitFn();
+  }
+}
 function renderMeetings(){
   const list = document.getElementById('meetingsList');
   const countEl = document.getElementById('meetingsCount');
@@ -2750,7 +2854,7 @@ function renderMeetings(){
           <div class="meeting-field"><label>日付</label><input type="date" data-mf="date" value="${selected.date||''}"></div>
         </div>
         <div class="meeting-field">
-          <label>📋 アジェンダ・ホワイトボード <span style="color:var(--muted);font-weight:400;font-size:10.5px">（テキスト選択 → 右クリック でタスク化できます）</span></label>
+          <label>📋 議事録 <span style="color:var(--muted);font-weight:400;font-size:10.5px">（テキスト選択→右クリックでタスク化／URL貼付でリンク／画像貼付可）</span></label>
           <div class="rt-toolbar">
             <button type="button" data-rt="bold" title="太字 (Ctrl+B)"><b>B</b></button>
             <button type="button" data-rt="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
@@ -2764,6 +2868,7 @@ function renderMeetings(){
           <button type="button" class="rt-color-btn" data-rt-color="#000000" style="background:#000000" title="黒"></button>
         </span>
             <button type="button" data-rt="removeFormat" title="装飾を解除">⌫</button>
+            <button type="button" data-rt-link2 title="選択範囲をリンクにする">🔗</button>
             <span class="sep"></span>
             <select data-rt-size title="文字サイズ">
               <option value="2">小</option>
@@ -2776,30 +2881,42 @@ function renderMeetings(){
             <button type="button" data-rt="insertOrderedList" title="番号付き">1. 番号</button>
             ${(Array.isArray(S.agendaPresets) && S.agendaPresets.length>0) ? `
               <span class="sep"></span>
-              <select data-agenda-preset title="プリセットを挿入（既存内容の前に追加）" style="font-size:12px">
+              <select data-agenda-preset title="プリセットを挿入（先頭行の議事録の前に追加）" style="font-size:12px">
                 <option value="">📚 プリセット挿入…</option>
                 ${S.agendaPresets.map(ap => `<option value="${escapeHtml(ap.id)}">${escapeHtml(ap.name||'(無名)')}</option>`).join('')}
               </select>
             ` : ''}
           </div>
-          <div class="rt-editor" contenteditable="true" data-mf="agenda" data-placeholder="議題・議論中のメモ・気付き・参考情報など、会議中に自由に書き込んでください">${selected.agenda||''}</div>
+          <div class="meeting-rows-wrap">
+            <div class="meeting-rows">
+              <div class="mr-head">担当</div><div class="mr-head">議題</div><div class="mr-head">議事録</div><div class="mr-head"></div>
+              ${_meetingDisplayRows(selected).map(r => `
+                <div class="mr-cell"><input class="mr-inp" data-rowf="who" data-rid="${escapeHtml(r.rid)}" value="${escapeHtml(r.who||'')}" placeholder="担当"></div>
+                <div class="mr-cell"><input class="mr-inp" data-rowf="topic" data-rid="${escapeHtml(r.rid)}" value="${escapeHtml(r.topic||'')}" placeholder="議題"></div>
+                <div class="mr-cell mr-minutes-cell"><div class="rt-editor mr-minutes" contenteditable="true" data-rowf="minutes" data-rid="${escapeHtml(r.rid)}" data-placeholder="議事録・決定事項・メモ">${r.minutes||''}</div></div>
+                <div class="mr-cell mr-del-cell"><button class="mr-del" data-row-del="${escapeHtml(r.rid)}" title="この行を削除">✕</button></div>
+              `).join('')}
+            </div>
+          </div>
+          <button class="btn sm ghost" data-row-add style="margin-top:6px">＋ 行を追加</button>
         </div>
       </div>
     `;
   }
-  // 再描画でエディタ内スクロールが先頭へ飛ぶのを防ぐため、現在のスクロール位置を保持
-  const _prevMidEl = list.querySelector('.meeting-editor[data-mid]');
-  const _prevMid = _prevMidEl ? _prevMidEl.dataset.mid : null;
-  const _prevEditorEl = list.querySelector('.meeting-editor[data-mid] .rt-editor[data-mf]');
-  const _prevScrollTop = _prevEditorEl ? _prevEditorEl.scrollTop : 0;
+  // 表示内容が前回描画と同一なら再構築しない（DOM再生成によるスクロール・フォーカスの揺れを防止）
+  const _renderSig = JSON.stringify([
+    selectedId, _meetingSearch, expanded,
+    sorted.map(m => [m.id, m.name, m.date]),
+    selected ? [selected.name, selected.date, selected.agenda, selected.createdBy, selected.rows] : null,
+    (S.agendaPresets||[]).length
+  ]);
+  if(list._lastRenderSig === _renderSig && list.querySelector('.meeting-toolbar')) return;
+  list._lastRenderSig = _renderSig;
 
+  // ページのスクロール位置を保持したまま再構築（ページスクロール方式なので通常は動かないが保険）
+  const _pageY = window.scrollY;
   list.innerHTML = toolbarHtml + editorHtml;
-
-  // 同じ会議を表示し続ける場合はエディタ内スクロール位置を復元（最上部に飛ばない）
-  if(_prevMid && _prevMid === selectedId && _prevScrollTop > 0){
-    const _newEditorEl = list.querySelector('.meeting-editor[data-mid] .rt-editor[data-mf]');
-    if(_newEditorEl) _newEditorEl.scrollTop = _prevScrollTop;
-  }
+  if(Math.abs(window.scrollY - _pageY) > 2) window.scrollTo(0, _pageY);
   // select の change → 選択保存 + 再描画
   const sel = list.querySelector('#meetingSelect');
   if(sel){
@@ -2818,7 +2935,7 @@ function renderMeetings(){
       const kw = _meetingSearch.trim().toLowerCase();
       const matches = sorted.filter(m => {
         if(!kw) return true;
-        const hay = [m.name, m.id, m.date, String(m.agenda||'').replace(/<[^>]*>/g, ' ')].join(' ').toLowerCase();
+        const hay = [m.name, m.id, m.date, _meetingPlainText(m)].join(' ').toLowerCase();
         return hay.includes(kw);
       });
       if(sel){
@@ -2841,7 +2958,7 @@ function renderMeetings(){
       const kw = (searchInp.value||'').trim().toLowerCase();
       const matches = sorted.filter(m => {
         if(!kw) return true;
-        const hay = [m.name, m.id, m.date, String(m.agenda||'').replace(/<[^>]*>/g, ' ')].join(' ').toLowerCase();
+        const hay = [m.name, m.id, m.date, _meetingPlainText(m)].join(' ').toLowerCase();
         return hay.includes(kw);
       });
       if(matches.length >= 1){
@@ -2853,14 +2970,21 @@ function renderMeetings(){
     });
     if(_meetingSearch) applySearch(); // セッションの検索語を復元時に再適用
   }
-  // 通常 input/select 変更 → 自動保存
-  list.querySelectorAll('input[data-mf], select[data-mf]').forEach(inp => {
+  // 通常 input/select 変更 → 自動保存（会議名・日付＝data-mf ／ 行の担当・議題＝data-rowf）
+  list.querySelectorAll('input[data-mf], select[data-mf], input[data-rowf]').forEach(inp => {
     inp.addEventListener('change', () => {
       const editor = inp.closest('.meeting-editor'); if(!editor) return;
       const mid = editor.dataset.mid;
       const m = (S.meetings||[]).find(x => x.id === mid);
       if(!m) return;
-      m[inp.dataset.mf] = inp.value;
+      if(inp.dataset.rowf){
+        _ensureMeetingRows(m);
+        const row = m.rows.find(r => r.rid === inp.dataset.rid);
+        if(!row) return;
+        row[inp.dataset.rowf] = inp.value;
+      } else {
+        m[inp.dataset.mf] = inp.value;
+      }
       m.updatedAt = new Date().toISOString();
       save(true, `会議メモ更新：${m.name||m.id}`);
       // 編集中に保留した他端末の更新があれば反映（change は blur 相当）
@@ -2874,22 +2998,28 @@ function renderMeetings(){
   //   - focus 時点の内容を記録し、ユーザーが実際に変更した時だけ保存（リモート反映の巻き戻し防止）
   //   - 入力中も自動保存（デバウンス）→ 他端末へ早く反映＆未保存テキスト消失の窓を縮小
   //   - blur 時に確定保存し、編集中に保留していた他端末の更新を反映（flush）
-  list.querySelectorAll('div.rt-editor[data-mf]').forEach(div => {
+  // ツールバー操作の対象：最後にフォーカスした議事録エディタ（無ければ先頭）
+  let _activeMinutesDiv = null;
+  const _targetEditor = () => (_activeMinutesDiv && _activeMinutesDiv.isConnected)
+    ? _activeMinutesDiv
+    : list.querySelector('.rt-editor[data-rowf="minutes"], .rt-editor[data-mf]');
+
+  list.querySelectorAll('.rt-editor[data-rowf="minutes"], .rt-editor[data-mf]').forEach(div => {
     let _inputTimer = null;
-    div.addEventListener('focus', () => { div._startVal = div.innerHTML; });
+    div.addEventListener('focus', () => { div._startVal = div.innerHTML; _activeMinutesDiv = div; });
     const commit = () => {
       const editor = div.closest('.meeting-editor'); if(!editor) return;
       const mid = editor.dataset.mid;
       const m = (S.meetings||[]).find(x => x.id === mid);
       if(!m) return;
-      const newVal = div.innerHTML;
+      const newVal = _addLinkTargets(div.innerHTML);
       if(div._startVal !== undefined && newVal === div._startVal) return; // ユーザー未変更 → 何もしない
       div._startVal = newVal;
-      if(m[div.dataset.mf] === newVal) return; // 既に同値
-      m[div.dataset.mf] = newVal;
+      if(!_writeMeetingEditorHtml(m, div, newVal)) return;
       m.updatedAt = new Date().toISOString();
       save(true, `会議メモ更新：${m.name||m.id}`);
     };
+    div._commit = commit; // 貼付処理などから呼べるよう公開
     div.addEventListener('input', () => {
       if(_inputTimer) clearTimeout(_inputTimer);
       _inputTimer = setTimeout(() => { _inputTimer = null; commit(); }, 1200);
@@ -2900,6 +3030,16 @@ function renderMeetings(){
       if(_meetingsRenderPending){
         _meetingsRenderPending = false;
         withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
+      }
+    });
+    // 貼付：画像（縮小埋込）／URL（リンク化）
+    div.addEventListener('paste', (e) => _handleMeetingPaste(e, div, commit));
+    // リンクは Ctrl(⌘)+クリックで開く（contenteditable 内では通常クリック無効のため）
+    div.addEventListener('click', (e) => {
+      const a = e.target.closest && e.target.closest('a');
+      if(a && (e.ctrlKey || e.metaKey)){
+        e.preventDefault();
+        window.open(a.href, '_blank', 'noopener');
       }
     });
     // 右クリック：選択テキストがあればタスク化／プロジェクト化メニュー
@@ -2914,13 +3054,39 @@ function renderMeetings(){
       showMeetingCtxMenu(e.clientX, e.clientY, text);
     });
   });
-  // リッチエディタのツールバー
+  // 行の追加・削除
+  const addRowBtn = list.querySelector('[data-row-add]');
+  if(addRowBtn) addRowBtn.addEventListener('click', () => {
+    const editor = list.querySelector('.meeting-editor[data-mid]'); if(!editor) return;
+    const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m) return;
+    _ensureMeetingRows(m);
+    m.rows.push({ rid: _newRowId(), who:'', topic:'', minutes:'' });
+    m.updatedAt = new Date().toISOString();
+    save(true, `会議メモ：行追加（${m.name||m.id}）`);
+    renderMeetings();
+  });
+  list.querySelectorAll('[data-row-del]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const editor = btn.closest('.meeting-editor'); if(!editor) return;
+      const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m) return;
+      _ensureMeetingRows(m);
+      const row = m.rows.find(r => r.rid === btn.dataset.rowDel); if(!row) return;
+      const hasContent = (row.who||row.topic||String(row.minutes||'').replace(/<[^>]*>/g,'').trim());
+      if(hasContent && !confirm('この行（担当・議題・議事録）を削除しますか？')) return;
+      m.rows = m.rows.filter(r => r.rid !== btn.dataset.rowDel);
+      if(m.rows.length === 0) m.rows.push({ rid:_newRowId(), who:'', topic:'', minutes:'' });
+      m.updatedAt = new Date().toISOString();
+      save(true, `会議メモ：行削除（${m.name||m.id}）`);
+      renderMeetings();
+    });
+  });
+  // リッチエディタのツールバー（最後にフォーカスした議事録エディタに作用）
   list.querySelectorAll('.rt-toolbar').forEach(toolbar => {
-    const editorDiv = toolbar.parentElement.querySelector('.rt-editor');
     toolbar.querySelectorAll('button[data-rt]').forEach(btn => {
       btn.addEventListener('mousedown', e => e.preventDefault()); // フォーカス維持
       btn.addEventListener('click', () => {
-        editorDiv.focus();
+        const ed = _targetEditor(); if(!ed) return;
+        ed.focus();
         document.execCommand(btn.dataset.rt, false, null);
         // blur イベントで保存される
       });
@@ -2928,21 +3094,36 @@ function renderMeetings(){
     toolbar.querySelectorAll('button[data-rt-color]').forEach(cb => {
       cb.addEventListener('mousedown', e => e.preventDefault()); // フォーカス維持
       cb.addEventListener('click', () => {
-        editorDiv.focus();
+        const ed = _targetEditor(); if(!ed) return;
+        ed.focus();
         try{ document.execCommand('styleWithCSS', false, true); }catch(e){}
         document.execCommand('foreColor', false, cb.dataset.rtColor);
         try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
         // blur イベントで保存される
       });
     });
+    // 選択範囲をリンク化
+    const linkBtn = toolbar.querySelector('button[data-rt-link2]');
+    if(linkBtn){
+      linkBtn.addEventListener('mousedown', e => e.preventDefault());
+      linkBtn.addEventListener('click', () => {
+        const ed = _targetEditor(); if(!ed) return;
+        const url = prompt('リンク先URLを入力してください', 'https://');
+        if(!url || !/^https?:\/\//.test(url)) return;
+        ed.focus();
+        document.execCommand('createLink', false, url);
+        if(ed._commit) ed._commit(); // target=_blank 付与は commit 内の後処理で実施
+      });
+    }
     const sizeSel = toolbar.querySelector('select[data-rt-size]');
     if(sizeSel){
       sizeSel.addEventListener('change', () => {
-        editorDiv.focus();
+        const ed = _targetEditor(); if(!ed) return;
+        ed.focus();
         document.execCommand('fontSize', false, sizeSel.value);
       });
     }
-    // アジェンダプリセット挿入：既存内容の前に追加
+    // アジェンダプリセット挿入：対象の議事録エディタの既存内容の前に追加
     const presetSel = toolbar.querySelector('select[data-agenda-preset]');
     if(presetSel){
       presetSel.addEventListener('change', () => {
@@ -2950,18 +3131,18 @@ function renderMeetings(){
         if(!pid){ return; }
         const preset = (S.agendaPresets||[]).find(p => p.id === pid);
         if(!preset){ presetSel.value = ''; return; }
+        const editorDiv = _targetEditor();
+        if(!editorDiv){ presetSel.value = ''; return; }
         const existing = editorDiv.innerHTML.trim();
-        // プリセット内容を前に挿入。既存と区切りを入れる
         const sep = existing ? '<br><hr><br>' : '';
         editorDiv.innerHTML = _agendaPresetToHtml(preset.content) + sep + existing;
         editorDiv.focus();
-        // blur 相当の保存処理を手動でトリガー
+        // 保存（行構造・旧形式の両対応）
         const editor = editorDiv.closest('.meeting-editor');
         if(editor){
           const mid = editor.dataset.mid;
           const m = (S.meetings||[]).find(x => x.id === mid);
-          if(m){
-            m[editorDiv.dataset.mf] = editorDiv.innerHTML;
+          if(m && _writeMeetingEditorHtml(m, editorDiv, editorDiv.innerHTML)){
             m.updatedAt = new Date().toISOString();
             save(true, `会議メモにプリセット挿入：${preset.name}`);
             toast(`プリセット「${preset.name}」を挿入しました`);
@@ -2999,8 +3180,31 @@ function renderMeetings(){
 let _meetingCtxSavedRange = null;
 let _meetingCtxEditorDiv = null;
 // 生成を確定/取消するまで着色を保留するための状態
-let _meetingColorPendingTask = null; // {mid, coloredHtml} … タスク保存時に着色を適用
-let _meetingColorGoalRevert = null;  // {mid, prevHtml, goalId} … プロジェクト削除時に着色を取消
+let _meetingColorPendingTask = null; // {ref:{mid,rid,mf}, coloredHtml} … タスク保存時に着色を適用
+let _meetingColorGoalRevert = null;  // {ref:{mid,rid,mf}, prevHtml, goalId} … プロジェクト削除時に着色を取消
+
+// エディタ参照（会議ID＋行ID or 旧フィールド）で HTML を書き戻す共通処理
+function _writeMeetingHtmlByRef(ref, html){
+  if(!ref || !ref.mid) return false;
+  const m = (S.meetings||[]).find(x => x && x.id === ref.mid);
+  if(!m) return false;
+  if(ref.rid){
+    _ensureMeetingRows(m);
+    const row = m.rows.find(r => r.rid === ref.rid);
+    if(!row || row.minutes === html) return false;
+    row.minutes = html;
+  } else if(ref.mf){
+    if(m[ref.mf] === html) return false;
+    m[ref.mf] = html;
+  } else return false;
+  m.updatedAt = new Date().toISOString();
+  return true;
+}
+function _editorRefOf(div){
+  const editor = div && div.closest ? div.closest('.meeting-editor') : null;
+  if(!editor) return null;
+  return { mid: editor.dataset.mid, rid: div.dataset.rid || null, mf: div.dataset.mf || null };
+}
 
 // 選択範囲に色を付けた「着色後HTML」を計算して返す（表示は元に戻す＝まだ着色しない）。
 function _computeMeetingColoredHtml(color){
@@ -3026,12 +3230,9 @@ function _computeMeetingColoredHtml(color){
 // タスク確定（保存）時：保留していた着色を会議メモへ適用。
 function _applyPendingMeetingTaskColor(){
   if(!_meetingColorPendingTask) return;
-  const {mid, coloredHtml} = _meetingColorPendingTask;
+  const {ref, coloredHtml} = _meetingColorPendingTask;
   _meetingColorPendingTask = null;
-  const m = (S.meetings||[]).find(x => x && x.id === mid);
-  if(m && m.agenda !== coloredHtml){
-    m.agenda = coloredHtml;
-    m.updatedAt = new Date().toISOString();
+  if(_writeMeetingHtmlByRef(ref, coloredHtml)){
     save(true, `会議メモ：タスク化テキストを着色`);
     try{ renderMeetings(); }catch(e){}
   }
@@ -3039,12 +3240,9 @@ function _applyPendingMeetingTaskColor(){
 // プロジェクト削除時：そのプロジェクト生成時に付けた着色を元に戻す。
 function _revertMeetingGoalColor(goalId){
   if(!_meetingColorGoalRevert || _meetingColorGoalRevert.goalId !== goalId) return;
-  const {mid, prevHtml} = _meetingColorGoalRevert;
+  const {ref, prevHtml} = _meetingColorGoalRevert;
   _meetingColorGoalRevert = null;
-  const m = (S.meetings||[]).find(x => x && x.id === mid);
-  if(m && m.agenda !== prevHtml){
-    m.agenda = prevHtml;
-    m.updatedAt = new Date().toISOString();
+  if(_writeMeetingHtmlByRef(ref, prevHtml)){
     save(true, `会議メモ：プロジェクト化の着色を取消`);
     try{ renderMeetings(); }catch(e){}
   }
@@ -3065,13 +3263,12 @@ function _applyColorToSavedMeetingRange(color, label){
     try{ document.execCommand('styleWithCSS', false, true); }catch(e){}
     document.execCommand('foreColor', false, color);
     try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
-    // 編集内容を保存
+    // 編集内容を保存（行構造・旧形式の両対応）
     const editor = _meetingCtxEditorDiv.closest('.meeting-editor');
     if(editor){
       const mid = editor.dataset.mid;
       const m = (S.meetings||[]).find(x => x.id === mid);
-      if(m){
-        m[_meetingCtxEditorDiv.dataset.mf] = _meetingCtxEditorDiv.innerHTML;
+      if(m && _writeMeetingEditorHtml(m, _meetingCtxEditorDiv, _meetingCtxEditorDiv.innerHTML)){
         m.updatedAt = new Date().toISOString();
         save(true, `会議メモ${label||'更新'}：${m.name||m.id}`);
       }
@@ -3110,24 +3307,22 @@ function showMeetingCtxMenu(x, y, text){
   menu.querySelector('[data-action="project"]').onclick = (e) => {
     e.stopPropagation();
     // プロジェクトは即時生成されるため着色も即時。生成したプロジェクトが削除されたら着色を取消す。
-    const mEl = _meetingCtxEditorDiv && _meetingCtxEditorDiv.closest('.meeting-editor');
-    const mid = mEl ? mEl.dataset.mid : null;
+    const ref = _editorRefOf(_meetingCtxEditorDiv);
     const prevHtml = _meetingCtxEditorDiv ? _meetingCtxEditorDiv.innerHTML : null;
     _applyColorToSavedMeetingRange('#1976D2', 'プロジェクト化');
     const newId = createProjectFromMeetingText(text);
-    _meetingColorGoalRevert = (mid && prevHtml != null && newId) ? {mid, prevHtml, goalId:newId} : null;
+    _meetingColorGoalRevert = (ref && prevHtml != null && newId) ? {ref, prevHtml, goalId:newId} : null;
     menu.remove();
   };
   menu.querySelector('[data-action="task"]').onclick = (e) => {
     e.stopPropagation();
     // ★ タスクは編集モーダルで確定（保存）するまで着色しない。
     //   着色後のHTMLだけ用意し、保存時に適用／キャンセル・削除時は破棄。
-    const mEl = _meetingCtxEditorDiv && _meetingCtxEditorDiv.closest('.meeting-editor');
-    const mid = mEl ? mEl.dataset.mid : null;
+    const ref = _editorRefOf(_meetingCtxEditorDiv);
     const coloredHtml = _computeMeetingColoredHtml('#2E7D32');
     _meetingCtxSavedRange = null; _meetingCtxEditorDiv = null;
     createTaskFromMeetingText(text);
-    _meetingColorPendingTask = (mid && coloredHtml != null) ? {mid, coloredHtml} : null;
+    _meetingColorPendingTask = (ref && coloredHtml != null) ? {ref, coloredHtml} : null;
     menu.remove();
   };
   // 外部クリックで閉じる（未選択の場合は range もクリア）
@@ -3256,6 +3451,7 @@ function addMeeting(){
     date: today,
     agenda: '',
     minutes: '',
+    rows: [{ rid: _newRowId(), who:'', topic:'', minutes:'' }], // 表形式（担当・議題・議事録）
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     createdBy: (_currentUser && _currentUser.name) || ''
@@ -3283,9 +3479,14 @@ function renderMemberChips(host, g){
   const members = g.members || [];
   let html = '';
   if(members.length===0) html += `<span class="placeholder">＋ メンバーを追加（複数選択可）</span>`;
-  members.forEach(m=>{
+  // 行の肥大化を防ぐため、チップは先頭3名＋「+N名」の圧縮表示（クリックで全員選択ポップアップ）
+  const MAX_CHIPS = 3;
+  members.slice(0, MAX_CHIPS).forEach(m=>{
     html += `<span class="chip" data-name="${escapeHtml(m)}">${escapeHtml(m)}<span class="x" title="削除">✕</span></span>`;
   });
+  if(members.length > MAX_CHIPS){
+    html += `<span class="chip" style="background:#8395a7" title="${escapeHtml(members.slice(MAX_CHIPS).join('、'))}">+${members.length - MAX_CHIPS}名</span>`;
+  }
   html += `<div class="member-popup">`;
   // Combine authMembers + master members (dedupe by name)
   const seen = new Set();
@@ -4572,7 +4773,7 @@ function renderMaster(){
   const pane = document.getElementById('pane-master');
   if(!pane) return;
   renderSimpleList('lstStatuses', S.statuses, v=>{S.statuses=v;save();renderAll();});
-  renderSimpleList('lstAreas', S.areas, v=>{S.areas=v;save();renderAll();});
+  // 領域マスタは廃止（UIなし。データ S.areas は互換のため残置）
   renderTreePresetsList();
   renderAgendaPresetsList();
 }
@@ -4728,7 +4929,7 @@ function addAgendaPreset(){
   renderAgendaPresetsList();
   renderMeetings();
 }
-function addArea(){ const v=document.getElementById('newArea').value.trim(); if(v){S.areas.push(v);document.getElementById('newArea').value="";save();renderAll();}}
+// addArea：領域マスタ廃止に伴い削除
 function renderSimpleList(id, arr, setter){
   const ul = document.getElementById(id); if(!ul) return;
   ul.innerHTML="";
@@ -4985,6 +5186,91 @@ function renderCalendar(){
       placeTimedBlock(tbl, dayKey, ev.start, ev.end, makeEventBlock(ev,false), startH, endH, HOUR_PX);
     }
   });
+
+  // 他ワークスペースの自分タスクを識別色で重ね表示（読み取り専用・非同期）
+  try{ _renderOtherWsOverlay(tbl, days, startH, endH, HOUR_PX); }catch(e){ console.warn('[otherWS] overlay failed:', e); }
+}
+
+// ===== 他ワークスペースの自分タスク：週単位で取得しカレンダーへ重ね表示 =====
+//   読み取り節約のため「表示週の startD に一致するタスクのみ」をクエリし、2分間キャッシュする。
+let _otherWsCache = { key:'', rows:null, at:0, inflight:null };
+async function _fetchOtherWsTasks(weekDays){
+  const key = weekDays[0] + '_' + (S.workspaceId||'');
+  const now = Date.now();
+  if(_otherWsCache.key === key && _otherWsCache.rows && (now - _otherWsCache.at) < 120000) return _otherWsCache.rows;
+  if(_otherWsCache.inflight && _otherWsCache.key === key) return _otherWsCache.inflight;
+  if(!_firebaseReady || !firebase.auth || !firebase.auth().currentUser) return [];
+  const email = firebase.auth().currentUser.email;
+  const myName = (_currentUser && _currentUser.name) || '';
+  _otherWsCache = { key, rows:null, at:0, inflight:null };
+  _otherWsCache.inflight = (async ()=>{
+    const rows = [];
+    try{
+      const db = firebase.firestore();
+      const snap = await db.collection('workspaces').where('memberEmails','array-contains', email).get();
+      bumpFbUsage('read', Math.max(1, snap.size));
+      const wsDocs = []; snap.forEach(d => wsDocs.push(d));
+      await Promise.all(wsDocs.map(async (doc)=>{
+        if(doc.id === S.workspaceId) return; // 現在のWSは通常表示
+        const d = doc.data() || {};
+        const wsName = d.wsName || (d.profile && d.profile.companyName) || doc.id;
+        // このWSでの自分の表示名（authMembers: email → name）
+        let selfName = myName;
+        const auth = Array.isArray(d.authMembers) ? d.authMembers.find(m=>m && m.email===email) : null;
+        if(auth && auth.name) selfName = auth.name;
+        try{
+          const ts = await db.collection(`workspaces/${doc.id}/tasks`)
+            .where('startD','>=',weekDays[0]).where('startD','<=',weekDays[6]).get();
+          bumpFbUsage('read', Math.max(1, ts.size));
+          ts.forEach(td=>{
+            const t = td.data() || {};
+            if(t.owner !== selfName && t.owner !== myName) return;
+            if(t.status === '完了' || t.status === '中止') return;
+            rows.push({ wsId: doc.id, wsName, task: t });
+          });
+        }catch(e){ console.warn('[otherWS] tasks fetch failed', doc.id, e); }
+      }));
+    }catch(e){ console.warn('[otherWS] fetch failed', e); }
+    _otherWsCache.rows = rows;
+    _otherWsCache.at = Date.now();
+    _otherWsCache.inflight = null;
+    return rows;
+  })();
+  return _otherWsCache.inflight;
+}
+function _makeOtherWsBlock(row, allDay){
+  const t = row.task;
+  const div = document.createElement('div');
+  div.className = 'cal-block other-ws' + (allDay ? ' allday' : '');
+  div.title = `【${row.wsName}】${t.act||t.mid||'(無題)'}\nクリックでこのワークスペースへ移動して開く`;
+  div.innerHTML = `<span style="opacity:.75;font-size:9px">🌐${escapeHtml(String(row.wsName).slice(0,8))}</span> ${escapeHtml((t.act||t.mid||'(無題)').slice(0,40))}`;
+  div.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    if(confirm(`「${row.wsName}」のタスクです。ワークスペースを切り替えて開きますか？`)){
+      openPersonalTask(row.wsId, t.id);
+    }
+  });
+  return div;
+}
+function _renderOtherWsOverlay(tbl, days, startH, endH, HOUR_PX){
+  const weekKey = days[0];
+  _fetchOtherWsTasks(days).then(rows=>{
+    if(!rows || !rows.length) return;
+    if(!tbl.isConnected) return;                       // 再描画済みなら中止
+    if(S.ui.weekStart !== weekKey) return;             // 週が変わっていたら中止
+    tbl.querySelectorAll('.cal-block.other-ws').forEach(el=>el.remove()); // 二重貼付防止
+    rows.forEach(row=>{
+      const r = taskRange(row.task); if(!r) return;
+      const dayKey = r.allDay ? r.date : ymd(r.start);
+      if(!days.includes(dayKey)) return;
+      if(r.allDay){
+        const cell = tbl.querySelector(`[data-allday-date="${dayKey}"]`);
+        if(cell) cell.appendChild(_makeOtherWsBlock(row, true));
+      } else {
+        placeTimedBlock(tbl, dayKey, r.start, r.end, _makeOtherWsBlock(row, false), startH, endH, HOUR_PX);
+      }
+    });
+  }).catch(e=>console.warn('[otherWS] render failed:', e));
 }
 
 function placeTimedBlock(tbl, dayKey, start, end, block, startH, endH, HOUR_PX){
@@ -5652,11 +5938,15 @@ function renderSideTasks(){
     el.className = cls;
     el.draggable = true;
     el.dataset.taskId = t.id;
-    const gd = goalDeadlineClass(t);
-    const gdLabel = gd==='gd-overdue'?'<span class="gd-tag overdue">期限切れ</span>':
-                    gd==='gd-red'?'<span class="gd-tag red">期限間近</span>':
-                    gd==='gd-yellow'?'<span class="gd-tag yellow">2週内</span>':
-                    gd==='gd-green'?'<span class="gd-tag green">余裕</span>':'';
+    // バッジは「タスク自身の期日（due）」を参照（プロジェクト期日ではない）
+    let gdLabel = '';
+    if(t.due && t.status !== '完了' && t.status !== '中止'){
+      const _dd = diffDays(t.due, todayStr());
+      gdLabel = _dd < 0 ? '<span class="gd-tag overdue">期限切れ</span>' :
+                _dd <= 3 ? '<span class="gd-tag red">期限間近</span>' :
+                _dd <= 7 ? '<span class="gd-tag yellow">1週内</span>' :
+                '<span class="gd-tag green">余裕</span>';
+    }
     const goalName = t.goal ? (S.goals.find(g=>g.id===t.goal)||{}).name : '';
     const estVal = Math.min(90, Number(t.est)||0);
     const autoW = computeTaskWeight(t);
@@ -5690,7 +5980,10 @@ function renderSideTasks(){
             <label>ステータス</label><select data-f="status">${statusOptions(t.status)}</select>
             <label>成果物（完了の定義）</label><textarea data-f="defn" rows="2">${escapeHtml(t.defn||'')}</textarea>
             <label>備考</label><textarea data-f="note" rows="2">${escapeHtml(t.note||'')}</textarea>
-            <div class="row" style="margin-top:6px"><button class="btn sm danger" data-del>このタスクを削除</button></div>
+            <div class="row" style="margin-top:6px;display:flex;gap:6px">
+              <button class="btn sm ghost" data-dup>📋 このタスクを複製</button>
+              <button class="btn sm danger" data-del>このタスクを削除</button>
+            </div>
           </div>
         </div>
       </div>`;
@@ -5773,6 +6066,12 @@ function renderSideTasks(){
       if(idx>=0) S.tasks.splice(idx,1);
       _addTombstone('tasks', cur.id);
       save(); flushPendingSync(); renderAll();
+    };
+    const _dupBtn = el.querySelector('[data-dup]');
+    if(_dupBtn) _dupBtn.onclick = (e)=>{
+      e.stopPropagation();
+      const cur = getCurTask(); if(!cur) return;
+      duplicateTask(cur.id);
     };
     // Disable drag when interacting with form controls (slider, inputs, etc.)
     el.addEventListener('mousedown',(e)=>{
@@ -6508,6 +6807,16 @@ function updateHeaderClock(){
 }
 updateHeaderClock();
 setInterval(updateHeaderClock, 1000);
+
+// ヘッダー実高を CSS 変数 --hdrH に反映（sticky ツールバー等の位置基準に使用）
+function _updateHdrH(){
+  try{
+    const h = document.querySelector('header');
+    if(h) document.documentElement.style.setProperty('--hdrH', h.offsetHeight + 'px');
+  }catch(e){}
+}
+window.addEventListener('resize', _updateHdrH);
+_updateHdrH();
 
 function maybeNotifyOnComplete(t){
   if(!S.ui.notifyOnComplete) return;
@@ -9719,10 +10028,14 @@ function openTaskEditModal(taskId, opts){
         <div class="field"><label>担当者</label><select data-ef="owner">${memberOptions(t.owner)}</select></div>
         <div class="field"><label>紐付プロジェクト</label><select data-ef="goal">${goalOptions(t.goal)}</select></div>
       </div>
-      <div class="row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+      <div class="row" style="display:grid;grid-template-columns:1fr 1.6fr;gap:12px">
         <div class="field"><label>期日</label><input type="date" data-ef="due" value="${t.due||''}"></div>
-        <div class="field"><label>時刻</label><input type="time" data-ef="time" value="${t.time||''}"></div>
-        <div class="field"><label>所要時間（分）</label><input type="number" min="0" step="15" data-ef="est" value="${t.est??''}"></div>
+        <div class="field">
+          <label>所要時間：<b id="estSliderVal" style="color:var(--primary)">${Number(t.est)||0}分</b></label>
+          <input type="range" data-ef="est" min="0" max="480" step="15" value="${Number(t.est)||0}"
+            style="width:100%;accent-color:var(--primary)"
+            oninput="document.getElementById('estSliderVal').textContent=this.value+'分'">
+        </div>
       </div>
       <div class="field"><label>成果物（完了の定義）</label><textarea data-ef="defn" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font:inherit;background:#fff;resize:vertical">${escapeHtml(t.defn||'')}</textarea></div>
       <div class="field"><label>備考</label><textarea data-ef="note" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font:inherit;background:#fff;resize:vertical">${escapeHtml(t.note||'')}</textarea></div>
@@ -9771,7 +10084,7 @@ function saveEditingTask(){
   if(!t){ _editingIsNew = false; closeTaskEditModal(); return; }
   document.querySelectorAll('#taskEditFields [data-ef]').forEach(inp=>{
     const f = inp.dataset.ef;
-    if(inp.type==='number') t[f] = inp.value===''?'':Number(inp.value);
+    if(inp.type==='number' || inp.type==='range') t[f] = inp.value===''?'':Number(inp.value);
     else t[f] = inp.value;
   });
   applyParentAutoComplete(t.id);
@@ -10500,13 +10813,22 @@ function getUserEmail(){
   // Firestore のフィールド名規則上、__xxx__ 形式は不可なため _local_ を使用
   return _currentUser?.email || '_local_';
 }
+// 週間カレンダーの表示週は「端末ローカル」：同期せず、ページ読込ごとに今日の週で開始する。
+//   （以前は S.ui.weekStart が共有ドキュメント経由で全員に同期され、誰かの週送りが全員に反映されていた）
+let _localWeekStart = null;
 function setupUIProxy(){
   // 既にProxyなら何もしない
   if(S.ui && S.ui.__isProxy) return;
   const targetUI = S.ui || {};
+  // 共有状態に残っている過去の weekStart は破棄（同期対象から外す）
+  try{ delete targetUI.weekStart; }catch(e){}
   const proxy = new Proxy(targetUI, {
     get(target, prop){
       if(prop === '__isProxy') return true;
+      if(prop === 'weekStart'){
+        if(!_localWeekStart) _localWeekStart = weekStartOf(todayStr());
+        return _localWeekStart;
+      }
       if(typeof prop === 'string' && PER_USER_UI_FIELDS.has(prop)){
         if(!S.userPrefs) S.userPrefs = {};
         const email = getUserEmail();
@@ -10517,6 +10839,7 @@ function setupUIProxy(){
       return target[prop];
     },
     set(target, prop, value){
+      if(prop === 'weekStart'){ _localWeekStart = value; return true; } // 端末ローカル（同期しない）
       if(typeof prop === 'string' && PER_USER_UI_FIELDS.has(prop)){
         if(!S.userPrefs) S.userPrefs = {};
         const email = getUserEmail();
