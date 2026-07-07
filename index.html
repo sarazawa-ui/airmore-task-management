@@ -1491,7 +1491,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
 
     <h4 style="margin-top:22px;padding-top:16px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">📋 会議メモのアジェンダプリセット</h4>
     <div class="help" style="font-size:11.5px;line-height:1.6;margin:6px 0 10px">
-      会議メモの「アジェンダ・ホワイトボード」によく使うテンプレートを登録できます。会議メモ編集画面のプルダウンから選んで挿入できます（既存内容の前に追加）。リッチテキスト（太字・色など）も保持されます。
+      会議メモの表形式（担当・議題・議事録）に合わせて、よく使う行の組み合わせを登録できます。会議メモ編集画面のプルダウンから選ぶと、プリセットの行がそのまま追加されます（メモが空なら置き換え）。議事録の雛形にはHTMLも使用できます。
     </div>
     <div id="lstAgendaPresets" class="tree-preset-list"></div>
     <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
@@ -2877,6 +2877,7 @@ function renderMeetings(){
           <span class="meeting-id">${escapeHtml(selected.id)}</span>
           ${selected.createdBy ? `<span class="meeting-by">作成者：${escapeHtml(selected.createdBy)}</span>` : ''}
           <span style="flex:1"></span>
+          <button class="btn sm ghost" data-meeting-dup="${escapeHtml(selected.id)}">📋 複製</button>
           <button class="btn sm danger" data-meeting-del="${escapeHtml(selected.id)}">🗑 削除</button>
         </div>
         <div class="meeting-field-row">
@@ -2911,7 +2912,7 @@ function renderMeetings(){
             <button type="button" data-rt="insertOrderedList" title="番号付き">1. 番号</button>
             ${(Array.isArray(S.agendaPresets) && S.agendaPresets.length>0) ? `
               <span class="sep"></span>
-              <select data-agenda-preset title="プリセットを挿入（先頭行の議事録の前に追加）" style="font-size:12px">
+              <select data-agenda-preset title="プリセットの行（担当・議題・議事録）を追加" style="font-size:12px">
                 <option value="">📚 プリセット挿入…</option>
                 ${S.agendaPresets.map(ap => `<option value="${escapeHtml(ap.id)}">${escapeHtml(ap.name||'(無名)')}</option>`).join('')}
               </select>
@@ -3153,7 +3154,7 @@ function renderMeetings(){
         document.execCommand('fontSize', false, sizeSel.value);
       });
     }
-    // アジェンダプリセット挿入：対象の議事録エディタの既存内容の前に追加
+    // アジェンダプリセット挿入：プリセットの行（担当・議題・議事録）を会議メモの行として追加
     const presetSel = toolbar.querySelector('select[data-agenda-preset]');
     if(presetSel){
       presetSel.addEventListener('change', () => {
@@ -3161,26 +3162,33 @@ function renderMeetings(){
         if(!pid){ return; }
         const preset = (S.agendaPresets||[]).find(p => p.id === pid);
         if(!preset){ presetSel.value = ''; return; }
-        const editorDiv = _targetEditor();
-        if(!editorDiv){ presetSel.value = ''; return; }
-        const existing = editorDiv.innerHTML.trim();
-        const sep = existing ? '<br><hr><br>' : '';
-        editorDiv.innerHTML = _agendaPresetToHtml(preset.content) + sep + existing;
-        editorDiv.focus();
-        // 保存（行構造・旧形式の両対応）
-        const editor = editorDiv.closest('.meeting-editor');
-        if(editor){
-          const mid = editor.dataset.mid;
-          const m = (S.meetings||[]).find(x => x.id === mid);
-          if(m && _writeMeetingEditorHtml(m, editorDiv, editorDiv.innerHTML)){
-            m.updatedAt = new Date().toISOString();
-            save(true, `会議メモにプリセット挿入：${preset.name}`);
-            toast(`プリセット「${preset.name}」を挿入しました`);
-          }
-        }
+        const editor = list.querySelector('.meeting-editor[data-mid]');
+        const m = editor ? (S.meetings||[]).find(x => x.id === editor.dataset.mid) : null;
+        if(!m){ presetSel.value = ''; return; }
+        const srcRows = _presetRowsOf(preset);
+        if(srcRows.length === 0){ presetSel.value = ''; toast('このプリセットには行がありません'); return; }
+        _ensureMeetingRows(m);
+        const newRows = srcRows.map(r => ({
+          rid: _newRowId(),
+          who: r.who || '',
+          topic: r.topic || '',
+          minutes: _agendaPresetToHtml(r.minutes || ''),
+        }));
+        // メモが「空の1行だけ」ならその行を置き換え、それ以外は末尾に追加
+        const onlyEmpty = m.rows.length === 1 && !m.rows[0].who && !m.rows[0].topic
+          && !String(m.rows[0].minutes||'').replace(/<[^>]*>/g,'').trim();
+        m.rows = onlyEmpty ? newRows : m.rows.concat(newRows);
+        m.updatedAt = new Date().toISOString();
+        save(true, `会議メモにプリセット挿入：${preset.name}`);
+        toast(`プリセット「${preset.name}」の${newRows.length}行を追加しました`);
         presetSel.value = '';
+        renderMeetings();
       });
     }
+  });
+  // 複製
+  list.querySelectorAll('[data-meeting-dup]').forEach(btn => {
+    btn.addEventListener('click', () => duplicateMeeting(btn.dataset.meetingDup));
   });
   // 削除
   list.querySelectorAll('[data-meeting-del]').forEach(btn => {
@@ -3499,6 +3507,36 @@ function addMeeting(){
     if(inp){ inp.focus(); inp.select(); }
   }, 100);
   toast(`会議メモ ${mid} を作成しました`);
+}
+// 会議メモを複製（行構造・旧agenda とも深いコピー。行IDは振り直し）
+function duplicateMeeting(srcId){
+  const src = (S.meetings||[]).find(m => m && m.id === srcId);
+  if(!src) return;
+  if(!S.seq) S.seq = {};
+  S.seq.meeting = (S.seq.meeting||0)+1;
+  let newId = 'M-'+String(S.seq.meeting).padStart(3,'0');
+  const existing = new Set(S.meetings.map(m => m && m.id).filter(Boolean));
+  const tombs = _tombstoneSetFor('meetings');
+  let bumps = 0;
+  while((existing.has(newId) || tombs.has(newId)) && bumps++ < 1000){
+    S.seq.meeting++;
+    newId = 'M-'+String(S.seq.meeting).padStart(3,'0');
+  }
+  const copy = JSON.parse(JSON.stringify(src));
+  copy.id = newId;
+  copy.name = (src.name || '(無題)') + '（複製）';
+  copy.createdAt = new Date().toISOString();
+  copy.updatedAt = copy.createdAt;
+  copy.createdBy = (_currentUser && _currentUser.name) || '';
+  delete copy._uiExpanded;
+  if(Array.isArray(copy.rows)) copy.rows = copy.rows.map(r => ({ ...r, rid: _newRowId() }));
+  S.meetings.unshift(copy);
+  _meetingsExpandedSession = true;
+  if(!S.ui) S.ui = {};
+  S.ui.selectedMeetingId = newId;
+  save(true, `会議メモ複製：${srcId} → ${newId}`);
+  renderMeetings();
+  toast(`${srcId} を ${newId} として複製しました`);
 }
 // 開いているメンバーチップポップアップを記憶（renderGoals で DOM が壊れても復元）
 let _openMemberChipGoalId = null;
@@ -4892,6 +4930,19 @@ function _agendaPresetToHtml(content){
   if(/<[a-z!/][\s\S]*>/i.test(c)) return c; // 既に HTML を含む
   return escapeHtml(c).replace(/\r\n|\r|\n/g, '<br>');
 }
+// プリセットの行（担当・議題・議事録）。旧形式（content のみ）は1行として扱う
+function _presetRowsOf(p){
+  if(Array.isArray(p.rows) && p.rows.length) return p.rows;
+  const c = String(p.content||'').trim();
+  return c ? [{ who:'', topic:'', minutes:c }] : [];
+}
+// 編集時に旧 content → rows へ実体化
+function _ensurePresetRows(p){
+  if(Array.isArray(p.rows) && p.rows.length) return;
+  const c = String(p.content||'').trim();
+  p.rows = c ? [{ who:'', topic:'', minutes:c }] : [{ who:'', topic:'', minutes:'' }];
+  p.content = '';
+}
 function renderAgendaPresetsList(){
   const host = document.getElementById('lstAgendaPresets');
   if(!host) return;
@@ -4903,30 +4954,70 @@ function renderAgendaPresetsList(){
   }
   S.agendaPresets.forEach(p => {
     if(!p.id) p.id = _genPresetId();
+    const presetId = p.id;
+    const getCur = ()=> S.agendaPresets.find(x=>x.id===presetId) || p;
+    const rows = _presetRowsOf(p);
     const card = document.createElement('div');
     card.className = 'tree-preset-card';
+    const rowHtml = (r, i) => `
+      <input type="text" data-prf="who" data-pri="${i}" value="${escapeHtml(r.who||'')}" placeholder="担当"
+        style="padding:5px 7px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:11.5px;min-width:0">
+      <input type="text" data-prf="topic" data-pri="${i}" value="${escapeHtml(r.topic||'')}" placeholder="議題"
+        style="padding:5px 7px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:11.5px;min-width:0">
+      <textarea data-prf="minutes" data-pri="${i}" rows="2" placeholder="議事録の雛形（空欄可）"
+        style="padding:5px 7px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:11.5px;resize:vertical;min-width:0">${escapeHtml(String(r.minutes||''))}</textarea>
+      <button data-prow-del="${i}" title="行を削除"
+        style="background:none;border:none;color:#C0392B;cursor:pointer;font-size:12px;align-self:start;padding:4px">✕</button>`;
     card.innerHTML = `
       <div class="row1">
         <input type="text" class="preset-name" data-pf="name" value="${escapeHtml(p.name||'')}" placeholder="プリセット名">
       </div>
-      <textarea class="preset-items" data-pf="content" rows="6" placeholder="アジェンダのテンプレート（HTML可。リッチテキスト編集は会議メモ側で）">${escapeHtml(p.content||'')}</textarea>
+      <div style="display:grid;grid-template-columns:100px 140px 1fr 24px;gap:4px;align-items:start;margin:6px 0">
+        <div style="font-size:10.5px;color:var(--muted);font-weight:700">担当</div>
+        <div style="font-size:10.5px;color:var(--muted);font-weight:700">議題</div>
+        <div style="font-size:10.5px;color:var(--muted);font-weight:700">議事録（雛形）</div>
+        <div></div>
+        ${rows.map((r, i) => rowHtml(r, i)).join('')}
+      </div>
       <div class="preset-actions">
+        <button class="btn sm ghost" data-act="addrow">＋ 行を追加</button>
         <button class="btn sm ghost" data-act="dup">📋 複製</button>
         <button class="btn sm ghost" data-act="del" style="color:#c0392b">✕ 削除</button>
       </div>`;
-    const presetId = p.id;
-    const getCur = ()=> S.agendaPresets.find(x=>x.id===presetId) || p;
     card.querySelector('[data-pf="name"]').addEventListener('change', e=>{
       const cur = getCur();
       cur.name = e.target.value.trim();
       save(true, `アジェンダプリセット名を更新：${cur.name}`);
       renderMeetings(); // 会議側のプルダウンも更新
     });
-    card.querySelector('[data-pf="content"]').addEventListener('change', e=>{
-      const cur = getCur();
-      cur.content = e.target.value;
-      save(true, `アジェンダプリセット「${cur.name}」の内容を更新`);
+    // 行フィールドの編集 → rows へ保存（旧 content は実体化時にクリア）
+    card.querySelectorAll('[data-prf]').forEach(inp => {
+      inp.addEventListener('change', ()=>{
+        const cur = getCur();
+        _ensurePresetRows(cur);
+        const i = Number(inp.dataset.pri);
+        if(!cur.rows[i]) return;
+        cur.rows[i][inp.dataset.prf] = inp.value;
+        save(true, `アジェンダプリセット「${cur.name}」を更新`);
+      });
     });
+    card.querySelectorAll('[data-prow-del]').forEach(btn => {
+      btn.addEventListener('click', ()=>{
+        const cur = getCur();
+        _ensurePresetRows(cur);
+        cur.rows.splice(Number(btn.dataset.prowDel), 1);
+        if(cur.rows.length === 0) cur.rows.push({ who:'', topic:'', minutes:'' });
+        save(true, `アジェンダプリセット「${cur.name}」の行を削除`);
+        renderAgendaPresetsList();
+      });
+    });
+    card.querySelector('[data-act="addrow"]').onclick = ()=>{
+      const cur = getCur();
+      _ensurePresetRows(cur);
+      cur.rows.push({ who:'', topic:'', minutes:'' });
+      save(true, `アジェンダプリセット「${cur.name}」に行を追加`);
+      renderAgendaPresetsList();
+    };
     card.querySelector('[data-act="dup"]').onclick = ()=>{
       const cur = getCur();
       const copy = JSON.parse(JSON.stringify(cur));
@@ -4953,7 +5044,7 @@ function addAgendaPreset(){
   const name = (nameEl?.value || '').trim();
   if(!name){ alert('プリセット名を入力してください'); nameEl?.focus(); return; }
   if(!Array.isArray(S.agendaPresets)) S.agendaPresets = [];
-  S.agendaPresets.push({ id:_genPresetId(), name, content: '' });
+  S.agendaPresets.push({ id:_genPresetId(), name, content: '', rows: [{ who:'', topic:'', minutes:'' }] });
   if(nameEl) nameEl.value = '';
   save(true, `アジェンダプリセット追加：${name}`);
   renderAgendaPresetsList();
