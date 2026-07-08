@@ -9602,13 +9602,23 @@ async function renderAdminWsMembers(){
     bumpFbUsage('read', Math.max(1, snap.size));
     const emails = new Set();
     let html = '';
+    const curWs = S.workspaceId || '';
     snap.forEach(doc => {
       const d = doc.data() || {};
       const wsName = d.wsName || (d.profile && d.profile.companyName) || doc.id;
       const members = Array.isArray(d.authMembers) ? d.authMembers : [];
+      const myEmail = (firebase.auth().currentUser||{}).email || '';
+      const iAmMember = Array.isArray(d.memberEmails) && d.memberEmails.includes(myEmail);
       members.forEach(m => { if(m && m.email) emails.add(m.email); });
-      html += `<div style="border:1px solid var(--border);border-radius:7px;padding:10px;margin-bottom:8px">
-        <div style="font-weight:700;font-size:13px;margin-bottom:6px">${escapeHtml(wsName)} <span style="color:var(--muted);font-weight:400;font-size:11px">[${escapeHtml(doc.id)}]・${members.length}名</span></div>
+      const isCur = doc.id === curWs;
+      html += `<div style="border:1px solid var(--border);border-radius:7px;padding:10px;margin-bottom:8px${isCur?';background:var(--primary-soft)':''}">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+          <span style="font-weight:700;font-size:13px">${escapeHtml(wsName)}</span>
+          <span style="color:var(--muted);font-weight:400;font-size:11px">[${escapeHtml(doc.id)}]・${members.length}名${iAmMember?'':'・<span style="color:#A04000">未所属</span>'}${isCur?'・<span style="color:var(--primary)">表示中</span>':''}</span>
+          <span style="flex:1"></span>
+          ${isCur ? '' : `<button class="btn sm ghost" data-admin-ws-open="${escapeHtml(doc.id)}" title="このワークスペースを開く（所属していなくても閲覧できます）">▶ 開く</button>`}
+          <button class="btn sm ghost" data-admin-ws-del="${escapeHtml(doc.id)}" data-ws-name="${escapeHtml(wsName)}" style="color:#C0392B;border-color:#e6b0aa" title="このワークスペースを完全に削除">🗑 削除</button>
+        </div>
         ${members.length === 0 ? '<div style="color:var(--muted);font-size:12px">ログインメンバーなし</div>'
           : members.map(m => `<div style="font-size:12px;padding:2px 0;display:flex;gap:8px">
               <span style="min-width:120px">${escapeHtml(m.name||'(名前未設定)')}</span>
@@ -9620,9 +9630,77 @@ async function renderAdminWsMembers(){
     });
     _adminAllEmails = [...emails].sort();
     host.innerHTML = html || '<div style="color:var(--muted);font-size:12px">ワークスペースがありません</div>';
+    // 開く（所属していなくても admin は切替可）
+    host.querySelectorAll('[data-admin-ws-open]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const wsId = btn.dataset.adminWsOpen;
+        if(confirm(`ワークスペース「${wsId}」を開きますか？（所属していない場合も管理者として閲覧できます）`)){
+          closeSettingsModal();
+          switchWorkspace(wsId);
+        }
+      });
+    });
+    // 削除（本体＋サブコレクションを完全削除）
+    host.querySelectorAll('[data-admin-ws-del]').forEach(btn => {
+      btn.addEventListener('click', () => adminDeleteWorkspace(btn.dataset.adminWsDel, btn.dataset.wsName));
+    });
     renderAdminRoleList(); // メール一覧が揃ったのでロール一覧を更新
   }catch(e){
     host.innerHTML = `<div style="color:#C0392B;font-size:12px">読込に失敗しました：${escapeHtml(e.message||String(e))}</div>`;
+  }
+}
+// admin：ワークスペースを完全削除（本体＋サブコレクション）
+async function adminDeleteWorkspace(wsId, wsName){
+  if(!wsId) return;
+  if(!isAppAdmin((firebase.auth().currentUser||{}).email)){ alert('管理者のみ実行できます'); return; }
+  const label = wsName ? `${wsName}（${wsId}）` : wsId;
+  if(!confirm(`ワークスペース「${label}」を完全に削除します。\nタスク・目標・会議メモ・週報・履歴・予算など、このWSの全データが消え、元に戻せません。\n\n本当に削除しますか？`)) return;
+  // 二段階確認：WS-ID を入力させる（誤削除防止）
+  const typed = prompt(`確認のため、削除するワークスペースID「${wsId}」を入力してください。`);
+  if(typed == null) return;
+  if(String(typed).trim() !== wsId){ alert('ワークスペースIDが一致しません。削除を中止しました。'); return; }
+  const host = document.getElementById('adminWsMembers');
+  if(host) host.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px">削除中...（データ量により時間がかかります）</div>';
+  try{
+    const db = firebase.firestore();
+    const subcols = ['tasks','goals','meetings','weeklyReports','history','shared','pushTokens','budget'];
+    let delCount = 0;
+    for(const col of subcols){
+      // サブコレクションはクライアントから再帰削除できないため、取得→バッチ削除
+      let snap;
+      try{ snap = await db.collection('workspaces').doc(wsId).collection(col).get(); }
+      catch(e){ console.warn('adminDeleteWorkspace: read fail', col, e); continue; }
+      bumpFbUsage('read', Math.max(1, snap.size));
+      const docs = snap.docs;
+      for(let i=0;i<docs.length;i+=400){
+        const batch = db.batch();
+        docs.slice(i, i+400).forEach(d => batch.delete(d.ref));
+        await batch.commit();
+        bumpFbUsage('write', Math.min(400, docs.length - i));
+        delCount += Math.min(400, docs.length - i);
+      }
+    }
+    // 本体ドキュメントを削除
+    await db.collection('workspaces').doc(wsId).delete();
+    bumpFbUsage('write', 1);
+    // 現在開いているWSを消した場合は、自分の所属WSへ退避
+    if(S.workspaceId === wsId){
+      let fallback = '';
+      try{
+        const mine = await fetchMyWorkspaces();
+        fallback = (mine && mine.length) ? mine[0].id : '';
+      }catch(e){}
+      alert(`ワークスペース「${label}」を削除しました（${delCount}件のドキュメントを削除）。`);
+      if(fallback){ switchWorkspace(fallback); }
+      else { location.reload(); }
+      return;
+    }
+    alert(`ワークスペース「${label}」を削除しました（${delCount}件のドキュメントを削除）。`);
+    renderAdminWsMembers();
+  }catch(e){
+    if(host) host.innerHTML = `<div style="color:#C0392B;font-size:12px">削除に失敗しました：${escapeHtml(e.message||String(e))}</div>`;
+    alert('削除に失敗しました：' + (e.message||String(e)));
+    setTimeout(renderAdminWsMembers, 1500);
   }
 }
 function renderAdminRoleList(){
