@@ -11921,6 +11921,8 @@ setInterval(()=>{ if(document.getElementById('view-calendar').classList.contains
       };
     }
   }
+  // 選択中ワークスペースを共有キーへ反映(商談管理のWS分離に使用)
+  setInterval(function(){ try{ if(window.S && S.workspaceId) localStorage.setItem('hittatsu_current_ws', S.workspaceId); }catch(e){} }, 3000);
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
 </script>
