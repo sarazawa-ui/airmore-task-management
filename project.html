@@ -340,16 +340,22 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .meeting-editor .rt-toolbar{position:sticky;top:calc(var(--hdrH, 58px) + 2px);z-index:5;box-shadow:0 2px 4px rgba(44,62,80,.08);border-radius:5px;border-bottom:1px solid var(--border)}
 /* 会議メモ 表形式（担当・議題・議事録） */
 .meeting-rows-wrap{overflow-x:auto;margin-top:6px}
-.meeting-rows{display:grid;grid-template-columns:130px 190px 1fr 34px;min-width:640px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#fff}
+.meeting-rows{display:grid;grid-template-columns:120px 260px 1fr 40px;min-width:700px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#fff}
 .meeting-rows .mr-head{background:var(--primary-light);color:var(--primary-dark);font-size:11px;font-weight:700;padding:7px 9px;border-bottom:1px solid var(--border)}
 .meeting-rows .mr-cell{border-bottom:1px solid var(--border-soft);border-right:1px solid var(--border-soft);min-width:0}
 .meeting-rows .mr-cell:nth-child(4n){border-right:none}
 .meeting-rows input.mr-inp{width:100%;border:none;padding:8px;font:inherit;font-size:12.5px;box-sizing:border-box;background:transparent}
 .meeting-rows input.mr-inp:focus{outline:2px solid var(--primary-light);outline-offset:-2px}
+/* 議題：複数行入力（自動リサイズ・折り返し可） */
+.meeting-rows textarea.mr-topic{width:100%;border:none;padding:8px;font:inherit;font-size:12.5px;box-sizing:border-box;background:transparent;resize:none;min-height:38px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;font-family:inherit;overflow:hidden}
+.meeting-rows textarea.mr-topic:focus{outline:2px solid var(--primary-light);outline-offset:-2px}
 .meeting-rows .rt-editor{border:none;border-radius:0;min-height:60px;padding:8px 10px}
-.meeting-rows .mr-del-cell{display:flex;align-items:flex-start;justify-content:center;padding-top:6px}
-.meeting-rows .mr-del{background:none;border:none;color:#C0392B;cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px}
+.meeting-rows .mr-del-cell{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:6px;gap:4px}
+.meeting-rows .mr-del,.meeting-rows .mr-ins{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px;line-height:1}
+.meeting-rows .mr-del{color:#C0392B}
 .meeting-rows .mr-del:hover{background:#FADBD8}
+.meeting-rows .mr-ins{color:#1B7F5C;font-weight:700}
+.meeting-rows .mr-ins:hover{background:#D5F5E3}
 .rt-editor img{max-width:100%;height:auto;border-radius:4px}
 .rt-editor a{color:#1976D2;text-decoration:underline;cursor:pointer}
 .rt-editor:empty:before{content:attr(data-placeholder);color:var(--muted);font-style:italic}
@@ -2929,9 +2935,9 @@ function renderMeetings(){
               <div class="mr-head">担当</div><div class="mr-head">議題</div><div class="mr-head">議事録</div><div class="mr-head"></div>
               ${_meetingDisplayRows(selected).map(r => `
                 <div class="mr-cell"><input class="mr-inp" data-rowf="who" data-rid="${escapeHtml(r.rid)}" value="${escapeHtml(r.who||'')}" placeholder="担当"></div>
-                <div class="mr-cell"><input class="mr-inp" data-rowf="topic" data-rid="${escapeHtml(r.rid)}" value="${escapeHtml(r.topic||'')}" placeholder="議題"></div>
+                <div class="mr-cell"><textarea class="mr-topic" data-rowf="topic" data-rid="${escapeHtml(r.rid)}" rows="1" placeholder="議題">${escapeHtml(r.topic||'')}</textarea></div>
                 <div class="mr-cell mr-minutes-cell"><div class="rt-editor mr-minutes" contenteditable="true" data-rowf="minutes" data-rid="${escapeHtml(r.rid)}" data-placeholder="議事録・決定事項・メモ">${r.minutes||''}</div></div>
-                <div class="mr-cell mr-del-cell"><button class="mr-del" data-row-del="${escapeHtml(r.rid)}" title="この行を削除">✕</button></div>
+                <div class="mr-cell mr-del-cell"><button class="mr-ins" data-row-insert="${escapeHtml(r.rid)}" title="この行の下に行を挿入">＋</button><button class="mr-del" data-row-del="${escapeHtml(r.rid)}" title="この行を削除">✕</button></div>
               `).join('')}
             </div>
           </div>
@@ -3008,7 +3014,7 @@ function renderMeetings(){
     if(_meetingSearch) applySearch(); // セッションの検索語を復元時に再適用
   }
   // 通常 input/select 変更 → 自動保存（会議名・日付＝data-mf ／ 行の担当・議題＝data-rowf）
-  list.querySelectorAll('input[data-mf], select[data-mf], input[data-rowf]').forEach(inp => {
+  list.querySelectorAll('input[data-mf], select[data-mf], input[data-rowf], textarea[data-rowf]').forEach(inp => {
     inp.addEventListener('change', () => {
       const editor = inp.closest('.meeting-editor'); if(!editor) return;
       const mid = editor.dataset.mid;
@@ -3101,6 +3107,26 @@ function renderMeetings(){
     m.updatedAt = new Date().toISOString();
     save(true, `会議メモ：行追加（${m.name||m.id}）`);
     renderMeetings();
+  });
+  // 行と行の間に挿入（この行の下に空行を追加）
+  list.querySelectorAll('[data-row-insert]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const editor = btn.closest('.meeting-editor'); if(!editor) return;
+      const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m) return;
+      _ensureMeetingRows(m);
+      const idx = m.rows.findIndex(r => r.rid === btn.dataset.rowInsert);
+      const at = idx < 0 ? m.rows.length : idx + 1;
+      m.rows.splice(at, 0, { rid:_newRowId(), who:'', topic:'', minutes:'' });
+      m.updatedAt = new Date().toISOString();
+      save(true, `会議メモ：行挿入（${m.name||m.id}）`);
+      renderMeetings();
+    });
+  });
+  // 議題テキストエリアの高さを内容に合わせて自動調整
+  list.querySelectorAll('textarea.mr-topic').forEach(ta => {
+    const fit = () => { ta.style.height='auto'; ta.style.height = Math.max(38, ta.scrollHeight) + 'px'; };
+    fit();
+    ta.addEventListener('input', fit);
   });
   list.querySelectorAll('[data-row-del]').forEach(btn => {
     btn.addEventListener('click', () => {
