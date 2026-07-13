@@ -1771,7 +1771,13 @@ document.querySelectorAll('nav button').forEach(b=>{
 // authMembers が空（初期化前など）の場合はフォールバックで S.members 全部返す。
 function activeMembers(){
   const auth = new Set((S.authMembers||[]).map(am => am && am.name).filter(Boolean));
-  if(auth.size === 0) return (S.members||[]).filter(m => m && m.name);
+  if(auth.size === 0){
+    // クラウド接続中の実ワークスペースでは、authMembers 取得前に
+    // DEFAULT_STATE のサンプルメンバー（メンバーA 等）へフォールバックしない
+    // （ワークスペース切替直後の一瞬サンプルが表示されるのを防ぐ）
+    if(_firebaseReady && S.workspaceId) return [];
+    return (S.members||[]).filter(m => m && m.name);
+  }
   return (S.members||[]).filter(m => m && m.name && auth.has(m.name));
 }
 
