@@ -11838,8 +11838,11 @@ setInterval(()=>{ if(document.getElementById('view-calendar').classList.contains
   html.hitt-standalone .hitt-dock{position:fixed;left:0;bottom:0;width:176px;padding:10px 8px;background:#fff;border-top:1px solid #e3e9f0;border-right:1px solid #e3e9f0;z-index:81}
   .hitt-dock button{width:100%;text-align:left;border:none;background:transparent;border-radius:9px;padding:10px 12px;font-size:13px;cursor:pointer;color:#1c2733}
   .hitt-dock button:hover{background:#eef3fa}
+  html.hitt-swapping main#appMain{visibility:hidden}
   html:not(.hitt-standalone) nav#appNav{display:none !important}
-  html:not(.hitt-standalone) main#appMain{margin-left:0}
+  html:not(.hitt-standalone) main#appMain{margin-left:auto;margin-right:auto}
+  /* ワークスペース情報: ID・招待URL欄は非表示(招待はプロジェクト管理の運用で不要) */
+  #pane-workspace .field:has(#cfgWorkspaceId), #pane-workspace .field:has(#cfgInviteUrl){display:none !important}
   /* ヘッダー刷新: ワークスペース選択のみ左上に表示 */
   .app-header .logo-area, .app-header .hdr-right > *:not(#wsSwitcher){display:none !important}
   .app-header{justify-content:flex-start !important}
@@ -11868,6 +11871,17 @@ setInterval(()=>{ if(document.getElementById('view-calendar').classList.contains
     var nav = document.getElementById('appNav');
     nav && nav.querySelectorAll('button[data-view]').forEach(function(b){ b.classList.remove('active'); });
   }
+  // WS切替直後にデフォルト(サンプル)状態が一瞬描画されるのを防ぐ: 購読開始から短時間メインを隠す
+  (function(){
+    var orig = window.subscribeWorkspace;
+    if (typeof orig === 'function') {
+      window.subscribeWorkspace = function(){
+        try { document.documentElement.classList.add('hitt-swapping'); } catch(e){}
+        setTimeout(function(){ try { document.documentElement.classList.remove('hitt-swapping'); } catch(e){} }, 900);
+        return orig.apply(this, arguments);
+      };
+    }
+  })();
   window.hittShowPaneView = showPaneView;
   function init(){
     var nav = document.getElementById('appNav');
