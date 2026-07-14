@@ -1,15 +1,15 @@
 {
-  "name": "Hittatsu - エアモア タスク管理",
+  "name": "Hittatsu ─ 予算・商談・プロジェクト管理",
   "short_name": "Hittatsu",
-  "description": "株式会社エアモアのチーム向けタスク管理アプリ",
+  "description": "株式会社エアモアの予算・商談・プロジェクト管理アプリ",
   "id": "/airmore-task-management/",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
   "lang": "ja",
-  "background_color": "#ffffff",
-  "theme_color": "#1F4E78",
+  "background_color": "#0c2340",
+  "theme_color": "#0c2340",
   "icons": [
     {
       "src": "icons/icon-192.png",
