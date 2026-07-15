@@ -77,6 +77,14 @@ service cloud.firestore {
       allow write: if _domainOk();
     }
 
+    // === 商談管理：会社（ワークスペース）単位の共有データ ===
+    //   案件・商談記録・見積・出張・展示会リード・メンバーを全員で共有する。
+    //   プロジェクト管理（workspaces/*）と同じく、許可ドメインのユーザーのみ読み書き可。
+    match /salesWs/{wsId} {
+      allow read, write: if _domainOk();
+      match /{sub=**} { allow read, write: if _domainOk(); }
+    }
+
     // === 商談管理：会社共有マスタ（得意先・商品） ===
     //   読み取り：許可ドメインのユーザー（所属会社ごとにドキュメントが分かれる）
     //   書き込み：admin のみ
