@@ -77,6 +77,14 @@ service cloud.firestore {
       allow write: if _domainOk();
     }
 
+    // === 商談管理：会社共有マスタ（得意先・商品） ===
+    //   読み取り：許可ドメインのユーザー（所属会社ごとにドキュメントが分かれる）
+    //   書き込み：admin のみ
+    match /salesMasters/{cid} {
+      allow read: if _domainOk();
+      allow write: if _domainOk() && _isAppAdmin(request.auth.token.email);
+    }
+
     // === Budget Access Requests ===
     match /budgetAccessRequests/{email} {
       allow read, write: if _domainOk()
