@@ -1,0 +1,53 @@
+name: Hittatsu 復元
+
+# バックアップから復元する。運用中のデータを書き換えるため手動実行のみ。
+# 既定は「確認のみ（書き込まない）」。実際に復元するには confirm に「復元する」と入力する。
+on:
+  workflow_dispatch:
+    inputs:
+      file:
+        description: "復元するバックアップ（例: hittatsu-backup-20260715-2359.json。空ならバックアップ一覧を表示するだけ）"
+        required: false
+        default: ""
+      confirm:
+        description: "実際に復元する場合のみ「復元する」と入力（空欄なら変更内容の確認だけ）"
+        required: false
+        default: ""
+      wipe:
+        description: "バックアップ取得後に追加されたデータも削除して、取得時点に完全に戻す"
+        type: boolean
+        default: false
+
+concurrency:
+  group: hittatsu-restore
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 依存パッケージをインストール
+        working-directory: backup
+        run: npm install --no-audit --no-fund
+
+      - name: 復元（または確認）
+        working-directory: backup
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          IN_FILE: ${{ inputs.file }}
+          IN_CONFIRM: ${{ inputs.confirm }}
+          IN_WIPE: ${{ inputs.wipe }}
+        run: |
+          ARGS=""
+          if [ -n "$IN_FILE" ]; then ARGS="--file $IN_FILE"; fi
+          if [ -n "$IN_CONFIRM" ]; then ARGS="$ARGS --confirm $IN_CONFIRM"; fi
+          if [ "$IN_WIPE" = "true" ]; then ARGS="$ARGS --wipe"; fi
+          node restore.js $ARGS

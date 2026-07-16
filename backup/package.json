@@ -1,0 +1,15 @@
+{
+  "name": "hittatsu-backup",
+  "description": "Hittatsu の全 Firestore データを Google ドライブへバックアップ／復元する",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "20" },
+  "scripts": {
+    "backup": "node backup.js",
+    "restore": "node restore.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "googleapis": "^144.0.0"
+  }
+}

@@ -1,0 +1,36 @@
+name: Hittatsu バックアップ
+
+# 平日 23:59（日本時間）に全データを Google ドライブへバックアップする。
+# cron は UTC のため 14:59 UTC = 23:59 JST。曜日 1-5 は月〜金。
+on:
+  schedule:
+    - cron: "59 14 * * 1-5"
+  workflow_dispatch: # 手動でも実行できる
+
+# 同時に走って二重に保存されないようにする
+concurrency:
+  group: hittatsu-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 依存パッケージをインストール
+        working-directory: backup
+        run: npm install --no-audit --no-fund
+
+      - name: バックアップを実行
+        working-directory: backup
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          KEEP_DAYS: "90"
+        run: node backup.js

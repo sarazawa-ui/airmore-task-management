@@ -23,3 +23,7 @@ start-server.ps1
 airmore-task-management-app-*.json
 *serviceaccount*.json
 *-key.json
+
+# バックアップ処理の依存パッケージ（GitHub Actions 側で install する）
+backup/node_modules/
+backup/package-lock.json
