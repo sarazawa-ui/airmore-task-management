@@ -7,8 +7,23 @@
 //   GDRIVE_FOLDER_ID  … 保存先の Google ドライブ フォルダ ID
 import admin from "firebase-admin";
 import { google } from "googleapis";
+import { Readable } from "node:stream";
 
 export const BACKUP_PREFIX = "hittatsu-backup-";
+
+// 複数の非同期処理を、同時実行数を制限しつつ全部走らせる（読み出しの高速化用）
+async function pool(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      out[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
 
 function serviceAccount() {
   const raw = process.env.GCP_SA_KEY;
@@ -75,19 +90,25 @@ function decode(v, db) {
 // ===== 書き出し =====
 // ルートから全コレクションをたどる。サブコレクションも再帰的に含めるため、
 // 新しいコレクションを追加してもこのコードを直す必要はない。
+// 文書ごとに listCollections() を呼ぶ必要があり件数分の通信になるため、
+// 同時実行数を制限しつつ並列化して時間を短縮する（逐次だと数千件で20分規模になる）。
 async function dumpCollection(col, out) {
   const snap = await col.get();
-  for (const doc of snap.docs) {
+  await pool(snap.docs, 12, async (doc) => {
     out[doc.ref.path] = encode(doc.data());
     const subs = await doc.ref.listCollections();
     for (const sub of subs) await dumpCollection(sub, out);
-  }
+  });
 }
 
-export async function exportAll(db) {
+export async function exportAll(db, log = () => {}) {
   const docs = {};
   const cols = await db.listCollections();
-  for (const col of cols) await dumpCollection(col, docs);
+  for (const col of cols) {
+    const before = Object.keys(docs).length;
+    await dumpCollection(col, docs);
+    log(`  ${col.id}: ${Object.keys(docs).length - before} 件`);
+  }
   return {
     version: 1,
     project: serviceAccount().project_id,
@@ -132,14 +153,46 @@ export async function importAll(db, backup, { wipe = false } = {}) {
 }
 
 // ===== Google ドライブ =====
+// よくある失敗を、原因と対処が分かる日本語メッセージに翻訳する
+function driveError(e, name) {
+  const reason = e?.errors?.[0]?.reason || e?.response?.data?.error?.errors?.[0]?.reason || "";
+  const msg = e?.response?.data?.error?.message || e?.message || String(e);
+  if (reason === "storageQuotaExceeded" || /storage quota/i.test(msg)) {
+    return new Error(
+      "保存先フォルダが個人のマイドライブにあるため、サービスアカウントの容量制限（0バイト）で保存できません。" +
+        "保存先を「共有ドライブ（Shared drive）」内のフォルダに変更し、そのフォルダをサービスアカウントに共有してください。" +
+        `（元エラー: ${msg}）`
+    );
+  }
+  if (reason === "notFound" || /not found|File not found/i.test(msg)) {
+    return new Error(
+      "保存先フォルダが見つからないか、サービスアカウントに共有されていません。" +
+        "GDRIVE_FOLDER_ID が正しいか、そのフォルダをサービスアカウントのメールアドレスに「編集者」で共有しているか確認してください。" +
+        `（元エラー: ${msg}）`
+    );
+  }
+  if (reason === "insufficientPermissions" || /insufficient|forbidden/i.test(msg)) {
+    return new Error(
+      "ドライブへの書き込み権限がありません。フォルダの共有権限が「閲覧者」になっていないか（「編集者」が必要）確認してください。" +
+        `（元エラー: ${msg}）`
+    );
+  }
+  return new Error(`ドライブへの保存に失敗しました（${name}）: ${msg}`);
+}
+
 export async function uploadJson(drive, name, text) {
-  const res = await drive.files.create({
-    requestBody: { name, parents: [folderId()], mimeType: "application/json" },
-    media: { mimeType: "application/json", body: text },
-    fields: "id, name, size",
-    supportsAllDrives: true,
-  });
-  return res.data;
+  try {
+    const res = await drive.files.create({
+      requestBody: { name, parents: [folderId()], mimeType: "application/json" },
+      // 大容量でも安定するようストリームで渡す（数MB規模のJSONを文字列で渡すと不安定なことがある）
+      media: { mimeType: "application/json", body: Readable.from(text) },
+      fields: "id, name, size",
+      supportsAllDrives: true,
+    });
+    return res.data;
+  } catch (e) {
+    throw driveError(e, name);
+  }
 }
 
 export async function listBackups(drive) {
