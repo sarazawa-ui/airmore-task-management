@@ -370,3 +370,175 @@ exports.cleanupSentReminders = onSchedule(
   }
 );
 
+// ============================================================
+// 展示会リード：返信の自動検知 → 案件を自動生成
+//   各会社の「検知用メールボックス（自社情報マスタ → リード返信検知用Cc）」を
+//   定期的に読み、リードのメールアドレスからの返信があれば案件化する。
+//
+//   ※ 事前設定（Google Workspace 管理コンソール → ドメイン全体の委任）:
+//      送信用サービスアカウントの クライアントID に、送信スコープに加えて
+//      https://www.googleapis.com/auth/gmail.readonly を追加すること。
+//   ※ 検知用Cc は「実在する Workspace ユーザーのメールボックス」である必要がある
+//      （グループ／エイリアス宛は Gmail を読めないため不可）。
+// ============================================================
+const _gmailReaders = {};
+async function getGmailReader(mailbox) {
+  if (_gmailReaders[mailbox]) return _gmailReaders[mailbox];
+  const key = JSON.parse(GMAIL_SA_KEY.value());
+  const jwt = new google.auth.JWT({
+    email: key.client_email,
+    key: key.private_key,
+    scopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+    subject: mailbox, // このメールボックスを読む
+  });
+  await jwt.authorize();
+  _gmailReaders[mailbox] = google.gmail({ version: "v1", auth: jwt });
+  return _gmailReaders[mailbox];
+}
+
+// "山田 太郎 <taro@example.com>" → "taro@example.com"（小文字）
+function parseEmail(headerValue) {
+  const s = String(headerValue || "");
+  const m = s.match(/<([^>]+)>/);
+  return (m ? m[1] : s).trim().toLowerCase();
+}
+
+function jstYm(monthsAhead) {
+  const j = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  let y = j.getUTCFullYear();
+  let mo = j.getUTCMonth() + 1 + (monthsAhead || 0);
+  while (mo > 12) { mo -= 12; y += 1; }
+  return `${y}-${String(mo).padStart(2, "0")}`;
+}
+function jstToday() {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+function newId(prefix) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+// リードの担当名（フロントの leadRep と同じ優先順: rep → bookName）
+function leadRepName(lead) {
+  return String(lead.rep || lead.bookName || "").trim();
+}
+
+exports.watchLeadReplies = onSchedule(
+  {
+    schedule: "every 15 minutes",
+    timeZone: "Asia/Tokyo",
+    secrets: [GMAIL_SA_KEY],
+  },
+  async () => {
+    const db = admin.firestore();
+    // 会社（ワークスペース）ごとに検知用メールボックスを読む
+    const wsSnap = await db.collection("salesWs").get();
+    let totalConverted = 0;
+
+    for (const wsDoc of wsSnap.docs) {
+      const wsId = wsDoc.id;
+      const company = (wsDoc.data() || {}).company || {};
+      const leadCc = String(company.leadCc || "").trim();
+      if (!leadCc) continue; // 検知用Cc 未設定の会社はスキップ
+
+      // 1) 検知用メールボックスの最近の受信からリードの返信を集める
+      let senders = new Set();
+      let processedMsgIds = [];
+      try {
+        const gmail = await getGmailReader(leadCc);
+        // 直近2日・チャット除外。重複処理は「処理済みメールID」と「リードのdealt」で防ぐ
+        const list = await gmail.users.messages.list({
+          userId: "me",
+          q: "newer_than:2d -in:chats",
+          maxResults: 100,
+        });
+        const msgs = list.data.messages || [];
+        for (const ref of msgs) {
+          const seenRef = db.doc(`salesWs/${wsId}/leadReplyProcessed/${ref.id}`);
+          // 既に処理済みならスキップ（create の失敗で判定）
+          try {
+            await seenRef.create({ at: admin.firestore.FieldValue.serverTimestamp() });
+          } catch (e) {
+            continue;
+          }
+          processedMsgIds.push(ref.id);
+          const meta = await gmail.users.messages.get({
+            userId: "me", id: ref.id, format: "metadata", metadataHeaders: ["From"],
+          });
+          const from = (meta.data.payload?.headers || []).find(h => h.name === "From");
+          if (from) senders.add(parseEmail(from.value));
+        }
+      } catch (err) {
+        console.error(`[leadReply] gmail read failed for ${leadCc} (ws=${wsId}):`, err.message);
+        continue; // このメールボックスは読めない（委任スコープ/実在確認）→ 次の会社へ
+      }
+      if (!senders.size) continue;
+
+      // 2) 返信元アドレスに一致する未案件化リードを案件化する
+      const leadsSnap = await db.collection(`salesWs/${wsId}/leads`).get();
+      const targets = leadsSnap.docs
+        .map(d => d.data())
+        .filter(l => l && l.status !== "dealt" && l.email && senders.has(String(l.email).trim().toLowerCase()));
+      if (!targets.length) continue;
+
+      // 得意先マスタ（会社共有の単一ドキュメント。wsId と同じキー）
+      const mastersRef = db.doc(`salesMasters/${wsId}`);
+      const mastersSnap = await mastersRef.get();
+      const masters = mastersSnap.exists ? (mastersSnap.data() || {}) : {};
+      const customers = Array.isArray(masters.customers) ? masters.customers : [];
+      // メンバー（担当の突き合わせ用）
+      const membersSnap = await db.collection(`salesWs/${wsId}/members`).get();
+      const members = membersSnap.docs.map(d => d.data());
+
+      const batch = db.batch();
+      let customersChanged = false;
+      const today = jstToday();
+
+      for (const lead of targets) {
+        // 得意先：会社名で照合、なければ新規作成（マスタへ追記）
+        let customer = customers.find(c => c && c.name === lead.company);
+        const repId = (members.find(m => m && leadRepName(lead) && m.name && leadRepName(lead).includes(m.name)) || {}).id;
+        if (!customer) {
+          customer = {
+            id: newId("cus"), name: lead.company || "(不明)", contact: lead.name || "",
+            address: lead.address || "", tel: lead.tel || "", memberId: repId || null,
+          };
+          customers.push(customer);
+          customersChanged = true;
+        }
+        const memberId = repId || (members[0] && members[0].id) || "";
+        const dealId = newId("deal");
+        // 案件を作成
+        batch.set(db.doc(`salesWs/${wsId}/deals/${dealId}`), {
+          id: dealId,
+          title: [lead.group, lead.company].filter(Boolean).join("・") || (lead.company || "展示会リード"),
+          customerId: customer.id,
+          endUser: [lead.company, lead.dept, lead.title, lead.name].filter(Boolean).join(" "),
+          memberId,
+          stage: "ATK",
+          expectedMonth: jstYm(2),
+          items: [], amount: 0, nas: [], attachments: [],
+          createdAt: today,
+        });
+        // 商談記録（展示会）
+        const actId = newId("act");
+        batch.set(db.doc(`salesWs/${wsId}/activities/${actId}`), {
+          id: actId, dealId, memberId,
+          date: lead.exchangeDate || today,
+          type: "expo",
+          summary: lead.memo || "展示会リードの返信を受信（自動案件化）",
+        });
+        // リードを案件化済みに
+        batch.set(db.doc(`salesWs/${wsId}/leads/${lead.id}`), { ...lead, status: "dealt", dealId }, { merge: true });
+        totalConverted++;
+      }
+
+      if (customersChanged) {
+        batch.set(mastersRef, { ...masters, customers, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      }
+      await batch.commit();
+      console.log(`[leadReply] ws=${wsId} converted ${targets.length} lead(s), scanned ${processedMsgIds.length} new mail(s)`);
+    }
+
+    console.log(`[leadReply] done. converted=${totalConverted}`);
+  }
+);
+
