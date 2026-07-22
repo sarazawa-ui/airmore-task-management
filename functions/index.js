@@ -372,14 +372,16 @@ exports.cleanupSentReminders = onSchedule(
 
 // ============================================================
 // 展示会リード：返信の自動検知 → 案件を自動生成
-//   各会社の「検知用メールボックス（自社情報マスタ → リード返信検知用Cc）」を
-//   定期的に読み、リードのメールアドレスからの返信があれば案件化する。
+//   各会社の「担当メンバー各自のメールボックス」を定期的に読み、リードの
+//   メールアドレスからの返信があれば案件化する（専用の検知用アドレスは不要）。
+//   自社情報マスタの「検知用Cc」を設定していれば、そのボックスも追加で確認する。
 //
 //   ※ 事前設定（Google Workspace 管理コンソール → ドメイン全体の委任）:
 //      送信用サービスアカウントの クライアントID に、送信スコープに加えて
 //      https://www.googleapis.com/auth/gmail.readonly を追加すること。
-//   ※ 検知用Cc は「実在する Workspace ユーザーのメールボックス」である必要がある
-//      （グループ／エイリアス宛は Gmail を読めないため不可）。
+//      これで各メンバー（＝そのドメインのユーザー）のメールボックスを読める。
+//   ※ メンバーが複数の Workspace ドメインにまたがる場合は、各ドメインの管理
+//      コンソールで同じ委任を登録すること（未登録ドメインのユーザーは読めない）。
 // ============================================================
 const _gmailReaders = {};
 async function getGmailReader(mailbox) {
@@ -436,47 +438,55 @@ exports.watchLeadReplies = onSchedule(
     for (const wsDoc of wsSnap.docs) {
       const wsId = wsDoc.id;
       const company = (wsDoc.data() || {}).company || {};
-      const leadCc = String(company.leadCc || "").trim();
-      if (!leadCc) continue; // 検知用Cc 未設定の会社はスキップ
+      const leadCc = String(company.leadCc || "").trim().toLowerCase();
 
-      // 1) 検知用メールボックスの最近の受信からリードの返信を集める
-      let senders = new Set();
-      let processedMsgIds = [];
-      try {
-        const gmail = await getGmailReader(leadCc);
-        // 直近2日・チャット除外。重複処理は「処理済みメールID」と「リードのdealt」で防ぐ
-        const list = await gmail.users.messages.list({
-          userId: "me",
-          q: "newer_than:2d -in:chats",
-          maxResults: 100,
-        });
-        const msgs = list.data.messages || [];
-        for (const ref of msgs) {
-          const seenRef = db.doc(`salesWs/${wsId}/leadReplyProcessed/${ref.id}`);
-          // 既に処理済みならスキップ（create の失敗で判定）
-          try {
-            await seenRef.create({ at: admin.firestore.FieldValue.serverTimestamp() });
-          } catch (e) {
-            continue;
+      // 1) 未案件化のリード（メールあり）を集める。0件ならこの会社はスキップ
+      const leadsSnap = await db.collection(`salesWs/${wsId}/leads`).get();
+      const openLeads = leadsSnap.docs
+        .map(d => d.data())
+        .filter(l => l && l.status !== "dealt" && l.email);
+      if (!openLeads.length) continue;
+      const leadEmails = [...new Set(openLeads.map(l => String(l.email).trim().toLowerCase()))];
+
+      // メンバー（担当の突き合わせ＋各自のメールボックスを確認するため）
+      const membersSnap = await db.collection(`salesWs/${wsId}/members`).get();
+      const members = membersSnap.docs.map(d => d.data());
+
+      // 確認するメールボックス = 各メンバーのGoogleアカウント（＋任意で検知用Cc）
+      const mailboxes = [...new Set([
+        ...members.map(m => String((m && m.email) || "").trim().toLowerCase()).filter(Boolean),
+        ...(leadCc ? [leadCc] : []),
+      ])];
+      if (!mailboxes.length) continue;
+
+      // 2) 各メールボックスを、リードのメールアドレスからの受信に絞って検索する
+      //    from:(...) で絞るので、返ってくるのは実際のリード返信だけ（読み取り最小）。
+      //    二重案件化はリードの「案件化済」で防ぐ（同じ返信を再取得しても対象外になる）。
+      const senders = new Set();
+      for (const mb of mailboxes) {
+        try {
+          const gmail = await getGmailReader(mb);
+          for (let i = 0; i < leadEmails.length; i += 25) {
+            const chunk = leadEmails.slice(i, i + 25);
+            const q = `newer_than:3d -in:chats from:(${chunk.join(" OR ")})`;
+            const list = await gmail.users.messages.list({ userId: "me", q, maxResults: 50 });
+            for (const ref of (list.data.messages || [])) {
+              const meta = await gmail.users.messages.get({
+                userId: "me", id: ref.id, format: "metadata", metadataHeaders: ["From"],
+              });
+              const from = (meta.data.payload?.headers || []).find(h => h.name === "From");
+              if (from) senders.add(parseEmail(from.value));
+            }
           }
-          processedMsgIds.push(ref.id);
-          const meta = await gmail.users.messages.get({
-            userId: "me", id: ref.id, format: "metadata", metadataHeaders: ["From"],
-          });
-          const from = (meta.data.payload?.headers || []).find(h => h.name === "From");
-          if (from) senders.add(parseEmail(from.value));
+        } catch (err) {
+          // そのメールボックスを読めない（委任未設定のドメイン等）→ 記録して次へ
+          console.error(`[leadReply] read failed for mailbox ${mb} (ws=${wsId}):`, err.message);
         }
-      } catch (err) {
-        console.error(`[leadReply] gmail read failed for ${leadCc} (ws=${wsId}):`, err.message);
-        continue; // このメールボックスは読めない（委任スコープ/実在確認）→ 次の会社へ
       }
       if (!senders.size) continue;
 
-      // 2) 返信元アドレスに一致する未案件化リードを案件化する
-      const leadsSnap = await db.collection(`salesWs/${wsId}/leads`).get();
-      const targets = leadsSnap.docs
-        .map(d => d.data())
-        .filter(l => l && l.status !== "dealt" && l.email && senders.has(String(l.email).trim().toLowerCase()));
+      // 3) 返信元アドレスに一致する未案件化リードを案件化する
+      const targets = openLeads.filter(l => senders.has(String(l.email).trim().toLowerCase()));
       if (!targets.length) continue;
 
       // 得意先マスタ（会社共有の単一ドキュメント。wsId と同じキー）
@@ -484,9 +494,6 @@ exports.watchLeadReplies = onSchedule(
       const mastersSnap = await mastersRef.get();
       const masters = mastersSnap.exists ? (mastersSnap.data() || {}) : {};
       const customers = Array.isArray(masters.customers) ? masters.customers : [];
-      // メンバー（担当の突き合わせ用）
-      const membersSnap = await db.collection(`salesWs/${wsId}/members`).get();
-      const members = membersSnap.docs.map(d => d.data());
 
       const batch = db.batch();
       let customersChanged = false;
@@ -535,7 +542,7 @@ exports.watchLeadReplies = onSchedule(
         batch.set(mastersRef, { ...masters, customers, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
       }
       await batch.commit();
-      console.log(`[leadReply] ws=${wsId} converted ${targets.length} lead(s), scanned ${processedMsgIds.length} new mail(s)`);
+      console.log(`[leadReply] ws=${wsId} converted ${targets.length} lead(s) from ${mailboxes.length} mailbox(es)`);
     }
 
     console.log(`[leadReply] done. converted=${totalConverted}`);
