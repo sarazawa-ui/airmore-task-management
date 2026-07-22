@@ -826,7 +826,10 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
 /* Tasks toolbar */
 .tasks-toolbar{display:flex;gap:8px;margin:8px 0;flex-wrap:wrap;align-items:center}
 
-@media (max-width:1100px){
+/* カレンダーの2カラム→1カラム切替。ブラウザ倍率を上げると実効幅が縮んで
+   ここが発火しレイアウトが変わるため、通常のズーム範囲では切り替わらないよう
+   低い幅(実際に狭い画面)でのみ発火させる */
+@media (max-width:820px){
   .cal-split{grid-template-columns:1fr}
   .cal-side{position:static;max-height:none}
 }
@@ -835,6 +838,16 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
   .kpi-grid{grid-template-columns:repeat(2,1fr)}
   .summary-bar{grid-template-columns:1fr 1fr}
   .kpt-area,.master-grid{grid-template-columns:1fr}
+}
+/* 実際に狭い画面(スマホ)でのみ、週間カレンダーを高さ固定のスクロールにする。
+   以前は768pxで発火し、デスクトップの高ズーム時にレイアウトが変わっていた */
+@media (max-width:600px){
+  #view-calendar.active{height:auto}
+  #view-calendar .cal-split{flex:initial;min-height:300px}
+  #view-calendar .cal-wrap{max-height:60vh;overflow:auto}
+  #view-calendar .cal-side{max-height:none}
+  body{overflow:auto}
+  body>main:has(#view-calendar.active){overflow:auto}
 }
 
 /* ===== Mobile (タブレット縦・スマホ) ===== */
@@ -893,12 +906,6 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
   .cal-toolbar .btn{padding:5px 10px;font-size:11.5px}
   .cal-split{gap:8px}
   .cal-table{min-width:680px}
-  #view-calendar.active{height:auto}
-  #view-calendar .cal-split{flex:initial;min-height:300px}
-  #view-calendar .cal-wrap{max-height:60vh;overflow:auto}
-  #view-calendar .cal-side{max-height:none}
-  body{overflow:auto}
-  body>main:has(#view-calendar.active){overflow:auto}
 
   /* Sidebar */
   .cal-side{padding:10px;border-radius:8px}
