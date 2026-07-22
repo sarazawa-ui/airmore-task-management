@@ -455,10 +455,16 @@ exports.watchLeadReplies = onSchedule(
       )];
       if (!mailboxes.length) continue;
 
+      // メールアドレス → そのメールボックスの持ち主(メンバーID)。担当が名前で
+      // 特定できないときのフォールバックに使う(返信を受け取った本人＝送信した担当)。
+      const mailboxOwner = {};
+      members.forEach(m => { const e = String((m && m.email) || "").trim().toLowerCase(); if (e) mailboxOwner[e] = m.id; });
+
       // 2) 各メールボックスを、リードのメールアドレスからの受信に絞って検索する
       //    from:(...) で絞るので、返ってくるのは実際のリード返信だけ（読み取り最小）。
       //    二重案件化はリードの「案件化済」で防ぐ（同じ返信を再取得しても対象外になる）。
-      const senders = new Set();
+      //    senders: 返信元アドレス → それを受信したメールボックスの持ち主メンバーID
+      const senders = new Map();
       for (const mb of mailboxes) {
         try {
           const gmail = await getGmailReader(mb);
@@ -471,7 +477,10 @@ exports.watchLeadReplies = onSchedule(
                 userId: "me", id: ref.id, format: "metadata", metadataHeaders: ["From"],
               });
               const from = (meta.data.payload?.headers || []).find(h => h.name === "From");
-              if (from) senders.add(parseEmail(from.value));
+              if (from) {
+                const addr = parseEmail(from.value);
+                if (!senders.has(addr)) senders.set(addr, mailboxOwner[mb] || "");
+              }
             }
           }
         } catch (err) {
@@ -485,6 +494,21 @@ exports.watchLeadReplies = onSchedule(
       const targets = openLeads.filter(l => senders.has(String(l.email).trim().toLowerCase()));
       if (!targets.length) continue;
 
+      // リードの担当者名 → Hittatsuのアカウント(メンバー)を照合(空白差・姓のみ↔姓名を吸収)
+      const normName = (s) => String(s || "").replace(/[\s　]/g, "");
+      const memberIdForLead = (lead) => {
+        const repN = normName(leadRepName(lead));
+        if (repN) {
+          const hit = members.find(m => {
+            const mn = normName(m && m.name);
+            return mn && (mn === repN || mn.includes(repN) || repN.includes(mn));
+          });
+          if (hit) return hit.id;
+        }
+        // 名前で特定できなければ、返信を受け取ったメールボックスの持ち主を担当にする
+        return senders.get(String(lead.email).trim().toLowerCase()) || "";
+      };
+
       // 得意先マスタ（会社共有の単一ドキュメント。wsId と同じキー）
       const mastersRef = db.doc(`salesMasters/${wsId}`);
       const mastersSnap = await mastersRef.get();
@@ -496,18 +520,17 @@ exports.watchLeadReplies = onSchedule(
       const today = jstToday();
 
       for (const lead of targets) {
+        const memberId = memberIdForLead(lead); // 先頭メンバーを機械割当しない
         // 得意先：会社名で照合、なければ新規作成（マスタへ追記）
         let customer = customers.find(c => c && c.name === lead.company);
-        const repId = (members.find(m => m && leadRepName(lead) && m.name && leadRepName(lead).includes(m.name)) || {}).id;
         if (!customer) {
           customer = {
             id: newId("cus"), name: lead.company || "(不明)", contact: lead.name || "",
-            address: lead.address || "", tel: lead.tel || "", memberId: repId || null,
+            address: lead.address || "", tel: lead.tel || "", memberId: memberId || null,
           };
           customers.push(customer);
           customersChanged = true;
         }
-        const memberId = repId || (members[0] && members[0].id) || "";
         const dealId = newId("deal");
         // 案件を作成
         batch.set(db.doc(`salesWs/${wsId}/deals/${dealId}`), {
