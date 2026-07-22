@@ -157,6 +157,13 @@ export async function importAll(db, backup, { wipe = false } = {}) {
 function driveError(e, name) {
   const reason = e?.errors?.[0]?.reason || e?.response?.data?.error?.errors?.[0]?.reason || "";
   const msg = e?.response?.data?.error?.message || e?.message || String(e);
+  if (reason === "accessNotConfigured" || reason === "SERVICE_DISABLED" || /has not been used in project|is disabled/i.test(msg)) {
+    return new Error(
+      "Google Drive API が有効化されていません。Google Cloud コンソールで有効にしてから再実行してください。" +
+        "（メッセージ内のURLを開き「有効にする」→数分待って再実行）" +
+        `（元エラー: ${msg}）`
+    );
+  }
   if (reason === "storageQuotaExceeded" || /storage quota/i.test(msg)) {
     return new Error(
       "保存先フォルダが個人のマイドライブにあるため、サービスアカウントの容量制限（0バイト）で保存できません。" +
