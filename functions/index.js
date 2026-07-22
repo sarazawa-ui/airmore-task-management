@@ -374,7 +374,6 @@ exports.cleanupSentReminders = onSchedule(
 // 展示会リード：返信の自動検知 → 案件を自動生成
 //   各会社の「担当メンバー各自のメールボックス」を定期的に読み、リードの
 //   メールアドレスからの返信があれば案件化する（専用の検知用アドレスは不要）。
-//   自社情報マスタの「検知用Cc」を設定していれば、そのボックスも追加で確認する。
 //
 //   ※ 事前設定（Google Workspace 管理コンソール → ドメイン全体の委任）:
 //      送信用サービスアカウントの クライアントID に、送信スコープに加えて
@@ -437,8 +436,6 @@ exports.watchLeadReplies = onSchedule(
 
     for (const wsDoc of wsSnap.docs) {
       const wsId = wsDoc.id;
-      const company = (wsDoc.data() || {}).company || {};
-      const leadCc = String(company.leadCc || "").trim().toLowerCase();
 
       // 1) 未案件化のリード（メールあり）を集める。0件ならこの会社はスキップ
       const leadsSnap = await db.collection(`salesWs/${wsId}/leads`).get();
@@ -452,11 +449,10 @@ exports.watchLeadReplies = onSchedule(
       const membersSnap = await db.collection(`salesWs/${wsId}/members`).get();
       const members = membersSnap.docs.map(d => d.data());
 
-      // 確認するメールボックス = 各メンバーのGoogleアカウント（＋任意で検知用Cc）
-      const mailboxes = [...new Set([
-        ...members.map(m => String((m && m.email) || "").trim().toLowerCase()).filter(Boolean),
-        ...(leadCc ? [leadCc] : []),
-      ])];
+      // 確認するメールボックス = 各メンバーのGoogleアカウント
+      const mailboxes = [...new Set(
+        members.map(m => String((m && m.email) || "").trim().toLowerCase()).filter(Boolean)
+      )];
       if (!mailboxes.length) continue;
 
       // 2) 各メールボックスを、リードのメールアドレスからの受信に絞って検索する
