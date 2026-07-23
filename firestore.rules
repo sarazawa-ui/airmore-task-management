@@ -85,12 +85,12 @@ service cloud.firestore {
       match /{sub=**} { allow read, write: if _domainOk(); }
     }
 
-    // === 商談管理：会社共有マスタ（得意先・商品） ===
-    //   読み取り：許可ドメインのユーザー（所属会社ごとにドキュメントが分かれる）
-    //   書き込み：admin のみ
+    // === 商談管理：会社共有マスタ（得意先・商品・業種） ===
+    //   読み書きとも許可ドメインのユーザー（所属会社ごとにドキュメントが分かれる）。
+    //   マスタ・設定タブでの一括編集はアプリ側でadminに限定しているが、案件入力中の
+    //   マスタ外得意先の登録は全員が行えるようにするため、書込はドメイン全員に許可する。
     match /salesMasters/{cid} {
-      allow read: if _domainOk();
-      allow write: if _domainOk() && _isAppAdmin(request.auth.token.email);
+      allow read, write: if _domainOk();
     }
 
     // === Budget Access Requests ===
