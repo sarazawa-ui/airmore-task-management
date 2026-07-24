@@ -424,11 +424,20 @@ function leadRepName(lead) {
 
 exports.watchLeadReplies = onSchedule(
   {
-    schedule: "every 15 minutes",
+    // 30分ごと。営業時間外(夜間・土日)は下でスキップして読み取り・API呼び出しを節約。
+    schedule: "every 30 minutes",
     timeZone: "Asia/Tokyo",
     secrets: [GMAIL_SA_KEY],
   },
   async () => {
+    // 実働時間帯（平日 7:00–20:00 JST）のみ実行。返信は次の営業時間内に処理される。
+    const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const dow = jst.getUTCDay(); // 0=日 .. 6=土（JST基準）
+    const hour = jst.getUTCHours();
+    if (dow === 0 || dow === 6 || hour < 7 || hour >= 20) {
+      console.log(`[leadReply] skip (outside business hours) dow=${dow} ${hour}h JST`);
+      return;
+    }
     const db = admin.firestore();
     // 会社（ワークスペース）ごとに検知用メールボックスを読む
     const wsSnap = await db.collection("salesWs").get();
