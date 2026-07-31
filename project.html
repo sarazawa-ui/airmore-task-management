@@ -3134,6 +3134,17 @@ function renderMeetings(){
     const fit = () => { ta.style.height='auto'; ta.style.height = Math.max(38, ta.scrollHeight) + 'px'; };
     fit();
     ta.addEventListener('input', fit);
+    // 右クリック：選択テキスト（無ければ議題全文）でタスク化／プロジェクト化。
+    // 議題は textarea のため、議事録(contenteditable)のような範囲の色付けは行わない。
+    ta.addEventListener('contextmenu', (e) => {
+      const sel = ta.value.substring(ta.selectionStart, ta.selectionEnd).trim();
+      const text = sel || (ta.value || '').trim();
+      if(!text) return; // 空 → 標準メニューに任せる
+      e.preventDefault();
+      _meetingCtxSavedRange = null;   // textarea は色付け対象外
+      _meetingCtxEditorDiv = null;
+      showMeetingCtxMenu(e.clientX, e.clientY, text);
+    });
   });
   list.querySelectorAll('[data-row-del]').forEach(btn => {
     btn.addEventListener('click', () => {
