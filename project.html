@@ -8979,6 +8979,19 @@ function subscribeWorkspace(){
     bumpFbUsage('read', 1);
     const wsId = snap.id;
     const data = snap.data();
+    // ★ 自分が memberEmails に未登録なら自動登録（1WSにつき1回だけ試行）。
+    //   WS切替直後のリロードや別端末での復帰では onLoggedIn() を通らないため、
+    //   これが無いと「メンバー登録を再実行」を押すまで一覧プルダウンに出てこない。
+    try{
+      if(_currentUser && !_autoRegisterTried.has(wsId)
+         && Array.isArray(data.memberEmails)
+         && !data.memberEmails.includes(_currentUser.email)){
+        _autoRegisterTried.add(wsId);
+        registerCurrentMember()
+          .then(()=>{ _myWorkspacesFetchedAt = 0; if(typeof refreshWorkspaceSwitcher === 'function') refreshWorkspaceSwitcher(); })
+          .catch(e=>console.warn('auto registerCurrentMember failed:', e));
+      }
+    }catch(e){ console.warn('auto-register check failed:', e); }
     // ローカルに未同期変更がある場合は、上書きせず保留
     if(_pendingLocalChanges){
       _deferredSnapshot = data;
@@ -9288,6 +9301,7 @@ function refreshWorkspaceSwitcher(){
 
 let _myWorkspacesFetchedAt = 0;
 let _myWorkspacesInflight = null;
+var _autoRegisterTried = new Set(); // memberEmails 自動登録の再試行防止（WSごと・巻き上げのため var）
 async function fetchMyWorkspaces(opts){
   const force = !!(opts && opts.force);
   if(!_firebaseReady || !firebase.auth().currentUser) return [];
@@ -9377,6 +9391,38 @@ async function switchWorkspace(wsId){
   closeWsMenu();
   if(!wsId || wsId === S.workspaceId) return;
   if(!_firebaseReady || !firebase.auth().currentUser){ alert('未ログインです'); return; }
+  // ★ 切替前に「存在確認」と「memberEmails への自分の登録」を必ず済ませる。
+  //   これをしないと、切替は成功したように見えても memberEmails に載らないため
+  //   WS一覧プルダウン（memberEmails array-contains で検索）に永久に出てこない。
+  try{
+    const ref = firebase.firestore().doc(`workspaces/${wsId}`);
+    const snap = await ref.get();
+    bumpFbUsage('read', 1);
+    if(!snap.exists){
+      alert(`ワークスペース「${wsId}」が見つかりません。\nIDをもう一度ご確認ください。`);
+      return;
+    }
+    const d = snap.data() || {};
+    if(!(d.memberEmails||[]).includes(_currentUser.email)){
+      await ref.update({
+        memberEmails: firebase.firestore.FieldValue.arrayUnion(_currentUser.email),
+        authMembers: firebase.firestore.FieldValue.arrayUnion({
+          email: _currentUser.email,
+          name: _currentUser.name,
+          picture: _currentUser.picture || '',
+          role: 'member',
+          joinedAt: new Date().toISOString()
+        }),
+        members: firebase.firestore.FieldValue.arrayUnion({ name: _currentUser.name, dept: 'メンバー' })
+      });
+      bumpFbUsage('write', 1);
+    }
+    _myWorkspacesFetchedAt = 0; // 一覧キャッシュを無効化
+  }catch(e){
+    console.error('switchWorkspace: join failed', e);
+    alert(`ワークスペースへの参加に失敗しました：\n${e.message || e.code || e}`);
+    return;
+  }
   // 切替を確実に反映するため、ローカル状態をクリアし、S.workspaceId を新WSに書き換えてからフルリロード。
   // 多段のサブコレ購読・キャッシュのレースを避けるため、ブートから新WSを読み込む方式を採用。
   try{ _resetWorkspaceLocalCaches(); }catch(e){}
