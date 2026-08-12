@@ -92,21 +92,27 @@ function decode(v, db) {
 // 新しいコレクションを追加してもこのコードを直す必要はない。
 // 文書ごとに listCollections() を呼ぶ必要があり件数分の通信になるため、
 // 同時実行数を制限しつつ並列化して時間を短縮する（逐次だと数千件で20分規模になる）。
-async function dumpCollection(col, out) {
+async function dumpCollection(col, out, skip) {
+  if (skip && skip(col.id)) return;
   const snap = await col.get();
   await pool(snap.docs, 12, async (doc) => {
     out[doc.ref.path] = encode(doc.data());
     const subs = await doc.ref.listCollections();
-    for (const sub of subs) await dumpCollection(sub, out);
+    for (const sub of subs) await dumpCollection(sub, out, skip);
   });
 }
 
-export async function exportAll(db, log = () => {}) {
+// skipCollections: このIDのコレクション(サブコレクション含む)を今回のバックアップから除外する。
+// 対象は変更履歴(history)のような「追記のみで全体の大半を占める」ログ用途を想定。
+// 除外した場合はファイルに skippedCollections として記録し、復元(--wipe)がそのコレクションを
+// 誤って削除しないようにする。
+export async function exportAll(db, log = () => {}, { skipCollections = [] } = {}) {
   const docs = {};
+  const skip = skipCollections.length ? (id) => skipCollections.includes(id) : null;
   const cols = await db.listCollections();
   for (const col of cols) {
     const before = Object.keys(docs).length;
-    await dumpCollection(col, docs);
+    await dumpCollection(col, docs, skip);
     log(`  ${col.id}: ${Object.keys(docs).length - before} 件`);
   }
   return {
@@ -114,6 +120,7 @@ export async function exportAll(db, log = () => {}) {
     project: serviceAccount().project_id,
     // 実行時刻は呼び出し側から渡さず、ここで確定させる（1回の実行で1つの時刻）
     takenAt: new Date().toISOString(),
+    skippedCollections: skipCollections,
     docCount: Object.keys(docs).length,
     docs,
   };
@@ -136,10 +143,14 @@ export async function importAll(db, backup, { wipe = false } = {}) {
 
   let deleted = 0;
   if (wipe) {
+    // バックアップ取得時に除外したコレクション(history 等)は「無いのが正常」なので、
+    // wipe でも削除対象にしない(パスの偶数セグメント = コレクションIDで判定)
+    const skipped = new Set(backup.skippedCollections || []);
+    const inSkipped = (p) => p.split("/").some((seg, i) => i % 2 === 0 && skipped.has(seg));
     const current = {};
     const cols = await db.listCollections();
     for (const col of cols) await dumpCollection(col, current);
-    const extra = Object.keys(current).filter((p) => !(p in backup.docs));
+    const extra = Object.keys(current).filter((p) => !(p in backup.docs) && !inSkipped(p));
     for (let i = 0; i < extra.length; i += 400) {
       const batch = db.batch();
       for (const p of extra.slice(i, i + 400)) {

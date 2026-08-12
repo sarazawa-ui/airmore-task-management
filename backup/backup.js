@@ -24,7 +24,13 @@ try {
   const drive = driveClient();
 
   console.log("[1/3] Firestore を読み出しています…");
-  const backup = await exportAll(db, (m) => console.log(m));
+  // 変更履歴(history)は全ドキュメントの8割超を占める追記専用ログのため、
+  // 毎日ではなく金曜のみ全量を取得する(読み取り回数の削減)。FULL=1 で常に全量。
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const fullBackup = process.env.FULL === "1" || jstNow.getUTCDay() === 5; // 金曜
+  const skipCollections = fullBackup ? [] : ["history"];
+  if (skipCollections.length) console.log(`  (${skipCollections.join(", ")} は金曜のみ取得。今日はスキップ)`);
+  const backup = await exportAll(db, (m) => console.log(m), { skipCollections });
   const text = JSON.stringify(backup);
   console.log(`  → ドキュメント ${backup.docCount} 件 / ${(text.length / 1024 / 1024).toFixed(2)} MB（${secs()}秒）`);
 

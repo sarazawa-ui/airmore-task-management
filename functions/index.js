@@ -370,6 +370,35 @@ exports.cleanupSentReminders = onSchedule(
   }
 );
 
+// 古い変更履歴(workspaces/*/history)を毎日掃除（90日経過分削除）。
+// 画面は最新500件しか表示しない(limit(500))ため、古い履歴はUIから到達できない。
+// 放置するとDB全体の大半を履歴が占め、バックアップやコールドロードの読み取りが
+// 履歴の蓄積に比例して増え続けるので、保持期間で頭打ちにする。
+exports.cleanupOldHistory = onSchedule(
+  { schedule: "every day 03:30", timeZone: "Asia/Tokyo" },
+  async () => {
+    const db = admin.firestore();
+    // history.ts は ISO文字列(例 2026-08-12T…)。文字列比較で日時順になる
+    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    let total = 0;
+    const wsSnap = await db.collection("workspaces").get();
+    for (const ws of wsSnap.docs) {
+      // 1回500件ずつ、無くなるまで削除(初回の溜まり分にも対応)
+      for (;;) {
+        const snap = await db.collection(`workspaces/${ws.id}/history`)
+          .where("ts", "<", cutoff).limit(500).get();
+        if (snap.empty) break;
+        const batch = db.batch();
+        snap.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+        total += snap.size;
+        if (snap.size < 500) break;
+      }
+    }
+    console.log(`[cleanup] deleted ${total} old history entries (before ${cutoff})`);
+  }
+);
+
 // ============================================================
 // 展示会リード：返信の自動検知 → 案件を自動生成
 //   各会社の「担当メンバー各自のメールボックス」を定期的に読み、リードの
@@ -445,34 +474,36 @@ exports.watchLeadReplies = onSchedule(
 
     for (const wsDoc of wsSnap.docs) {
       const wsId = wsDoc.id;
+      const norm = (s) => String(s || "").trim().toLowerCase();
 
-      // 1) 未案件化のリード（メールあり）を集める。0件ならこの会社はスキップ
-      const leadsSnap = await db.collection(`salesWs/${wsId}/leads`).get();
-      const openLeads = leadsSnap.docs
-        .map(d => d.data())
-        .filter(l => l && l.status !== "dealt" && l.email);
-      if (!openLeads.length) continue;
-      const leadEmails = [...new Set(openLeads.map(l => String(l.email).trim().toLowerCase()))];
-
-      // メンバー（担当の突き合わせ＋各自のメールボックスを確認するため）
-      const membersSnap = await db.collection(`salesWs/${wsId}/members`).get();
-      const members = membersSnap.docs.map(d => d.data());
-
-      // 確認するメールボックス = 各メンバーのGoogleアカウント
-      const mailboxes = [...new Set(
-        members.map(m => String((m && m.email) || "").trim().toLowerCase()).filter(Boolean)
-      )];
-      if (!mailboxes.length) continue;
-
-      // メールアドレス → そのメールボックスの持ち主(メンバーID)。担当が名前で
-      // 特定できないときのフォールバックに使う(返信を受け取った本人＝送信した担当)。
-      const mailboxOwner = {};
-      members.forEach(m => { const e = String((m && m.email) || "").trim().toLowerCase(); if (e) mailboxOwner[e] = m.id; });
+      // 1) 監視対象(未案件化リードのメール・メンバーのメールボックス)を決める。
+      //    クライアント(salesSync)が親ドキュメントに leadWatch インデックスを保守して
+      //    いるので、通常は上の wsSnap の読み取りだけで済む。leads/members の全件読みは
+      //    「実際に返信が見つかった会社」だけに遅延させる(読み取り削減の本体)。
+      const lw = (wsDoc.data() || {}).leadWatch;
+      let leadEmails, mailboxes;
+      let openLeads = null; // 遅延読込(インデックスがある間は null のまま)
+      let members = null;
+      if (lw && Array.isArray(lw.emails)) {
+        leadEmails = [...new Set(lw.emails.map(norm).filter(Boolean))];
+        mailboxes = [...new Set((lw.mailboxes || []).map(norm).filter(Boolean))];
+      } else {
+        // 旧形式(インデックス未整備)の互換: 従来どおり全件読んで組み立てる
+        const leadsSnap = await db.collection(`salesWs/${wsId}/leads`).get();
+        openLeads = leadsSnap.docs
+          .map(d => d.data())
+          .filter(l => l && l.status !== "dealt" && l.email);
+        leadEmails = [...new Set(openLeads.map(l => norm(l.email)))];
+        const membersSnap = await db.collection(`salesWs/${wsId}/members`).get();
+        members = membersSnap.docs.map(d => d.data());
+        mailboxes = [...new Set(members.map(m => norm(m && m.email)).filter(Boolean))];
+      }
+      if (!leadEmails.length || !mailboxes.length) continue;
 
       // 2) 各メールボックスを、リードのメールアドレスからの受信に絞って検索する
       //    from:(...) で絞るので、返ってくるのは実際のリード返信だけ（読み取り最小）。
       //    二重案件化はリードの「案件化済」で防ぐ（同じ返信を再取得しても対象外になる）。
-      //    senders: 返信元アドレス → それを受信したメールボックスの持ち主メンバーID
+      //    senders: 返信元アドレス → それを受信したメールボックス(メールアドレス)
       const senders = new Map();
       for (const mb of mailboxes) {
         try {
@@ -488,7 +519,7 @@ exports.watchLeadReplies = onSchedule(
               const from = (meta.data.payload?.headers || []).find(h => h.name === "From");
               if (from) {
                 const addr = parseEmail(from.value);
-                if (!senders.has(addr)) senders.set(addr, mailboxOwner[mb] || "");
+                if (!senders.has(addr)) senders.set(addr, mb);
               }
             }
           }
@@ -499,8 +530,24 @@ exports.watchLeadReplies = onSchedule(
       }
       if (!senders.size) continue;
 
-      // 3) 返信元アドレスに一致する未案件化リードを案件化する
-      const targets = openLeads.filter(l => senders.has(String(l.email).trim().toLowerCase()));
+      // 3) 返信があった時だけ leads / members を読む(通常の巡回では届かない)
+      if (!openLeads) {
+        const leadsSnap = await db.collection(`salesWs/${wsId}/leads`).get();
+        openLeads = leadsSnap.docs
+          .map(d => d.data())
+          .filter(l => l && l.status !== "dealt" && l.email);
+      }
+      if (!members) {
+        const membersSnap = await db.collection(`salesWs/${wsId}/members`).get();
+        members = membersSnap.docs.map(d => d.data());
+      }
+      // メールボックス(メールアドレス) → 持ち主のメンバーID。担当が名前で
+      // 特定できないときのフォールバックに使う(返信を受け取った本人＝送信した担当)。
+      const mailboxOwner = {};
+      members.forEach(m => { const e = norm(m && m.email); if (e) mailboxOwner[e] = m.id; });
+
+      // 返信元アドレスに一致する未案件化リードを案件化する
+      const targets = openLeads.filter(l => senders.has(norm(l.email)));
       if (!targets.length) continue;
 
       // リードの担当者名 → Hittatsuのアカウント(メンバー)を照合(空白差・姓のみ↔姓名を吸収)
@@ -515,7 +562,7 @@ exports.watchLeadReplies = onSchedule(
           if (hit) return hit.id;
         }
         // 名前で特定できなければ、返信を受け取ったメールボックスの持ち主を担当にする
-        return senders.get(String(lead.email).trim().toLowerCase()) || "";
+        return mailboxOwner[senders.get(norm(lead.email))] || "";
       };
 
       // 得意先マスタ（会社共有の単一ドキュメント。wsId と同じキー）
