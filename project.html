@@ -13,6 +13,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Hittatsu">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
+<!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
+     version.json と照合して新バージョンを自動検知・自動リロードする -->
+<script>window.__HITTATSU_BUILD__ = "1787011756560";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -12037,6 +12040,56 @@ setInterval(()=>{ if(document.getElementById('view-calendar').classList.contains
   // 選択中ワークスペースを共有キーへ反映(商談管理のWS分離に使用)
   setInterval(function(){ try{ if(window.S && S.workspaceId) localStorage.setItem('hittatsu_current_ws', S.workspaceId); }catch(e){} }, 3000);
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+<script>
+// ===== 新バージョンの自動検知・自動リロード(統合アプリ側 src/appUpdate.ts と同じ仕組み) =====
+// version.json(ビルド毎に発行)を5分ごと+タブ切替時に照合。新バージョンを検知したら、
+// タブ非表示なら3秒後に自動リロード、表示中はバナーで通知しタブを離れた時点で自動更新。
+// location.reload() はHTML本体を必ず再検証するため、強制リロード(キャッシュ破棄)は不要。
+(function(){
+  var cur = String(window.__HITTATSU_BUILD__ || "");
+  if(!cur || cur.indexOf("%") >= 0) return; // 未刻印(開発時)は無効
+  var GUARD = "hittatsu_update_reload";
+  var pendingV = null, banner = null;
+  function guardOk(v){
+    try{ var st = JSON.parse(sessionStorage.getItem(GUARD) || "{}");
+      return !(st.v === v && Date.now() - st.at < 10*60*1000);
+    }catch(e){ return true; }
+  }
+  function doReload(v, delay){
+    try{ sessionStorage.setItem(GUARD, JSON.stringify({v:v, at:Date.now()})); }catch(e){}
+    setTimeout(function(){ location.reload(); }, delay);
+  }
+  function showBanner(v){
+    if(banner) return;
+    banner = document.createElement("div");
+    banner.style.cssText = "position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#1F4E78;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:13px;z-index:9999;display:flex;align-items:center;gap:10px";
+    banner.innerHTML = '✨ 新しいバージョンがあります <button style="background:#2f6fb3;color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:12.5px;cursor:pointer;font-weight:700">更新</button>';
+    banner.querySelector("button").addEventListener("click", function(){
+      banner.remove(); banner = null;
+      doReload(v, 1500); // 保存デバウンス・同期送信が終わるのを待つ
+    });
+    document.body.appendChild(banner);
+  }
+  function check(){
+    fetch("version.json?t=" + Date.now(), {cache:"no-store"}).then(function(r){
+      if(!r.ok) return null; return r.json();
+    }).then(function(j){
+      if(!j) return;
+      var v = String(j.v || "");
+      if(!v || v === cur){ pendingV = null; if(banner){ banner.remove(); banner = null; } return; }
+      pendingV = v;
+      if(document.hidden && guardOk(v)) doReload(v, 3000);
+      else showBanner(v);
+    }).catch(function(){});
+  }
+  setInterval(check, 5*60*1000);
+  document.addEventListener("visibilitychange", function(){
+    if(document.hidden){ if(pendingV && guardOk(pendingV)) doReload(pendingV, 3000); }
+    else check();
+  });
+  setTimeout(check, 20*1000);
 })();
 </script>
 </body>
