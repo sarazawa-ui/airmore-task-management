@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1787031860838";</script>
+<script>window.__HITTATSU_BUILD__ = "1787220264538";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -8154,7 +8154,14 @@ let _wsGoalsUnsubscribe = null;
 const _lastSyncedTasks = new Map();   // id -> JSON
 const _lastSyncedGoals = new Map();
 let _migrationDone = new Set();        // wsId のうち今セッションで migration 済み
-let _subcollectionInitialLoaded = { tasks:false, goals:false };
+// ★ 各コレクションの「初回受信が完了したか」。送信ゲートに使う。
+//   受信前に送信すると、_lastSynced* マップが空のため全項目が「新規」と誤判定され、
+//   古い端末のlocalStorage全体でクラウドを一括上書きしてしまう
+//   (2026-08-20 18:33 にスマホの古いキャッシュで全タスク・全プロジェクトが巻き戻った事故の原因)。
+let _subcollectionInitialLoaded = { tasks:false, goals:false, weekly:false, shared:false, meetings:false };
+// 起動時刻。初回受信時に「クラウドに無いローカル項目」が
+// 幽霊(他端末で削除済みの古いデータ)か、今セッションで作った新規かを見分ける
+const _pageBootAt = Date.now();
 
 function _stripUiForSync(item){
   if(!item || typeof item !== 'object') return item;
@@ -8354,7 +8361,9 @@ function subscribeWeeklyReports(wsId){
   if(_wsWeeklyReportsUnsubscribe){ _wsWeeklyReportsUnsubscribe(); _wsWeeklyReportsUnsubscribe = null; }
   if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
   const db = firebase.firestore();
+  _subcollectionInitialLoaded.weekly = false;
   _wsWeeklyReportsUnsubscribe = db.collection(`workspaces/${wsId}/weeklyReports`).onSnapshot(qs => {
+    _subcollectionInitialLoaded.weekly = true;
     if(!S.weeklyReports) S.weeklyReports = {};
     let mutated = false;
     qs.docChanges().forEach(c => {
@@ -8398,6 +8407,8 @@ function subscribeWeeklyReports(wsId){
 
 // weeklyReports を S → FS にdiff 書込み
 async function syncWeeklyReportsToSubcoll(wsId){
+  // 送信ゲート(初回受信前は _lastSynced が空で、古い端末が全件上書きしてしまうため)
+  if(!_subcollectionInitialLoaded.weekly){ logSync('write.skip.notReady', {kind:'weekly'}); return 0; }
   if(!wsId || !_firebaseReady) return 0;
   const wr = S.weeklyReports || {};
   const db = firebase.firestore();
@@ -8500,7 +8511,9 @@ function subscribeShared(wsId){
   if(_wsSharedUnsubscribe){ _wsSharedUnsubscribe(); _wsSharedUnsubscribe = null; }
   if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
   const db = firebase.firestore();
+  _subcollectionInitialLoaded.shared = false;
   _wsSharedUnsubscribe = db.collection(`workspaces/${wsId}/shared`).onSnapshot(qs => {
+    _subcollectionInitialLoaded.shared = true;
     let mutated = false;
     qs.docChanges().forEach(c => {
       const id = c.doc.id;
@@ -8542,6 +8555,8 @@ let _lastBoardJson = '';
 let _lastKptJson = '';
 async function syncSharedToSubcoll(wsId){
   if(!wsId || !_firebaseReady) return 0;
+  // 送信ゲート(初回受信前は比較基準が空で、古い端末のboard/kptがクラウドを上書きしてしまうため)
+  if(!_subcollectionInitialLoaded.shared){ logSync('write.skip.notReady', {kind:'shared'}); return 0; }
   const db = firebase.firestore();
   let count = 0;
   // board
@@ -8587,7 +8602,9 @@ function subscribeMeetings(wsId){
   if(_wsMeetingsUnsubscribe){ _wsMeetingsUnsubscribe(); _wsMeetingsUnsubscribe = null; }
   if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
   const db = firebase.firestore();
+  _subcollectionInitialLoaded.meetings = false;
   _wsMeetingsUnsubscribe = db.collection(`workspaces/${wsId}/meetings`).onSnapshot(qs => {
+    _subcollectionInitialLoaded.meetings = true;
     if(!Array.isArray(S.meetings)) S.meetings = [];
     let mutated = false;
     const editingId = _editingMeetingId(); // 編集中の会議があれば再描画を保留する
@@ -8632,6 +8649,8 @@ function subscribeMeetings(wsId){
 }
 
 async function syncMeetingsToSubcoll(wsId){
+  // 送信ゲート(初回受信前は _lastSynced が空で、古い端末が全件上書きしてしまうため)
+  if(!_subcollectionInitialLoaded.meetings){ logSync('write.skip.notReady', {kind:'meetings'}); return 0; }
   if(!wsId || !_firebaseReady) return 0;
   const meetings = Array.isArray(S.meetings) ? S.meetings : [];
   const db = firebase.firestore();
@@ -8719,7 +8738,7 @@ function subscribeWorkspaceCollections(wsId){
   if(_wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
   if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
   const db = firebase.firestore();
-  _subcollectionInitialLoaded = { tasks:false, goals:false };
+  _subcollectionInitialLoaded = Object.assign({}, _subcollectionInitialLoaded, { tasks:false, goals:false });
 
   const handleChanges = (qs, kind) => {
     if(!qs) return;
@@ -8803,13 +8822,37 @@ function subscribeWorkspaceCollections(wsId){
     }
     return true;
   };
+  // 初回受信時の照合：クラウドに存在しないローカル項目のうち、この起動より前に
+  // 作られたもの(_modAtが起動時刻より古い/無い)は「他端末で削除済みの幽霊」なので落とす。
+  // 今セッションで作った新規(オフライン作成など)は残し、後続の送信でクラウドへ上げる。
+  const reconcileInitial = (qs, kind) => {
+    const cloudIds = new Set(qs.docs.map(d => d.id));
+    const arr = kind === 'tasks' ? S.tasks : S.goals;
+    if(!Array.isArray(arr)) return;
+    const keep = arr.filter(it => !it || !it.id || cloudIds.has(it.id) || (it._modAt || 0) >= _pageBootAt);
+    const dropped = arr.length - keep.length;
+    if(dropped > 0){
+      if(kind === 'tasks') S.tasks = keep; else S.goals = keep;
+      logSync('subscribe.initialReconcile', {kind, dropped});
+      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ renderAll(); }catch(e){}
+    }
+  };
+  // tasks/goals両方の初回受信が完了したら、ゲートで保留されていた変更を送信する
+  const flushAfterReady = () => {
+    if(_subcollectionInitialLoaded.tasks && _subcollectionInitialLoaded.goals){
+      setTimeout(() => { try{ syncToFirestore(); }catch(e){} }, 800);
+    }
+  };
   _wsTasksUnsubscribe = db.collection(`workspaces/${wsId}/tasks`).onSnapshot(qs => {
     if(_safeIsRemote()) return;
     window._isRemoteUpdateSince = 0;
     handleChanges(qs, 'tasks');
     if(!_subcollectionInitialLoaded.tasks){
       logSync('subscribe.initialLoad', {kind:'tasks', count: qs.docs.length});
+      reconcileInitial(qs, 'tasks');
       _subcollectionInitialLoaded.tasks = true;
+      flushAfterReady();
     }
   }, err => {
     console.error('tasks subscribe error:', err);
@@ -8823,7 +8866,9 @@ function subscribeWorkspaceCollections(wsId){
     handleChanges(qs, 'goals');
     if(!_subcollectionInitialLoaded.goals){
       logSync('subscribe.initialLoad', {kind:'goals', count: qs.docs.length});
+      reconcileInitial(qs, 'goals');
       _subcollectionInitialLoaded.goals = true;
+      flushAfterReady();
     }
   }, err => {
     console.error('goals subscribe error:', err);
@@ -8856,6 +8901,13 @@ function _fieldDiffPayload(curClean, prevJson){
 //     新規ドキュメントのみ全体を set する。これで別フィールド同時編集の消失が構造的に消える。
 async function syncTasksGoalsToSubcollections(wsId){
   if(!wsId || !_firebaseReady) return 0;
+  // ★ 送信ゲート：初回受信が終わるまで一切書かない。
+  //   受信前は _lastSyncedTasks/Goals が空で全項目が「新規」扱いになり、
+  //   古いlocalStorageを持つ端末がクラウド全体を過去の状態で上書きしてしまう。
+  if(!(_subcollectionInitialLoaded.tasks && _subcollectionInitialLoaded.goals)){
+    logSync('write.skip.notReady', {wsId});
+    return 0;
+  }
   const db = firebase.firestore();
   const writes = [];
   const deletes = [];
