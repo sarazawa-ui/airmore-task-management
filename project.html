@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1787224301445";</script>
+<script>window.__HITTATSU_BUILD__ = "1787226517787";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -7482,6 +7482,20 @@ function _hashItem(item){
   });
   try{ return JSON.stringify(out); }catch(_){ return ''; }
 }
+// キー順を正規化したJSON。Firestoreはマップのキーを辞書順で返すため、素の
+// JSON.stringify同士だと「同じ内容なのに違う文字列」になり、全項目が変更ありと
+// 誤判定されて一括書き込み(全_modAt再スタンプ)が起きていた。比較は必ずこちらを使う。
+function _sortKeysDeep(x){
+  if(Array.isArray(x)) return x.map(_sortKeysDeep);
+  if(x && typeof x === 'object'){
+    const o = {};
+    Object.keys(x).sort().forEach(k => { if(x[k] !== undefined) o[k] = _sortKeysDeep(x[k]); });
+    return o;
+  }
+  return x;
+}
+function _sortedJson(x){ try{ return JSON.stringify(_sortKeysDeep(x)); }catch(_){ return ''; } }
+
 // save 直前に呼ぶ：ローカルで真に変更があったアイテムに _modAt = now を打つ
 function _stampLocalModAt(){
   const now = Date.now();
@@ -7915,7 +7929,7 @@ async function joinOrCreateWorkspace(targetWsId){
             tasksSnap.forEach(d => {
               const item = d.data();
               S.tasks.push(item);
-              _lastSyncedTasks.set(d.id, JSON.stringify(_stripUiForSync(item)));
+              _lastSyncedTasks.set(d.id, _sortedJson(_stripUiForSync(item)));
             });
             const goalsSnap = await db.collection(`workspaces/${wsId}/goals`).get();
             bumpFbUsage('read', Math.max(1, goalsSnap.size));
@@ -7924,7 +7938,7 @@ async function joinOrCreateWorkspace(targetWsId){
             goalsSnap.forEach(d => {
               const item = d.data();
               S.goals.push(item);
-              _lastSyncedGoals.set(d.id, JSON.stringify(_stripUiForSync(item)));
+              _lastSyncedGoals.set(d.id, _sortedJson(_stripUiForSync(item)));
             });
           }catch(e){ console.warn('Failed to load subcollections on join:', e); }
         }
@@ -8861,7 +8875,7 @@ function subscribeWorkspaceCollections(wsId){
       // ★ 自分の write 結果が echo として返ってくる場合の完全 dedup
       //   _lastSyncedTasks/Goals の JSON と一致したら何もしない（再描画も起こさない）
       //   これによって、自分の編集中の入力欄が echo で消える「入力が戻る」現象を防止
-      const remoteJson = JSON.stringify(data);
+      const remoteJson = _sortedJson(data);
       if(change.type !== 'removed' && lastMap.get(id) === remoteJson){
         dedupHits++;
         return;
@@ -8884,7 +8898,7 @@ function subscribeWorkspaceCollections(wsId){
         const i = localArr.findIndex(x => x && x.id === id);
         if(i >= 0) localArr[i] = merged; else localArr.push(merged);
         // lastSeen は「サーバから今受け取った状態」で更新（field-merge 判定の基準）
-        lastMap.set(id, JSON.stringify(data));
+        lastMap.set(id, remoteJson);
         if(!wasSameAsLocal){
           mutated = true;
           applied++;
@@ -8895,6 +8909,8 @@ function subscribeWorkspaceCollections(wsId){
     if(dedupHits || applied || rejected){
       logSync('apply.end', {kind, dedupHits, applied, rejected, mutated});
     }
+    // 受信直後の状態を「変更なし」の基準として記録(初回saveでの全件_modAt再スタンプを防ぐ)
+    try{ _recordAppliedHashes(kind === 'tasks' ? S.tasks : S.goals, kind); }catch(e){}
     // 注：以前ここで実装していた「Tombstone に該当する FS ドキュメントの自動削除」は、
     // 新規作成した item の ID が偶然 stale Tombstone と一致すると即座に消える致命的バグ
     // を引き起こしたため廃止した。代わりに上の鮮度判定（_modAt vs tombstone.at）で安全に処理する。
@@ -8987,7 +9003,7 @@ function _fieldDiffPayload(curClean, prevJson){
   try{ prev = prevJson ? JSON.parse(prevJson) : {}; }catch(e){ prev = {}; }
   const payload = {};
   Object.keys(curClean).forEach(k => {
-    if(JSON.stringify(curClean[k]) !== JSON.stringify(prev[k])) payload[k] = curClean[k];
+    if(_sortedJson(curClean[k]) !== _sortedJson(prev[k])) payload[k] = curClean[k];
   });
   Object.keys(prev).forEach(k => {
     if(!(k in curClean)) payload[k] = firebase.firestore.FieldValue.delete();
@@ -9018,7 +9034,7 @@ async function syncTasksGoalsToSubcollections(wsId){
     if(!t || !t.id) return;
     curTaskIds.add(t.id);
     const clean = _stripUiForSync(t);
-    const json = JSON.stringify(clean);
+    const json = _sortedJson(clean);
     const prevJson = _lastSyncedTasks.get(t.id);
     if(prevJson !== json){
       writes.push({path:`workspaces/${wsId}/tasks/${t.id}`, clean, prevJson, kind:'tasks', id:t.id, json});
@@ -9037,7 +9053,7 @@ async function syncTasksGoalsToSubcollections(wsId){
     if(!g || !g.id) return;
     curGoalIds.add(g.id);
     const clean = _stripUiForSync(g);
-    const json = JSON.stringify(clean);
+    const json = _sortedJson(clean);
     const prevJson = _lastSyncedGoals.get(g.id);
     if(prevJson !== json){
       writes.push({path:`workspaces/${wsId}/goals/${g.id}`, clean, prevJson, kind:'goals', id:g.id, json});
