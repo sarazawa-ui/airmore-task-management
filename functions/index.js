@@ -291,9 +291,12 @@ exports.sendReminders = onSchedule(
         `■ 開始時刻：${t.time}`,
         `■ 所要時間：${t.est ? t.est + "分" : "(未設定)"}`,
         "",
-        `アプリで開く：${APP_BASE_URL}`,
+        "▼ アプリでこのタスクを開く",
+        `${APP_BASE_URL}project.html?ws=${encodeURIComponent(wsId)}&task=${encodeURIComponent(t.id)}`,
         `— Hittatsu | ${wsName} より自動送信`,
       ].join("\n");
+      // プッシュ通知のリンクもタスク直行にする
+      const taskUrl = `${APP_BASE_URL}project.html?ws=${encodeURIComponent(wsId)}&task=${encodeURIComponent(t.id)}`;
 
       // メール（担当者本人として送信）
       let emailOk = false;
@@ -321,8 +324,8 @@ exports.sendReminders = onSchedule(
                 title: `⏰ 10分後: ${taskName}`,
                 body: `${t.time} 開始 / ${goalName || "(未紐付)"}`,
               },
-              data: { taskId: t.id, wsId, url: APP_BASE_URL },
-              webpush: { fcmOptions: { link: APP_BASE_URL } },
+              data: { taskId: t.id, wsId, url: taskUrl },
+              webpush: { fcmOptions: { link: taskUrl } },
             });
             totalPushes += result.successCount;
             pushOk = result.successCount > 0;

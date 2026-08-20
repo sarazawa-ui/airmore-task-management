@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1787220264538";</script>
+<script>window.__HITTATSU_BUILD__ = "1787223815267";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -1579,6 +1579,19 @@ service cloud.firestore {
         <button class="btn" onclick="exportData()">💾 エクスポート（JSON）</button>
         <button class="btn ghost" onclick="document.getElementById('importFile').click()">📂 インポート（JSON）</button>
         <button class="btn danger" onclick="if(confirm('全データを初期化します。バックアップは取りましたか？'))resetAll()">⚠ 全データ初期化</button>
+      </div>
+
+      <h4 style="margin-top:22px;padding-top:16px;border-top:1px solid var(--border);color:var(--primary-dark);font-size:13.5px">☁ クラウド復元（夜間バックアップJSON・admin専用）</h4>
+      <p class="help" style="font-size:11.5px;line-height:1.7">
+        Googleドライブの夜間バックアップ（hittatsu-backup-…json）から、<b>現在のワークスペースのプロジェクト管理データ</b>
+        （タスク・プロジェクト・週報・会議メモ・ボード/KPT・各種設定）を<b>全メンバー共有のクラウドへ</b>書き戻します。
+        バックアップ取得後の変更は失われ、バックアップに無い項目は削除されます。
+      </p>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn" id="cloudRestoreBtn" onclick="document.getElementById('cloudRestoreFile').click()">☁ バックアップから復元…</button>
+        <input type="file" id="cloudRestoreFile" accept=".json,application/json" style="display:none"
+          onchange="restoreCloudFromBackup(this.files[0]); this.value='';">
+        <span id="cloudRestoreStatus" class="help" style="font-size:12px"></span>
       </div>
     </div>
   </div>
@@ -5137,6 +5150,75 @@ function exportData(){
   a.click();
   toast("エクスポートしました");
 }
+
+// ===== クラウド復元（夜間バックアップJSON → 現在WSのプロジェクト管理データ）=====
+// 「古い端末による一括巻き戻り」等の事故から、Googleドライブの夜間バックアップで
+// クラウド(=全メンバー共有)を復旧するための admin 専用機能。
+//  - 対象: workspaces/{現在WS} の本体 + tasks/goals/weeklyReports/meetings/shared
+//  - バックアップの全ドキュメントを書き戻し、バックアップに無いものは削除する
+//    (巻き戻りで「復活」した削除済み項目を確実に消すため)
+async function restoreCloudFromBackup(file){
+  const st = (t)=>{ const el=document.getElementById('cloudRestoreStatus'); if(el) el.textContent=t; };
+  try{
+    if(!file) return;
+    if(!isAppAdmin()){ alert('この操作は admin のみ実行できます。'); return; }
+    if(!S.workspaceId || !_firebaseReady || !firebase.auth().currentUser){ alert('ログインとワークスペース参加が必要です。'); return; }
+    const wsId = S.workspaceId;
+    st('読み込み中…');
+    const b = JSON.parse(await file.text());
+    if(!b || !b.docs || !b.takenAt) throw new Error('バックアップ形式ではありません(docs/takenAtがありません)');
+    const COLLS = ['tasks','goals','weeklyReports','meetings','shared'];
+    const prefix = 'workspaces/'+wsId;
+    const counts = {};
+    let total = 0;
+    for(const c of COLLS){
+      counts[c] = Object.keys(b.docs).filter(p=>p.startsWith(prefix+'/'+c+'/')).length;
+      total += counts[c];
+    }
+    const hasMain = !!b.docs[prefix];
+    if(!hasMain && total === 0) throw new Error('このバックアップに現在のワークスペース('+wsId+')のデータがありません');
+    const taken = new Date(b.takenAt).toLocaleString('ja-JP');
+    if(!confirm('バックアップ取得時刻: '+taken+'\nワークスペース: '+(S.wsName||wsId)+'\n\n'
+      +'タスク '+counts.tasks+'件 / プロジェクト '+counts.goals+'件 / 週報 '+counts.weeklyReports+'件 / 会議 '+counts.meetings+'件\n\n'
+      +'クラウドをこの時点の状態に戻します(取得後の変更は失われ、バックアップに無い項目は削除されます)。実行しますか?')) { st(''); return; }
+
+    const db = firebase.firestore();
+    // バックアップ形式の特殊型($ts等)を Firestore の型へ戻す
+    const dec = (v)=>{
+      if(v===null || typeof v!=='object') return v;
+      if(Array.isArray(v)) return v.map(dec);
+      if(v.$ts) return firebase.firestore.Timestamp.fromDate(new Date(v.$ts));
+      const o={}; for(const k in v) o[k]=dec(v[k]); return o;
+    };
+    let ops=[], written=0, removed=0;
+    const flush = async ()=>{ if(!ops.length) return; const batch=db.batch(); ops.forEach(f=>f(batch)); await batch.commit(); ops=[]; };
+    for(const c of COLLS){
+      st('復元中: '+c+'…');
+      const collPrefix = prefix+'/'+c+'/';
+      const keep = new Set();
+      for(const p of Object.keys(b.docs)){
+        if(!p.startsWith(collPrefix)) continue;
+        keep.add(p.slice(collPrefix.length));
+        ops.push(bt=>bt.set(db.doc(p), dec(b.docs[p])));
+        written++;
+        if(ops.length>=350) await flush();
+      }
+      // バックアップに無い現存ドキュメント = 巻き戻りで復活した項目など → 削除
+      const now = await db.collection(prefix+'/'+c).get();
+      now.forEach(d=>{ if(!keep.has(d.id)){ ops.push(bt=>bt.delete(d.ref)); removed++; } });
+      await flush();
+    }
+    if(hasMain){ ops.push(bt=>bt.set(db.doc(prefix), dec(b.docs[prefix]))); await flush(); }
+    try{ logHistory('workspace', 'バックアップから復元('+taken+'時点 / 書戻し'+written+'件・削除'+removed+'件)'); }catch(e){}
+    st('✅ 完了: 書き戻し'+written+'件 / 削除'+removed+'件。再読み込みします…');
+    alert('復元が完了しました。\n書き戻し '+written+'件 / バックアップに無い項目の削除 '+removed+'件\n\nページを再読み込みします。');
+    location.reload();
+  }catch(err){
+    console.error('restoreCloudFromBackup failed:', err);
+    st('❌ 失敗: '+(err&&err.message||err));
+    alert('復元に失敗しました:\n'+(err&&err.message||err));
+  }
+}
 function importData(e){
   const f = e.target.files[0]; if(!f) return;
   const r = new FileReader();
@@ -6606,6 +6688,9 @@ async function sendCompletionEmail(t){
     `■ 期日：${t.due || '(未設定)'}`,
     `■ プロジェクト進捗：${prog ? prog.value+'％' : '-'}`,
     '',
+    '▼ アプリでこのタスクを開く',
+    `${location.origin}${location.pathname}?ws=${encodeURIComponent(S.workspaceId||'')}&task=${encodeURIComponent(t.id)}`,
+    '',
     `— Hittatsu | ${wsName} より自動送信`
   ];
   const body = lines.join('\r\n');
@@ -7739,6 +7824,20 @@ function readWsFromUrl(){
   }catch(e){}
   return null;
 }
+
+// 通知メールのリンク(?task=T-xxx)からの起動: 既存の「保留中タスクを開く」機構
+// (hittatsu_pending_open_task → showApp後にカレンダーで開く)へ橋渡しする
+(function(){
+  try{
+    const params = new URLSearchParams(window.location.search);
+    const taskId = params.get('task');
+    if(!taskId) return;
+    sessionStorage.setItem('hittatsu_pending_open_task', JSON.stringify({ taskId }));
+    params.delete('task');
+    const q = params.toString();
+    history.replaceState(null, '', window.location.pathname + (q ? '?'+q : '') + window.location.hash);
+  }catch(e){}
+})();
 
 function serializeWorkspace(){
   // events（カレンダー予定）はユーザー個別のため共有しない
