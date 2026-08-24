@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1787546886197";</script>
+<script>window.__HITTATSU_BUILD__ = "1787565229815";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -25,31 +25,37 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
 <style>
 :root{
-  --primary:#3498DB;
-  --primary-dark:#2874A6;
-  --primary-light:#EBF5FB;
-  --primary-soft:#F4FAFD;
-  --header:#3498DB;
-  --section:#EBF5FB;
+  --primary:#1c5cab;
+  --primary-dark:#14406e;
+  --primary-light:#dbe7f5;
+  --primary-soft:#eef3fa;
+  --header:#1c5cab;
+  --section:#eef3fa;
   --input:#FDFEFF;
   --formula:#F8FAFC;
   --red:#FADBD8;
   --orange:#FDEBD0;
   --green:#D5F5E3;
   --mit:#FCF3CF;
-  --border:#E5EBF0;
+  --border:#e3e9f0;
   --border-soft:#F0F4F8;
-  --text:#2C3E50;
-  --text-soft:#5D6D7E;
-  --muted:#95A5A6;
-  --bg:#F7FBFD;
-  --shadow-sm:0 1px 2px rgba(52,73,94,.04);
-  --shadow:0 2px 6px rgba(52,73,94,.06);
-  --shadow-lg:0 8px 24px rgba(52,73,94,.12);
+  --text:#16202e;
+  --text-soft:#5a6b80;
+  --muted:#8b99ab;
+  --bg:#f5f7fa;
+  --shadow-sm:0 1px 2px rgba(12,35,64,.04);
+  --shadow:0 2px 6px rgba(12,35,64,.06);
+  --shadow-lg:0 8px 24px rgba(12,35,64,.12);
+  /* デザインシステム共通トークン(商談管理・予算管理と同名・同値) */
+  --navy-900:#0c2340; --navy-800:#10305a; --navy-700:#14406e; --navy-600:#1c5cab;
+  --navy-500:#2a78d6; --navy-100:#dbe7f5; --navy-50:#eef3fa;
+  --line:#e3e9f0; --ink:#16202e; --sub:#5a6b80;
+  --good-ink:#067806; --warn-ink:#9a6b00; --bad:#d03b3b;
+  --focus-ring:0 0 0 3px rgba(42,120,214,.15);
 }
 *{box-sizing:border-box}
 html,body{height:100%}
-body{font-family:'Hiragino Kaku Gothic ProN','Hiragino Sans','Noto Sans JP','Yu Gothic',sans-serif;margin:0;background:var(--bg);color:var(--text);font-size:13px;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;overflow:hidden}
+body{font-family:'Segoe UI','Hiragino Kaku Gothic ProN','Yu Gothic UI','Meiryo',system-ui,sans-serif;margin:0;background:var(--bg);color:var(--text);font-size:14px;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;overflow:hidden}
 body > header,body > nav,body > main{flex:0 0 auto}
 /* scrollbar-gutter: stable でバー出現時のレイアウト揺れを防止 */
 body > main{flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-gutter:stable;width:100%}
@@ -78,20 +84,20 @@ nav button.active{color:var(--primary);border-bottom-color:var(--primary);font-w
 main{padding:20px 24px;max-width:1480px;margin:0 auto}
 .view{display:none}
 .view.active{display:block}
-h2{font-size:18px;color:var(--text);font-weight:700;margin:0 0 4px;letter-spacing:-.01em}
+h2{font-size:20px;color:var(--navy-900);font-weight:700;margin:0 0 4px;letter-spacing:-.01em}
 .subtitle{color:var(--muted);font-size:12px;margin:0 0 18px;line-height:1.6}
-.section{background:transparent;padding:12px 0 8px;font-weight:700;color:var(--text);border-radius:0;margin-top:20px;font-size:14px;border-bottom:2px solid var(--primary-light)}
-.card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px;box-shadow:var(--shadow-sm)}
-table{border-collapse:separate;border-spacing:0;width:100%;background:#fff;font-size:12px;border-radius:8px;overflow:hidden}
-th{background:var(--primary-light);color:var(--primary-dark);padding:10px 8px;text-align:center;font-weight:700;border-bottom:1px solid var(--border);position:sticky;top:0;font-size:11.5px;letter-spacing:.02em;line-height:1.3;word-break:keep-all}
+.section{background:transparent;padding:12px 0 8px;font-weight:700;color:var(--navy-800);border-radius:0;margin-top:20px;font-size:13px;border-bottom:1.5px solid var(--line)}
+.card{background:#fff;border:none;border-radius:12px;padding:16px 18px;margin-bottom:14px;box-shadow:0 1px 3px rgba(12,35,64,.07),0 4px 14px rgba(12,35,64,.05)}
+table{border-collapse:separate;border-spacing:0;width:100%;background:#fff;font-size:13px;border-radius:8px;overflow:hidden}
+th{background:var(--navy-50);color:var(--navy-800);padding:8px;text-align:center;font-weight:600;border-bottom:1.5px solid var(--line);position:sticky;top:0;font-size:11.5px;letter-spacing:.02em;line-height:1.3;word-break:keep-all}
 td{padding:8px;border-bottom:1px solid var(--border-soft);border-right:1px solid var(--border-soft);vertical-align:middle;background:#fff;word-break:break-word;overflow-wrap:anywhere;line-height:1.4}
 tbody tr:hover td{background:var(--primary-soft)}
 td input,td select,td textarea{width:100%;border:none;background:transparent;font:inherit;color:inherit;padding:3px 5px;outline:none;resize:vertical;border-radius:4px;transition:background .12s}
-td input:focus,td select:focus,td textarea:focus{background:#fff;box-shadow:0 0 0 2px var(--primary)}
+td input:focus,td select:focus,td textarea:focus{background:#fff;border-color:var(--navy-500);box-shadow:var(--focus-ring)}
 td.input{background:var(--input)}
 td.formula{background:var(--formula);text-align:center;font-weight:600;color:var(--text-soft)}
 td.center{text-align:center}
-td.alert-red{background:var(--red);color:#C0392B;font-weight:700}
+td.alert-red{background:var(--red);color:#d03b3b;font-weight:700}
 td.alert-orange{background:var(--orange);font-weight:700;color:#A04000}
 td.alert-yellow{background:#FCF3CF;color:#7E5109}
 td.alert-green{background:var(--green);color:#1E8449}
@@ -99,37 +105,37 @@ td.alert-mit{background:var(--mit);color:#9A7D0A;font-weight:700}
 tr.done td{background:#FAFBFC !important;color:#B2BABB;text-decoration:line-through}
 tr.done td input,tr.done td select,tr.done td textarea{color:#B2BABB;text-decoration:line-through}
 .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:14px 0}
-.kpi{background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden;text-align:center;box-shadow:var(--shadow-sm);transition:transform .15s, box-shadow .15s}
-.kpi:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
-.kpi .lbl{padding:9px;font-weight:600;font-size:12.5px;color:var(--text-soft);background:#fff;border-bottom:1px solid var(--border-soft)}
-.kpi .val{padding:22px 8px;font-size:30px;font-weight:700;color:var(--primary);letter-spacing:-.02em}
-.kpi.k1 .lbl{color:#B7950B}
-.kpi.k2 .lbl{color:#2874A6}
-.kpi.k3 .lbl{color:#1E8449}
-.kpi.k4 .lbl{color:#A04000}
+.kpi{background:#fff;border:none;border-radius:12px;overflow:hidden;text-align:center;box-shadow:0 1px 3px rgba(12,35,64,.07),0 4px 14px rgba(12,35,64,.05)}
+
+.kpi .lbl{padding:9px;font-weight:600;font-size:11.5px;color:var(--sub);background:#fff;border-bottom:1px solid var(--line)}
+.kpi .val{padding:20px 8px;font-size:26px;font-weight:700;color:var(--navy-900);letter-spacing:-.02em}
+.kpi.k1 .lbl{color:var(--warn-ink)}
+.kpi.k2 .lbl{color:var(--primary-dark)}
+.kpi.k3 .lbl{color:var(--good-ink)}
+.kpi.k4 .lbl{color:var(--bad)}
 .kpi-mini{display:flex;gap:22px;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 18px;box-shadow:var(--shadow-sm)}
 .kpi-mini > div{display:flex;align-items:baseline;gap:8px}
 .kpi-mini .l{font-weight:500;color:var(--text-soft);font-size:12px}
-.kpi-mini .v{font-size:18px;font-weight:700;color:var(--primary);letter-spacing:-.01em}
-.kpi-mini .v.alert{color:#C0392B}
+.kpi-mini .v{font-size:18px;font-weight:700;color:var(--navy-900);letter-spacing:-.01em}
+.kpi-mini .v.alert{color:var(--bad)}
 .toolbar{display:flex;gap:8px;margin:8px 0;flex-wrap:wrap;align-items:center}
 .toolbar input,.toolbar select{padding:7px 10px;border:1px solid var(--border);border-radius:6px;font:inherit;background:#fff;transition:border-color .15s}
 .toolbar input:focus,.toolbar select:focus{border-color:var(--primary);outline:none}
-.btn{background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font:inherit;font-weight:600;transition:all .15s;box-shadow:0 1px 2px rgba(52,152,219,.12);letter-spacing:.01em}
-.btn:hover{background:var(--primary-dark);box-shadow:0 3px 8px rgba(52,152,219,.2);transform:translateY(-1px)}
-.btn:active{transform:translateY(0)}
-.btn.sm{padding:5px 12px;font-size:12px}
-.btn.danger{background:#E74C3C;box-shadow:0 1px 2px rgba(231,76,60,.15)}
-.btn.danger:hover{background:#C0392B;box-shadow:0 3px 8px rgba(231,76,60,.25)}
-.btn.ghost{background:#fff;color:var(--primary);border:1px solid var(--border);box-shadow:none}
-.btn.ghost:hover{background:var(--primary-soft);border-color:var(--primary);transform:none}
+.btn{background:var(--navy-600);color:#fff;border:1px solid var(--navy-600);padding:7px 14px;border-radius:9px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;transition:background .12s,border-color .12s;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--navy-700);border-color:var(--navy-700)}
+
+.btn.sm{padding:4px 10px;font-size:12px;border-radius:7px}
+.btn.danger{background:var(--bad);border-color:var(--bad)}
+.btn.danger:hover{background:#b32f2f;border-color:#b32f2f}
+.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line);box-shadow:none;font-weight:400}
+.btn.ghost:hover{background:var(--navy-50);border-color:var(--navy-100)}
 .summary-bar{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px 18px;display:grid;grid-template-columns:repeat(6,1fr);gap:14px;align-items:center;margin-bottom:12px;box-shadow:var(--shadow-sm)}
 .summary-bar label{font-weight:600;font-size:11px;color:var(--text-soft);display:block;margin-bottom:3px}
 .summary-bar input{width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:5px;background:var(--input);font:inherit}
 .summary-bar input:focus{border-color:var(--primary);outline:none}
 .summary-bar .calc{background:var(--primary-soft);padding:7px 10px;border-radius:5px;text-align:center;font-weight:700;color:var(--primary-dark);border:1px solid var(--primary-light)}
 .summary-bar .judge{padding:7px 10px;border-radius:5px;text-align:center;font-weight:700}
-.judge.over{background:var(--red);color:#C0392B}
+.judge.over{background:var(--red);color:#d03b3b}
 .judge.tight{background:var(--orange);color:#A04000}
 .judge.ok{background:var(--green);color:#1E8449}
 .progress{display:inline-block;width:90%;height:14px;background:#eee;border-radius:7px;overflow:hidden;vertical-align:middle}
@@ -153,20 +159,20 @@ tr.done td input,tr.done td select,tr.done td textarea{color:#B2BABB;text-decora
 .master-col li{padding:6px 8px;border-bottom:1px solid #eee;display:flex;gap:6px;align-items:center}
 .master-col li input{flex:1;border:1px solid transparent;background:var(--input);padding:3px 6px;border-radius:3px;font:inherit}
 .master-col li input:focus{border-color:var(--header);outline:none}
-.master-col li .rm{background:transparent;border:none;color:#c0392b;cursor:pointer;font-size:14px}
+.master-col li .rm{background:transparent;border:none;color:#d03b3b;cursor:pointer;font-size:14px}
 .master-col li:last-child{border-bottom:none}
 .master-col .add{display:flex;gap:6px;padding:8px;background:#fafbfc;border:1px solid var(--border);border-top:none}
 .master-col .add input{flex:1;padding:4px 6px;border:1px solid var(--border);border-radius:3px;font:inherit}
 .legend{background:#fff;border:1px solid var(--border);border-radius:6px;padding:12px;margin-top:18px;font-size:12px;color:#444;line-height:1.7}
 .legend strong{color:var(--header)}
 .del-cell{text-align:center;width:38px}
-.del-btn{background:transparent;border:none;color:#c0392b;cursor:pointer;font-size:16px;line-height:1}
+.del-btn{background:transparent;border:none;color:#d03b3b;cursor:pointer;font-size:16px;line-height:1}
 .scroll-x{overflow-x:auto}
-.tag{display:inline-block;padding:2px 7px;border-radius:10px;font-size:11px;font-weight:700}
-.tag.A{background:#fdecec;color:#C00000}
-.tag.B{background:#fff5d9;color:#9C5700}
-.tag.C{background:#e8f0fb;color:#1F4E78}
-.tag.D{background:#eee;color:#555}
+.tag{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700}
+.tag.A{background:#fbeaea;color:var(--bad)}
+.tag.B{background:#fdf3dd;color:var(--warn-ink)}
+.tag.C{background:var(--navy-50);color:var(--navy-600)}
+.tag.D{background:#f1f3f6;color:var(--sub)}
 .toast{position:fixed;bottom:20px;right:20px;background:#2c3e50;color:#fff;padding:10px 16px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.2);opacity:0;transition:opacity .3s;pointer-events:none;z-index:100}
 .toast.show{opacity:1}
 /* ===== Calendar ===== */
@@ -192,25 +198,25 @@ tr.done td input,tr.done td select,tr.done td textarea{color:#B2BABB;text-decora
 .cal-day-col.weekend{background:#FBFCFD}
 .cal-hour-line{position:absolute;left:0;right:0;border-top:1px solid #F0F4F7;pointer-events:none}
 .cal-half-line{position:absolute;left:0;right:0;border-top:1px dashed #F7FAFC;pointer-events:none}
-.cal-now-line{position:absolute;left:0;right:0;height:2px;background:#E74C3C;z-index:4;pointer-events:none;box-shadow:0 0 4px rgba(231,76,60,.4)}
-.cal-now-line::before{content:"";position:absolute;left:-4px;top:-4px;width:10px;height:10px;border-radius:50%;background:#E74C3C}
-.cal-block{position:absolute;left:3px;right:3px;border-radius:6px;padding:4px 7px;font-size:10.5px;line-height:1.3;overflow:hidden;cursor:pointer;box-shadow:0 1px 2px rgba(52,73,94,.08);border-left:3px solid;z-index:2;transition:all .12s}
+.cal-now-line{position:absolute;left:0;right:0;height:2px;background:#d03b3b;z-index:4;pointer-events:none;box-shadow:0 0 4px rgba(231,76,60,.4)}
+.cal-now-line::before{content:"";position:absolute;left:-4px;top:-4px;width:10px;height:10px;border-radius:50%;background:#d03b3b}
+.cal-block{position:absolute;left:3px;right:3px;border-radius:6px;padding:4px 7px;font-size:10.5px;line-height:1.3;overflow:hidden;cursor:pointer;box-shadow:0 1px 2px rgba(12,35,64,.08);border-left:3px solid;z-index:2;transition:all .12s}
 /* 「自分」として選択中ユーザーのタスクは前面（他メンバーのタスクと重なった場合に隠れないように） */
-.cal-block.task.mine{z-index:5;box-shadow:0 2px 6px rgba(52,152,219,.25)}
+.cal-block.task.mine{z-index:5;box-shadow:0 2px 6px rgba(28,92,171,.25)}
 /* サイドバーからのジャンプ時に2秒間点滅 */
 .cal-block.task.flash{z-index:20 !important;animation:cal-flash 0.4s ease-in-out 5;outline:3px solid #ED7D31;outline-offset:1px}
 @keyframes cal-flash{
   0%,100%{box-shadow:0 0 0 0 rgba(237,125,49,0);transform:scale(1)}
   50%{box-shadow:0 0 0 8px rgba(237,125,49,.55);transform:scale(1.04)}
 }
-.cal-block:hover{z-index:6;box-shadow:0 4px 12px rgba(52,73,94,.18);overflow:visible;transform:translateX(1px)}
+.cal-block:hover{z-index:6;box-shadow:0 4px 12px rgba(12,35,64,.18);overflow:visible;transform:translateX(1px)}
 .cal-block.task{background:#FEF5E7;border-left-color:#F39C12;color:#7E5109}
 .cal-block.task.mit{background:#FCF3CF;border-left-color:#D4AC0D;color:#7D6608;font-weight:700}
 .cal-block.task.done{background:#F4F6F7;border-left-color:#BDC3C7;color:#909497;text-decoration:line-through}
 /* 統一: 期日 N 日前で 3 段階の警告色 */
 .cal-block.task.due-1w{background:#FEF9E7;border-left-color:#F1C40F;color:#7E5109}     /* 1週内：薄黄 */
 .cal-block.task.due-3d{background:#FCE5CD;border-left-color:#E67E22;color:#7E5109}     /* 3日前：オレンジ */
-.cal-block.task.due-overdue{background:#FADBD8;border-left-color:#E74C3C;color:#943126} /* 期限切れ：赤 */
+.cal-block.task.due-overdue{background:#FADBD8;border-left-color:#d03b3b;color:#943126} /* 期限切れ：赤 */
 .cal-block.event{background:var(--primary-light);border-left-color:var(--primary);color:var(--primary-dark)}
 /* 他ワークスペースの自分タスク：紫のストライプで明確に区別（読み取り専用） */
 .cal-block.other-ws{background:repeating-linear-gradient(45deg,#EDE7F6,#EDE7F6 6px,#E0D3F1 6px,#E0D3F1 12px);border-left-color:#8E44AD;color:#5B2C6F;cursor:pointer}
@@ -355,7 +361,7 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .meeting-rows .rt-editor{border:none;border-radius:0;min-height:60px;padding:8px 10px}
 .meeting-rows .mr-del-cell{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:6px;gap:4px}
 .meeting-rows .mr-del,.meeting-rows .mr-ins{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 6px;border-radius:4px;line-height:1}
-.meeting-rows .mr-del{color:#C0392B}
+.meeting-rows .mr-del{color:#d03b3b}
 .meeting-rows .mr-del:hover{background:#FADBD8}
 .meeting-rows .mr-ins{color:#1B7F5C;font-weight:700}
 .meeting-rows .mr-ins:hover{background:#D5F5E3}
@@ -408,11 +414,11 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .tree-section-count{margin-left:auto;font-size:10.5px;color:var(--muted);font-weight:600;background:#F4F6F7;padding:1px 8px;border-radius:9px}
 /* Parent-child task chips & indent */
 .pc-chip{display:inline-block;font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:8px;margin-right:5px;vertical-align:1px;letter-spacing:.02em}
-.pc-chip.parent{background:#3498DB;color:#fff}
+.pc-chip.parent{background:var(--primary);color:#fff}
 .pc-chip.child{background:#E67E22;color:#fff}
-.pc-chip.orphan{background:#C0392B;color:#fff}
+.pc-chip.orphan{background:#d03b3b;color:#fff}
 .pc-badge{display:inline-block;font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:8px;margin-right:5px;letter-spacing:.02em;flex:0 0 auto}
-.pc-badge.parent{background:#D6EAF8;color:#1F4E78}
+.pc-badge.parent{background:#d5e6f9;color:#14406e}
 .pc-badge.child{background:#FDEBD0;color:#7E5109}
 .pc-badge.orphan{background:#FADBD8;color:#943126}
 .pc-tree{color:#aaa;flex:0 0 auto;font-family:'SF Mono','Consolas',monospace;font-size:11px;margin-right:2px}
@@ -435,7 +441,7 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .tree-actions button:hover{background:#e0e8f0}
 .tree-actions button.add{background:#1F4E78;color:#fff;border-color:#1F4E78}
 .tree-actions button.toTask{background:#ED7D31;color:#fff;border-color:#ED7D31}
-.tree-actions button.del{color:#c0392b}
+.tree-actions button.del{color:#d03b3b}
 .expand-btn{padding:2px 8px;font-size:11px;background:transparent;border:1px solid #ccd5e0;border-radius:3px;cursor:pointer;font-family:inherit}
 .expand-btn.open{background:var(--header);color:#fff;border-color:var(--header)}
 
@@ -455,7 +461,7 @@ body > main:has(#view-calendar.active){overflow:hidden}
 .side-tab button{flex:1;padding:6px;font-size:11px;background:transparent;border:none;border-radius:5px;cursor:pointer;font-family:inherit;color:var(--text-soft);font-weight:500;transition:all .12s}
 .side-tab button:hover{background:#fff}
 .side-tab button.active{background:#fff;color:var(--primary);box-shadow:var(--shadow-sm);font-weight:700}
-.side-tab button .tab-badge{display:inline-block;margin-left:4px;padding:1px 6px;font-size:9.5px;font-weight:700;border-radius:9px;background:rgba(52,152,219,.18);color:var(--primary-dark);min-width:18px;text-align:center;line-height:1.4;vertical-align:1px;transition:all .12s}
+.side-tab button .tab-badge{display:inline-block;margin-left:4px;padding:1px 6px;font-size:9.5px;font-weight:700;border-radius:9px;background:rgba(28,92,171,.14);color:var(--primary-dark);min-width:18px;text-align:center;line-height:1.4;vertical-align:1px;transition:all .12s}
 .side-tab button.active .tab-badge{background:var(--primary);color:#fff}
 .side-tab button .tab-badge.zero{opacity:.4}
 .side-task{padding:9px 10px;background:#fff;border:1px solid var(--border);border-left:3px solid #F39C12;border-radius:7px;margin-bottom:7px;font-size:11.5px;cursor:grab;transition:all .12s;box-shadow:var(--shadow-sm)}
@@ -465,7 +471,7 @@ body > main:has(#view-calendar.active){overflow:hidden}
 /* 統一: 期日 N 日前で 3 段階の警告色 */
 .side-task.due-1w{background:#FEF9E7;border-left-color:#F1C40F}     /* 1週内：薄黄 */
 .side-task.due-3d{background:#FCE5CD;border-left-color:#E67E22}     /* 3日前：オレンジ */
-.side-task.due-overdue{background:#FADBD8;border-left-color:#E74C3C} /* 期限切れ：赤 */
+.side-task.due-overdue{background:#FADBD8;border-left-color:#d03b3b} /* 期限切れ：赤 */
 .side-task .ttl{font-weight:600;line-height:1.4;color:var(--text)}
 .side-task .meta{font-size:10.5px;color:var(--text-soft);margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .side-task .row{display:flex;gap:5px;margin-top:6px;align-items:center}
@@ -477,7 +483,7 @@ body > main:has(#view-calendar.active){overflow:hidden}
 .side-task .field-label{font-size:10.5px;color:var(--text-soft);font-weight:600;flex:0 0 auto}
 .side-task .est-slider{display:flex;align-items:center;gap:6px;margin-top:6px;width:100%}
 .side-task .est-slider input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:5px;background:var(--primary-light);border-radius:3px;outline:none;cursor:pointer}
-.side-task .est-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;background:var(--primary);border-radius:50%;cursor:pointer;box-shadow:0 1px 3px rgba(52,152,219,.3)}
+.side-task .est-slider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;background:var(--primary);border-radius:50%;cursor:pointer;box-shadow:0 1px 3px rgba(28,92,171,.3)}
 .side-task .est-slider input[type=range]::-moz-range-thumb{width:16px;height:16px;background:var(--primary);border-radius:50%;cursor:pointer;border:none}
 .side-task .est-slider .est-val{font-size:11px;font-weight:700;color:var(--primary-dark);min-width:48px;text-align:right;font-feature-settings:"tnum"}
 .side-task .chk{margin-right:5px;cursor:pointer}
@@ -508,7 +514,7 @@ body > main:has(#view-calendar.active){overflow:hidden}
 .report-stat{background:var(--primary-soft);border-radius:8px;padding:10px 12px;text-align:center}
 .report-stat .lbl{font-size:11px;color:var(--text-soft);font-weight:600}
 .report-stat .val{font-size:22px;font-weight:700;color:var(--primary-dark);margin-top:2px;letter-spacing:-.02em}
-.report-stat .val.alert{color:#C0392B}
+.report-stat .val.alert{color:#d03b3b}
 .report-section{margin:20px 0}
 .report-section h4{margin:0 0 8px;color:var(--text);font-size:13px;border-left:3px solid var(--primary);padding-left:8px;font-weight:700}
 .report-tasks{font-size:12px;border-collapse:separate;border-spacing:0;width:100%}
@@ -555,7 +561,7 @@ body > main:has(#view-calendar.active){overflow:hidden}
 .google-auth .row input{flex:1;min-width:200px;padding:5px 7px;border:1px solid var(--border);border-radius:3px;font:inherit}
 .google-auth .status{font-weight:700;padding:2px 7px;border-radius:3px;font-size:11px}
 .google-auth .status.ok{background:#eaf6e3;color:#0f8a4f}
-.google-auth .status.no{background:#fdecec;color:#c0392b}
+.google-auth .status.no{background:#fdecec;color:#d03b3b}
 .google-auth small{color:#666;line-height:1.6;display:block;margin-top:6px}
 
 /* Drop targets */
@@ -756,7 +762,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
 .settings-nav button{display:flex;width:100%;text-align:left;background:transparent;border:none;padding:9px 14px;cursor:pointer;font-family:inherit;font-size:13px;color:var(--text-soft);border-radius:7px;align-items:center;gap:8px;margin-bottom:2px;font-weight:500;transition:all .12s}
 .settings-nav button:hover{background:#fff;color:var(--text)}
 .settings-nav button.active{background:#fff;color:var(--primary);box-shadow:var(--shadow-sm);font-weight:700}
-.settings-nav button.pane-logout{color:#C0392B;margin-top:auto}
+.settings-nav button.pane-logout{color:#d03b3b;margin-top:auto}
 .settings-nav button.pane-logout:hover{background:#FADBD8;color:#943126}
 .settings-nav button.pane-logout.active{background:#FADBD8;color:#943126}
 .settings-nav .divider{height:1px;background:var(--border);margin:8px 6px}
@@ -1100,7 +1106,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
         <button type="button" data-rt="underline" title="下線 (Ctrl+U)"><u>U</u></button>
         <span class="sep"></span>
         <span class="rt-colors" title="文字色">
-          <button type="button" class="rt-color-btn" data-rt-color="#C0392B" style="background:#C0392B" title="赤"></button>
+          <button type="button" class="rt-color-btn" data-rt-color="#d03b3b" style="background:#d03b3b" title="赤"></button>
           <button type="button" class="rt-color-btn" data-rt-color="#2E7D32" style="background:#2E7D32" title="緑"></button>
           <button type="button" class="rt-color-btn" data-rt-color="#E6B800" style="background:#E6B800" title="黄"></button>
           <button type="button" class="rt-color-btn" data-rt-color="#1976D2" style="background:#1976D2" title="青"></button>
@@ -1244,8 +1250,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
       <h4>デイリータスク <span class="count" id="sideCount">0</span></h4>
       <button class="btn sm" style="width:100%;margin-bottom:8px" onclick="addTask()">＋ タスク追加</button>
       <div class="side-tab">
-        <button class="active" data-side="today">本日<span class="tab-badge" data-c="today">0</span></button>
-        <button data-side="week" title="カレンダーに表示中の週のタスク">表示週<span class="tab-badge" data-c="week">0</span></button>
+        <button class="active" data-side="undone" title="完了していないタスク">未完了<span class="tab-badge" data-c="undone">0</span></button>
         <button data-side="unscheduled">未割当<span class="tab-badge" data-c="unscheduled">0</span></button>
         <button data-side="all">全て<span class="tab-badge" data-c="all">0</span></button>
       </div>
@@ -1267,7 +1272,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
 
   <div class="cal-legend">
     <span><i style="background:#FEF5E7;border-left-color:#F39C12"></i>タスク</span>
-    <span><i style="background:#FADBD8;border-left-color:#E74C3C"></i>遅延タスク</span>
+    <span><i style="background:#FADBD8;border-left-color:#d03b3b"></i>遅延タスク</span>
     <span><i style="background:#F4F6F7;border-left-color:#BDC3C7"></i>完了タスク</span>
     <span><i style="background:var(--primary-light);border-left-color:var(--primary)"></i>カレンダー予定</span>
     <span><i style="background:repeating-linear-gradient(45deg,#EDE7F6,#EDE7F6 3px,#E0D3F1 3px,#E0D3F1 6px);border-left-color:#8E44AD"></i>他WSの自分タスク</span>
@@ -1355,7 +1360,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
   <!-- Workspace pane -->
   <div class="settings-pane active" id="pane-workspace">
     <h3>🏢 ワークスペース情報</h3>
-    <div id="wsInfoBanner" style="background:#EBF5FB;border:1px solid var(--primary-light);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--text-soft);margin-bottom:14px"></div>
+    <div id="wsInfoBanner" style="background:var(--section);border:1px solid var(--primary-light);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--text-soft);margin-bottom:14px"></div>
     <div class="profile-form">
       <div class="field">
         <label>ワークスペース名</label>
@@ -1385,11 +1390,11 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
       <p class="help" style="font-size:11px;color:#666;margin-top:8px">※ 各メンバーがGoogleでログインすると、ここに自動追加されます（最初にログインした方がオーナー）。</p>
 
       <div id="wsDangerZone" style="display:none;margin-top:24px;padding-top:18px;border-top:2px solid #FADBD8">
-        <h4 style="color:#C0392B;margin:0 0 8px">⚠ 危険な操作（オーナー専用）</h4>
+        <h4 style="color:#d03b3b;margin:0 0 8px">⚠ 危険な操作（オーナー専用）</h4>
         <div style="color:var(--text-soft);font-size:12px;margin-bottom:10px">
           ワークスペースを削除すると、クラウド上のすべてのデータ（プロジェクト・タスク・履歴）が失われ、参加メンバー全員がアクセスできなくなります。<strong>この操作は取り消せません。</strong>
         </div>
-        <button class="btn" style="background:#C0392B;border-color:#C0392B" onclick="deleteWorkspace()">🗑 ワークスペースを完全削除</button>
+        <button class="btn" style="background:#d03b3b;border-color:#d03b3b" onclick="deleteWorkspace()">🗑 ワークスペースを完全削除</button>
       </div>
     </div>
   </div>
@@ -1401,13 +1406,13 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
       ログアウトすると、このブラウザのセッションが終了します。<br>
       ローカルに保存されたデータは保持され、再ログイン後に復元されます。クラウド同期中のワークスペースのデータも安全です。
     </div>
-    <button class="btn" style="background:#C0392B;border-color:#C0392B" onclick="appLogout()">🚪 ログアウトする</button>
+    <button class="btn" style="background:#d03b3b;border-color:#d03b3b" onclick="appLogout()">🚪 ログアウトする</button>
   </div>
 
   <!-- Display + work settings pane (個人設定) -->
   <div class="settings-pane" id="pane-display">
     <h3>👤 個人設定（このアカウントのみ）</h3>
-    <div style="background:#EBF5FB;border:1px solid var(--primary-light);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--text-soft);margin-bottom:14px">
+    <div style="background:var(--section);border:1px solid var(--primary-light);border-radius:7px;padding:10px 14px;font-size:12px;color:var(--text-soft);margin-bottom:14px">
       💡 ここで設定する内容は <strong style="color:var(--primary-dark)" id="prefsOwnerLabel">あなたのGoogleアカウント</strong> でログインしたときのみ反映されます。<br>
       他のチームメンバーには影響しません。同じワークスペース内でも各自が独立した設定を持てます。
     </div>
@@ -1539,7 +1544,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
         <button class="btn" onclick="saveFirebaseConfigUI()">💾 設定を保存・接続</button>
       </div>
 
-      <div style="margin-top:18px;padding:10px 14px;background:#EBF5FB;border:1px solid var(--primary-light);border-radius:7px;font-size:11.5px;color:var(--text-soft)">
+      <div style="margin-top:18px;padding:10px 14px;background:var(--section);border:1px solid var(--primary-light);border-radius:7px;font-size:11.5px;color:var(--text-soft)">
         🆔 ワークスペースID・招待URL・👥 参加メンバー一覧・🚪 離脱／メンバー登録再実行は <strong>「🏢 ワークスペース情報」</strong> ペインに移動しました。
       </div>
       <div style="margin-top:18px;padding:14px;background:#FFF8DC;border:1px solid #FFD966;border-radius:7px;font-size:11.5px;line-height:1.6">
@@ -1661,7 +1666,7 @@ service cloud.firestore {
         <button class="btn ghost" style="width:100%" onclick="wsChoiceJoin()">このワークスペースに参加</button>
       </div>
 
-      <div id="wsChoiceMsg" style="margin-top:12px;font-size:12px;color:var(--danger,#C0392B);min-height:16px"></div>
+      <div id="wsChoiceMsg" style="margin-top:12px;font-size:12px;color:var(--danger,#d03b3b);min-height:16px"></div>
     </div>
   </div>
 </div>
@@ -1745,7 +1750,7 @@ const DEFAULT_STATE = {
     targetDate: todayStr(), workMin:480, bufferMin:90,
     reviewStart:"", reviewEnd:"", reviewMember:"",
     taskCols:{ id:true, goal:false, mid:false, act:true, owner:true, startD:true, due:true, slot:true, pri:true, mit:true, est:true, act_min:true, status:true, defn:false, rem:true, alert:true, interrupt:false, note:false, time:true, done:true },
-    sideTab:"today",
+    sideTab:"undone",
     googleClientId:"", googleCalendarId:"primary"
   },
   kpt:{keep:"",problem:"",try:"",goalComments:{}},
@@ -2160,7 +2165,7 @@ function showKpiTasksPopup(title, tasks){
         <td class="center">${escapeHtml(t.status||'-')}</td>
         <td class="center" style="white-space:nowrap">
           <button data-popup-edit="${escapeHtml(t.id)}" title="編集" style="background:none;border:none;color:var(--primary);cursor:pointer;font-size:14px;padding:2px 4px">✏️</button>
-          <button data-popup-del="${escapeHtml(t.id)}" title="削除" style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>
+          <button data-popup-del="${escapeHtml(t.id)}" title="削除" style="background:none;border:none;color:#d03b3b;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>
         </td>
       </tr>`;
     });
@@ -2927,7 +2932,7 @@ function renderMeetings(){
             <button type="button" data-rt="underline" title="下線 (Ctrl+U)"><u>U</u></button>
             <span class="sep"></span>
             <span class="rt-colors" title="文字色">
-          <button type="button" class="rt-color-btn" data-rt-color="#C0392B" style="background:#C0392B" title="赤"></button>
+          <button type="button" class="rt-color-btn" data-rt-color="#d03b3b" style="background:#d03b3b" title="赤"></button>
           <button type="button" class="rt-color-btn" data-rt-color="#2E7D32" style="background:#2E7D32" title="緑"></button>
           <button type="button" class="rt-color-btn" data-rt-color="#E6B800" style="background:#E6B800" title="黄"></button>
           <button type="button" class="rt-color-btn" data-rt-color="#1976D2" style="background:#1976D2" title="青"></button>
@@ -3947,9 +3952,9 @@ function renderTree(g){
         <td class="input"><select data-tf="status" style="border:none;background:transparent;width:100%;font:inherit;outline:none">${statusOptions(t.status)}</select></td>
         <td class="center" style="white-space:nowrap">
           <button data-task-edit="${escapeHtml(t.id)}" title="詳細編集" style="background:none;border:none;color:var(--primary);cursor:pointer;font-size:14px;padding:2px 4px">✏️</button>
-          <button data-task-addchild="${escapeHtml(t.id)}" title="このタスクの子タスクを作成" style="background:none;border:none;color:#2E86C1;cursor:pointer;font-size:14px;padding:2px 4px">➕</button>
+          <button data-task-addchild="${escapeHtml(t.id)}" title="このタスクの子タスクを作成" style="background:none;border:none;color:var(--primary);cursor:pointer;font-size:14px;padding:2px 4px">➕</button>
           <button data-task-dup="${escapeHtml(t.id)}" title="複製" style="background:none;border:none;color:#16A085;cursor:pointer;font-size:14px;padding:2px 4px">📋</button>
-          <button data-task-del="${escapeHtml(t.id)}" title="削除" style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>
+          <button data-task-del="${escapeHtml(t.id)}" title="削除" style="background:none;border:none;color:#d03b3b;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>
         </td>
       </tr>`;
     });
@@ -4939,7 +4944,7 @@ function renderTreePresetsList(){
       <textarea class="preset-items" data-pf="items" placeholder="1行に1タスク（例：&#10;キックオフ会議の準備&#10;議事録テンプレ作成&#10;参加者リスト確定）">${escapeHtml(itemsText)}</textarea>
       <div class="preset-actions">
         <button class="btn sm ghost" data-act="dup">📋 複製</button>
-        <button class="btn sm ghost" data-act="del" style="color:#c0392b">✕ 削除</button>
+        <button class="btn sm ghost" data-act="del" style="color:#d03b3b">✕ 削除</button>
       </div>`;
     const presetId = p.id;
     const getCur = ()=> S.treePresets.find(x=>x.id===presetId) || p;
@@ -5033,7 +5038,7 @@ function renderAgendaPresetsList(){
       <textarea data-prf="minutes" data-pri="${i}" rows="2" placeholder="議事録の雛形（空欄可）"
         style="padding:5px 7px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:11.5px;resize:vertical;min-width:0">${escapeHtml(String(r.minutes||''))}</textarea>
       <button data-prow-del="${i}" title="行を削除"
-        style="background:none;border:none;color:#C0392B;cursor:pointer;font-size:12px;align-self:start;padding:4px">✕</button>`;
+        style="background:none;border:none;color:#d03b3b;cursor:pointer;font-size:12px;align-self:start;padding:4px">✕</button>`;
     card.innerHTML = `
       <div class="row1">
         <input type="text" class="preset-name" data-pf="name" value="${escapeHtml(p.name||'')}" placeholder="プリセット名">
@@ -5048,7 +5053,7 @@ function renderAgendaPresetsList(){
       <div class="preset-actions">
         <button class="btn sm ghost" data-act="addrow">＋ 行を追加</button>
         <button class="btn sm ghost" data-act="dup">📋 複製</button>
-        <button class="btn sm ghost" data-act="del" style="color:#c0392b">✕ 削除</button>
+        <button class="btn sm ghost" data-act="del" style="color:#d03b3b">✕ 削除</button>
       </div>`;
     card.querySelector('[data-pf="name"]').addEventListener('change', e=>{
       const cur = getCur();
@@ -5840,8 +5845,7 @@ function focusSideTaskDetail(taskId){
     const wkStart = S.ui.weekStart;
     const wkEnd = addDays(wkStart, 6);
     const inTab = (
-      (S.ui.sideTab==='today' && t.startD===todayStr()) ||
-      (S.ui.sideTab==='week' && t.startD>=wkStart && t.startD<=wkEnd) ||
+      (S.ui.sideTab==='undone' && t.status!=='完了') ||
       (S.ui.sideTab==='unscheduled' && isUnassigned(t))
     );
     if(!inTab){ S.ui.sideTab = 'all'; }
@@ -6081,7 +6085,7 @@ function clearEvents(){
 
 // ===== Calendar side panel (task list) =====
 function renderSideTasks(){
-  const tab = S.ui.sideTab || 'today';
+  const tab = S.ui.sideTab || 'undone';
   document.querySelectorAll('.side-tab button').forEach(b=>{
     b.classList.toggle('active', b.dataset.side===tab);
   });
@@ -6118,8 +6122,7 @@ function renderSideTasks(){
       return true;
     };
     const tabCounts = {
-      today: S.tasks.filter(t => t.startD === today && passesFilters(t)).length,
-      week: wkStart ? S.tasks.filter(t => t.startD && t.startD >= wkStart && t.startD <= wkEnd && passesFilters(t)).length : 0,
+      undone: S.tasks.filter(t => t.status !== '完了' && passesFilters(t)).length,
       unscheduled: S.tasks.filter(t => isUnassigned(t) && passesFilters(t)).length,
       all: S.tasks.filter(passesFilters).length
     };
@@ -6149,8 +6152,7 @@ function renderSideTasks(){
   const wkStart = S.ui.weekStart;
   const wkEnd = addDays(wkStart, 6);
   let list = S.tasks.slice();
-  if(tab==='today') list = list.filter(t=>t.startD===todayStr());
-  else if(tab==='week') list = list.filter(t=>t.startD && t.startD>=wkStart && t.startD<=wkEnd);
+  if(tab==='undone') list = list.filter(t=>t.status!=='完了');
   else if(tab==='unscheduled') list = list.filter(isUnassigned);
   if(memVal) list = list.filter(t=>t.owner===memVal);
   if(stVal) list = list.filter(t=>t.status===stVal);
@@ -7314,7 +7316,7 @@ async function googleFetchEvents(silent){
       } else if(silent){
         // バックグラウンドで失敗 → ステータスにユーザー向けの再認証ボタン表示用ヒントを残す
         if(status){
-          status.innerHTML = '<span style="color:#C0392B;cursor:pointer;text-decoration:underline" onclick="googleFetchEvents()">⚠ 権限切れ・ここをクリックして更新</span>';
+          status.innerHTML = '<span style="color:#d03b3b;cursor:pointer;text-decoration:underline" onclick="googleFetchEvents()">⚠ 権限切れ・ここをクリックして更新</span>';
         }
         console.warn('[gcal] silent refresh failed; user action required');
         return;
@@ -9886,14 +9888,14 @@ async function renderAdminWsMembers(){
           <span style="color:var(--muted);font-weight:400;font-size:11px">[${escapeHtml(doc.id)}]・${members.length}名${iAmMember?'':'・<span style="color:#A04000">未所属</span>'}${isCur?'・<span style="color:var(--primary)">表示中</span>':''}</span>
           <span style="flex:1"></span>
           ${isCur ? '' : `<button class="btn sm ghost" data-admin-ws-open="${escapeHtml(doc.id)}" title="このワークスペースを開く（所属していなくても閲覧できます）">▶ 開く</button>`}
-          <button class="btn sm ghost" data-admin-ws-del="${escapeHtml(doc.id)}" data-ws-name="${escapeHtml(wsName)}" style="color:#C0392B;border-color:#e6b0aa" title="このワークスペースを完全に削除">🗑 削除</button>
+          <button class="btn sm ghost" data-admin-ws-del="${escapeHtml(doc.id)}" data-ws-name="${escapeHtml(wsName)}" style="color:#d03b3b;border-color:#e6b0aa" title="このワークスペースを完全に削除">🗑 削除</button>
         </div>
         ${members.length === 0 ? '<div style="color:var(--muted);font-size:12px">ログインメンバーなし</div>'
           : members.map(m => `<div style="font-size:12px;padding:2px 0;display:flex;gap:8px">
               <span style="min-width:120px">${escapeHtml(m.name||'(名前未設定)')}</span>
               <span style="color:var(--muted)">${escapeHtml(m.email||'')}</span>
               ${m.role === 'owner' ? '<span style="color:var(--primary);font-size:11px">owner</span>' : ''}
-              ${isAppAdmin(m.email) ? '<span style="color:#C0392B;font-size:11px;font-weight:700">admin</span>' : ''}
+              ${isAppAdmin(m.email) ? '<span style="color:#d03b3b;font-size:11px;font-weight:700">admin</span>' : ''}
             </div>`).join('')}
       </div>`;
     });
@@ -9915,7 +9917,7 @@ async function renderAdminWsMembers(){
     });
     renderAdminRoleList(); // メール一覧が揃ったのでロール一覧を更新
   }catch(e){
-    host.innerHTML = `<div style="color:#C0392B;font-size:12px">読込に失敗しました：${escapeHtml(e.message||String(e))}</div>`;
+    host.innerHTML = `<div style="color:#d03b3b;font-size:12px">読込に失敗しました：${escapeHtml(e.message||String(e))}</div>`;
   }
 }
 // admin：ワークスペースを完全削除（本体＋サブコレクション）
@@ -9967,7 +9969,7 @@ async function adminDeleteWorkspace(wsId, wsName){
     alert(`ワークスペース「${label}」を削除しました（${delCount}件のドキュメントを削除）。`);
     renderAdminWsMembers();
   }catch(e){
-    if(host) host.innerHTML = `<div style="color:#C0392B;font-size:12px">削除に失敗しました：${escapeHtml(e.message||String(e))}</div>`;
+    if(host) host.innerHTML = `<div style="color:#d03b3b;font-size:12px">削除に失敗しました：${escapeHtml(e.message||String(e))}</div>`;
     alert('削除に失敗しました：' + (e.message||String(e)));
     setTimeout(renderAdminWsMembers, 1500);
   }
@@ -9983,7 +9985,7 @@ function renderAdminRoleList(){
     return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border-soft);font-size:12.5px">
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(em)}</span>
       ${isBoot
-        ? '<span style="color:#C0392B;font-size:11px;font-weight:700">admin（固定）</span>'
+        ? '<span style="color:#d03b3b;font-size:11px;font-weight:700">admin（固定）</span>'
         : `<select data-admin-role="${escapeHtml(em)}" style="padding:4px 8px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:12px">
             <option value="user" ${!isAdm?'selected':''}>一般ユーザー</option>
             <option value="admin" ${isAdm?'selected':''}>admin</option>
@@ -10013,7 +10015,7 @@ function renderAdminDomainList(){
     </div>`).join('') +
     extra.map(d => `<div style="display:flex;gap:8px;align-items:center;padding:4px 0;font-size:12.5px">
       <span style="flex:1">@${escapeHtml(d)}</span>
-      <button data-del-domain="${escapeHtml(d)}" style="background:none;border:1px solid var(--border);color:#C0392B;border-radius:5px;cursor:pointer;font-size:11px;padding:2px 8px">削除</button>
+      <button data-del-domain="${escapeHtml(d)}" style="background:none;border:1px solid var(--border);color:#d03b3b;border-radius:5px;cursor:pointer;font-size:11px;padding:2px 8px">削除</button>
     </div>`).join('');
   host.querySelectorAll('[data-del-domain]').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -10622,7 +10624,8 @@ function revealTaskInSidebar(taskId){
     S.ui.sideTab = 'unscheduled';            // 未割当
   } else if(t.startD){
     S.ui.weekStart = weekStartOf(t.startD);  // タスクのある週を表示
-    S.ui.sideTab = 'week';                    // 表示週
+    // 「表示週」タブは廃止したため、確実に見える「全て」を使う
+    S.ui.sideTab = 'all';
   } else {
     S.ui.sideTab = 'all';
   }
@@ -11061,11 +11064,11 @@ async function openProjectTransferModal(goalId){
   const candidates = (_myWorkspaces||[]).filter(w => w.id !== S.workspaceId);
   const linkedTasks = S.tasks.filter(t => t.goal === goalId);
   if(candidates.length === 0){
-    body.innerHTML = `<div style="padding:14px;color:#c0392b;background:#FADBD8;border-radius:7px">参加中の別ワークスペースが見つかりません。先に「🏢 ワークスペース切替メニュー」から新規作成または参加してください。</div>`;
+    body.innerHTML = `<div style="padding:14px;color:#d03b3b;background:#FADBD8;border-radius:7px">参加中の別ワークスペースが見つかりません。先に「🏢 ワークスペース切替メニュー」から新規作成または参加してください。</div>`;
     return;
   }
   body.innerHTML = `
-    <div style="background:#EBF5FB;border:1px solid var(--primary-light);padding:10px 14px;border-radius:7px;margin-bottom:14px;font-size:12.5px;line-height:1.6">
+    <div style="background:var(--section);border:1px solid var(--primary-light);padding:10px 14px;border-radius:7px;margin-bottom:14px;font-size:12.5px;line-height:1.6">
       🎯 対象：<strong>${escapeHtml(goal.name||goal.id)}</strong>（${linkedTasks.length}件のタスクを含む）
     </div>
     <div style="margin-bottom:12px">
@@ -11087,7 +11090,7 @@ async function openProjectTransferModal(goalId){
         <input type="radio" name="transferMode" value="move">
         <div>
           <div style="font-weight:600">✂ 移動（カット）</div>
-          <div style="font-size:11.5px;color:var(--muted)">移動先にコピー後、現ワークスペースから削除します。<strong style="color:#C0392B">取消不可</strong></div>
+          <div style="font-size:11.5px;color:var(--muted)">移動先にコピー後、現ワークスペースから削除します。<strong style="color:#d03b3b">取消不可</strong></div>
         </div>
       </label>
     </div>
@@ -11185,7 +11188,7 @@ async function executeProjectTransfer(){
     setTimeout(closeProjectTransferModal, 1400);
   }catch(err){
     console.error('Project transfer failed:', err);
-    setStat('失敗：'+(err.message||err.code||err), '#C0392B');
+    setStat('失敗：'+(err.message||err.code||err), '#d03b3b');
     if(btn) btn.disabled = false;
   }
 }
@@ -11534,7 +11537,9 @@ function ensureDefaults(){
   const ud = DEFAULT_STATE.ui;
   if(!S.ui.taskCols) S.ui.taskCols = JSON.parse(JSON.stringify(ud.taskCols));
   Object.keys(ud.taskCols).forEach(k=>{ if(!(k in S.ui.taskCols)) S.ui.taskCols[k] = ud.taskCols[k]; });
-  if(!S.ui.sideTab) S.ui.sideTab = 'today';
+  if(!S.ui.sideTab) S.ui.sideTab = 'undone';
+  // 旧タブ(本日/表示週)を保存しているユーザーは新しい既定へ移行する
+  if(S.ui.sideTab === 'today' || S.ui.sideTab === 'week') S.ui.sideTab = 'undone';
   if(S.ui.googleClientId===undefined) S.ui.googleClientId = '';
   if(!S.ui.googleCalendarId) S.ui.googleCalendarId = 'primary';
   if(S.ui.viewAsMember===undefined) S.ui.viewAsMember = '';
@@ -11805,7 +11810,7 @@ async function renderPersonalView(){
     }));
   }catch(e){
     console.error('personal view fetch failed:', e);
-    content.innerHTML = `<div style="padding:18px;color:#c0392b">読込失敗：${escapeHtml(e.message||String(e))}</div>`;
+    content.innerHTML = `<div style="padding:18px;color:#d03b3b">読込失敗：${escapeHtml(e.message||String(e))}</div>`;
     if(stat) stat.textContent = '';
     _personalViewInflight = null;
     return;
@@ -11881,7 +11886,7 @@ function _renderPersonalViewFromRows(allRowsIn){
       let rowHover = '';   // ★ ホバー時の背景色（rowBg より少し濃いめ）
       if(due && r.status !== '完了'){
         const d = diffDays(due, todayStr());
-        if(d < 0){ dueColor = '#C0392B'; dueStr = `${due}（${-d}日超過）`; rowBg = '#fdedec'; rowHover = '#f9d6d4'; }
+        if(d < 0){ dueColor = '#d03b3b'; dueStr = `${due}（${-d}日超過）`; rowBg = '#fdedec'; rowHover = '#f9d6d4'; }
         else if(d <= 3){ dueColor = '#E67E22'; dueStr = `${due}（あと${d}日）`; rowBg = '#fdf2e9'; rowHover = '#fae3d0'; }
         else if(d <= 7){ dueColor = '#B7950B'; dueStr = `${due}（あと${d}日）`; rowBg = '#fef9e7'; rowHover = '#fcf0c9'; }
       }
