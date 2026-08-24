@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1787565229815";</script>
+<script>window.__HITTATSU_BUILD__ = "1787565840372";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -724,7 +724,9 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
 .ws-switcher-btn .icon{font-size:14px}
 .ws-switcher-btn .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ws-switcher-btn .caret{opacity:.6;font-size:10px}
-.ws-menu{position:absolute;top:calc(100% + 4px);left:0;background:#fff;border:1px solid var(--border);border-radius:9px;box-shadow:0 8px 26px rgba(44,62,80,.18);padding:6px;min-width:260px;z-index:50;display:none}
+/* 切替ボタンを右端に置いたため、メニューも右揃え(左揃えだと画面外へはみ出す)。
+   max-width で狭い画面でもビューポート内に収める。 */
+.ws-menu{position:absolute;top:calc(100% + 4px);right:0;left:auto;background:#fff;border:1px solid var(--border);border-radius:9px;box-shadow:0 8px 26px rgba(12,35,64,.18);padding:6px;min-width:260px;max-width:calc(100vw - 24px);z-index:50;display:none}
 .ws-switcher.open .ws-menu{display:block}
 .ws-menu .ws-label{font-size:10.5px;color:var(--muted);font-weight:700;padding:6px 10px 4px;letter-spacing:.05em;text-transform:uppercase}
 .ws-menu .ws-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--text)}
