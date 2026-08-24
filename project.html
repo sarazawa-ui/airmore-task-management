@@ -12115,7 +12115,10 @@ setInterval(()=>{ if(document.getElementById('view-calendar').classList.contains
   /* ヘッダー刷新: ワークスペース選択のみ左上に表示 */
   .app-header .logo-area, .app-header .hdr-right > *:not(#wsSwitcher){display:none !important}
   .app-header{justify-content:flex-start !important}
-  .app-header .hdr-right{margin-left:0 !important}
+  /* ワークスペース選択は右端へ。統合シェルの折りたたみサイドバーはホバーで216pxまで
+     せり出して左上を覆うため、左端に置くと隠れてクリックできなくなる。
+     予算管理・商談管理も会社セレクタが右上なので配置も揃う。 */
+  .app-header .hdr-right{margin-left:auto !important}
   .app-header #wsSwitcher{display:inline-flex}
   @media (max-width: 860px){ nav#appNav{position:static;width:auto;flex-direction:row;padding:0}.hitt-dock{position:static;width:auto}main#appMain{margin-left:0} }
 </style>
