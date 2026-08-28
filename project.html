@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1787900767109";</script>
+<script>window.__HITTATSU_BUILD__ = "1787902753824";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -2044,8 +2044,13 @@ function showKpiTasks(type){
 // カレンダー任意セルをタップしてタスクを配置するピッカー
 function openTaskPickerAt(dateStr, totalMin, allDay){
   if(!dateStr) return;
-  // 配置可能タスクのリスト（完了/中止以外）
-  const available = S.tasks.filter(t => t.status !== '完了' && t.status !== '中止');
+  // 配置可能タスクのリスト（完了/中止以外）。
+  // 自分のカレンダーに置くので、候補は自分のタスクだけにする
+  // （担当が未設定のタスクは、これから自分が持つものとして残す）
+  const myName = (_currentUser && _currentUser.name) || '';
+  const available = S.tasks.filter(
+    t => t.status !== '完了' && t.status !== '中止' && (!myName || !t.owner || t.owner === myName)
+  );
   // ソート：期日（due）が近い順、期日なしは末尾
   available.sort((a,b) => {
     const ad = a.due || '9999-12-31';
@@ -2058,10 +2063,10 @@ function openTaskPickerAt(dateStr, totalMin, allDay){
   document.getElementById('kpiModalTitle').textContent = title;
   const content = document.getElementById('kpiModalContent');
   if(available.length === 0){
-    content.innerHTML = `<div style="padding:30px;text-align:center;color:var(--muted)">配置可能なタスクがありません。<br>サイドバーで「＋ タスク追加」してから配置してください。</div>`;
+    content.innerHTML = `<div style="padding:30px;text-align:center;color:var(--muted)">配置できる自分のタスクがありません。<br>サイドバーで「＋ タスク追加」してから配置してください。</div>`;
   } else {
     let html = `<div style="padding:10px 12px;background:var(--primary-soft);border-radius:6px;margin-bottom:10px;font-size:12px;color:var(--text-soft);border:1px solid var(--primary-light)">
-      タスクを選択するとこの日時に自動配置されます。
+      タスクを選択するとこの日時に自動配置されます。自分のタスク（担当未設定を含む）のみ表示しています。
     </div>`;
     html += `<table style="width:100%;font-size:12px"><thead><tr>
       <th style="width:80px">ID</th>
