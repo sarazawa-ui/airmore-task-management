@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1787884182246";</script>
+<script>window.__HITTATSU_BUILD__ = "1787885691810";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -7783,6 +7783,22 @@ function initFirebase(){
             ensureDefaults();
             renderAll();
           }
+          // ★ 埋め込み(Hittatsu内のiframe)では onLoggedIn を通らず、ここでセッションが
+          //   復元される。参加ワークスペースの確認もこの経路で行わないと、どこにも
+          //   参加していない人にサンプルデータの画面が見えてしまう。
+          (async ()=>{
+            try{
+              if(!S.workspaceId){
+                let mine = [];
+                try{ mine = await fetchMyWorkspaces({ force: true }); }catch(e){}
+                if(Array.isArray(mine) && mine.length > 0){
+                  await joinOrCreateWorkspace(mine[0].id);
+                  renderAll();
+                }
+              }
+            }catch(e){ console.warn('workspace resolve (restore) failed:', e); }
+            try{ enforceWorkspaceGate(); }catch(e){}
+          })();
         }
         // ★ Firebase 認証が解決した時点で WS 切替プルダウンを必ず再表示
         // 予算管理からの遷移後など、auth 解決前に updateWsSwitcherLabel が走って隠れたままになるのを救済
@@ -10295,6 +10311,37 @@ async function onLoggedIn(){
   try{ startTokenAutoRefresh(); }catch(e){ console.warn('startTokenAutoRefresh failed:', e); }
 }
 
+// ===== ワークスペース参加ゲート =====
+// 参加中のワークスペースが1つも無い状態では、サンプルデータの画面を触らせず
+// 「新規作成 / IDで参加」の選択だけを出す。左メニューでどのビューへ切り替えても同じ。
+// データには一切触れない（表示を止めるだけ）。
+function hasJoinedWorkspace(){
+  return !!(S && S.workspaceId);
+}
+function enforceWorkspaceGate(){
+  // ログイン前・ローカルモードは対象外（従来どおり）
+  if(!_firebaseReady || !_currentUser) return false;
+  const main = document.getElementById('appMain');
+  const modal = document.getElementById('wsChoiceModal');
+  if(hasJoinedWorkspace()){
+    if(main && main.dataset.wsGated === '1'){ main.style.visibility = ''; delete main.dataset.wsGated; }
+    return false;
+  }
+  // 未参加：本文を隠し、選択画面を出したままにする
+  if(main){ main.style.visibility = 'hidden'; main.dataset.wsGated = '1'; }
+  if(modal && !modal.classList.contains('show')){
+    const nameEl = document.getElementById('wsChoiceName');
+    const joinEl = document.getElementById('wsChoiceJoinId');
+    const msg = document.getElementById('wsChoiceMsg');
+    if(nameEl) nameEl.value = '';
+    if(joinEl) joinEl.value = '';
+    if(msg) msg.textContent = '';
+    modal.classList.add('show');
+    setTimeout(()=>{ try{ nameEl && nameEl.focus(); }catch(e){} }, 60);
+  }
+  return true;
+}
+
 // ===== 初回ワークスペース選択（新規作成 / 既存に参加）=====
 let _wsChoiceResolve = null;
 function chooseFirstWorkspace(){
@@ -10315,6 +10362,9 @@ function chooseFirstWorkspace(){
 function _closeWsChoice(){
   const modal = document.getElementById('wsChoiceModal');
   if(modal) modal.classList.remove('show');
+  // ゲート中に隠していた本文を戻す(参加できたときだけここに来る)
+  const main = document.getElementById('appMain');
+  if(main && main.dataset.wsGated === '1'){ main.style.visibility = ''; delete main.dataset.wsGated; }
   const r = _wsChoiceResolve; _wsChoiceResolve = null;
   if(r) r();
 }
@@ -11711,6 +11761,8 @@ function renderAll(){
   const cap = _captureFocus();
   _origRenderAll();
   if(cap) _restoreFocus(cap);
+  // ワークスペース未参加なら、どのビューを開いても参加画面を出したままにする
+  try{ enforceWorkspaceGate(); }catch(e){}
 }
 
 // ★ 汎用フォーカス保持ラッパ：個別 render（renderReview, renderHistory 等）にも適用する。
