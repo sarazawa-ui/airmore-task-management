@@ -33,13 +33,17 @@ service cloud.firestore {
     //   書き込み：admin のみ
     match /appConfig/{doc} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && _isAppAdmin(request.auth.token.email);
+      // 認証ドメイン・admin一覧の変更は最上位権限(オーナー)のみ
+      allow write: if request.auth != null && _isOwner(request.auth.token.email);
     }
 
     // === Workspace 本体 ===
     // 許可ドメインのユーザーのみ読み書き可（メンバーシップはクライアント側で管理）
     match /workspaces/{wsId} {
-      allow read, write: if _domainOk();
+      allow read: if _domainOk();
+      allow create, update: if _domainOk();
+      // ワークスペースの削除は最上位権限(オーナー)のみ
+      allow delete: if _domainOk() && _isOwner(request.auth.token.email);
 
       match /tasks/{doc=**}          { allow read, write: if _domainOk(); }
       match /goals/{doc=**}          { allow read, write: if _domainOk(); }
@@ -72,9 +76,16 @@ service cloud.firestore {
       allow read: if _domainOk();
       allow write: if _domainOk();
     }
+    // Hittatsuの権限(owner/admin/editor)。読取は全員、変更はオーナーのみ
+    match /globalBudget/userRoles {
+      allow read: if _domainOk();
+      allow write: if _domainOk() && _isOwner(request.auth.token.email);
+    }
+    // 上の個別ルールで制限したドキュメントは、この総括ルールの対象から外す
+    // (Firestoreは「どれか1つでも許可すれば通る」ため、除外しないと制限が効かない)
     match /globalBudget/{doc} {
       allow read: if _domainOk();
-      allow write: if _domainOk();
+      allow write: if _domainOk() && !(doc in ["userRoles", "roles"]);
     }
 
     // === 商談管理：会社（ワークスペース）単位の共有データ ===
@@ -127,6 +138,13 @@ service cloud.firestore {
   }
   function _gbWriteOk(email) {
     return _isBootstrapAdmin(email) || _gbRole(email) in ['admin', 'editor'];
+  }
+  // 最上位権限(オーナー)。globalBudget/userRoles の map に "owner" と記録された人。
+  // 1人も居ない状態でも運用できるよう、初期オーナーを直書きする(アプリ側と同じ)。
+  function _isOwner(email) {
+    return email.lower() == "sarazawa@n-airmore.com"
+      || (exists(/databases/$(database)/documents/globalBudget/userRoles)
+          && get(/databases/$(database)/documents/globalBudget/userRoles).data.get("map", {}).get(email.lower(), null) == "owner");
   }
   function _gbAdminOk(email) {
     return _isBootstrapAdmin(email) || _gbRole(email) == 'admin';
