@@ -5,16 +5,17 @@
 // 置き換える。触らない月・他社・予算・経費はそのまま残る。
 //
 // 使い方（backup フォルダで実行）:
-//   set GCP_SA_KEY=<サービスアカウントJSONの中身>
-//   node import-sales.js --company "エアモア" --file "…\【2024】エアモア_売上データ.csv"
-//   node import-sales.js --company "エアモア" --file "…" --apply
+//   node import-sales.js --key "…\サービスアカウント.json" --company "エアモア" --file "…\売上データ.csv"
+//   node import-sales.js --key "…" --company "エアモア" --file "…" --apply
 //
 //   --apply を付けるまでは書き込みません（何がどう変わるかだけ表示します）。
 //   実行前に globalBudget/data の内容を backup-globalBudget-<日時>.json へ保存します。
+//   鍵は --key（JSONファイルのパス）か、環境変数 GOOGLE_APPLICATION_CREDENTIALS /
+//   GCP_SA_KEY（JSONの中身）で渡します。
 
 import fs from "fs";
 import path from "path";
-import { initFirestore } from "./lib.js";
+import admin from "firebase-admin";
 
 /* ---------- 引数 ---------- */
 const argv = process.argv.slice(2);
@@ -25,9 +26,31 @@ const arg = (name) => {
 const APPLY = argv.includes("--apply");
 const COMPANY = arg("company");
 const FILE = arg("file");
+const KEY = arg("key");
 if (!COMPANY || !FILE) {
-  console.error('使い方: node import-sales.js --company "会社名" --file "CSVのパス" [--apply]');
+  console.error('使い方: node import-sales.js --key "鍵JSONのパス" --company "会社名" --file "CSVのパス" [--apply]');
   process.exit(1);
+}
+
+/* ---------- 認証（鍵ファイル / 環境変数） ---------- */
+function credentials() {
+  const p = KEY || process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (p) {
+    if (!fs.existsSync(p)) throw new Error(`鍵ファイルが見つかりません: ${p}`);
+    return JSON.parse(fs.readFileSync(p, "utf8"));
+  }
+  if (process.env.GCP_SA_KEY) return JSON.parse(process.env.GCP_SA_KEY);
+  throw new Error(
+    "サービスアカウントの鍵がありません。--key で鍵JSONのパスを指定するか、" +
+      "環境変数 GOOGLE_APPLICATION_CREDENTIALS / GCP_SA_KEY を設定してください。"
+  );
+}
+function initFirestore() {
+  const cred = credentials();
+  if (!admin.apps.length) {
+    admin.initializeApp({ credential: admin.credential.cert(cred), projectId: cred.project_id });
+  }
+  return admin.firestore();
 }
 
 /* ---------- CSV ---------- */
