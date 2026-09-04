@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1788507961045";</script>
+<script>window.__HITTATSU_BUILD__ = "1788514725853";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -2569,10 +2569,11 @@ function renderDashboard(){
 function renderGoals(){
   const tb = document.querySelector('#tblGoals tbody'); if(!tb) return;
   tb.innerHTML="";
-  // フィルタ状態（個人設定／既定: すべて表示）
-  const showCompleted = S.ui.showCompletedProjects !== false;
-  const showCanceled = S.ui.showCanceledProjects !== false;
-  const showHeld = S.ui.showHeldProjects !== false;
+  // フィルタ状態（個人設定／既定: 未選択＝完了・中止・保留は隠す）
+  // 終わったプロジェクトが一覧を埋めるため、既定では進行中だけを出す。
+  const showCompleted = S.ui.showCompletedProjects === true;
+  const showCanceled = S.ui.showCanceledProjects === true;
+  const showHeld = S.ui.showHeldProjects === true;
   // チェックボックス状態を反映
   const cbCompleted = document.getElementById('filterShowCompleted');
   const cbCanceled = document.getElementById('filterShowCanceled');
