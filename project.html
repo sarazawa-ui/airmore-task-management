@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1788773143309";</script>
+<script>window.__HITTATSU_BUILD__ = "1788774831440";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -2827,6 +2827,15 @@ function renderGoals(){
 let _meetingsExpandedSession = false;
 let _meetingSearch = ''; // 会議メモ検索キーワード（セッション内保持）
 
+/* 保存はISO(UTC)。そのまま切り出すと9時間ずれるため、表示はこの端末の時刻に直す */
+function fmtLocalDateTime(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d)) return String(iso);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 // ===== 会議メモの印刷（PDF保存） =====
 // 別ウィンドウを開くとポップアップブロックに引っかかるため、同じページの中に
 // 印刷用の内容を組み立て、印刷のときだけそれを見せる方式にしている。
@@ -2868,7 +2877,7 @@ function printMeeting(m){
       </table>
       <div class="mp-foot">
         ${m.locked
-          ? `記録済み${m.lockedBy?`／記録者：${escapeHtml(m.lockedBy)}`:''}${m.lockedAt?`　${escapeHtml(String(m.lockedAt).slice(0,16).replace('T',' '))}`:''}`
+          ? `記録済み${m.lockedBy?`／記録者：${escapeHtml(m.lockedBy)}`:''}${m.lockedAt?`　${escapeHtml(fmtLocalDateTime(m.lockedAt))}`:''}`
           : '※ この会議メモはまだ「記録する」を押していない下書きです'}
         <span style="float:right">出力日：${new Date().toISOString().slice(0,10)}</span>
       </div>
@@ -2924,8 +2933,8 @@ function _meetingInfoHtml(m){
         </div>
         <div class="meeting-field-row2">
           <div class="meeting-field"><label>開催場所</label><input type="text" data-mf="place" value="${escapeHtml(m.place||'')}" placeholder="例：本社 3F 会議室 ／ Google Meet"${la}></div>
-          <div class="meeting-field"><label>開始</label><input type="time" data-mf="startTime" value="${escapeHtml(m.startTime||'')}"${la}></div>
-          <div class="meeting-field"><label>終了</label><input type="time" data-mf="endTime" value="${escapeHtml(m.endTime||'')}"${la}></div>
+          <div class="meeting-field"><label>開始</label><input type="time" step="900" data-mf="startTime" value="${escapeHtml(m.startTime||'')}"${la}></div>
+          <div class="meeting-field"><label>終了</label><input type="time" step="900" data-mf="endTime" value="${escapeHtml(m.endTime||'')}"${la}></div>
         </div>
         <div class="meeting-field">
           <label>参加者一覧 <span style="color:var(--muted);font-weight:400;font-size:10.5px">（Web参加のチェック・役職は任意）</span></label>
@@ -3094,12 +3103,10 @@ function renderMeetings(){
         <div class="meeting-editor-head">
           <span class="meeting-id">${escapeHtml(selected.id)}</span>
           ${selected.createdBy ? `<span class="meeting-by">作成者：${escapeHtml(selected.createdBy)}</span>` : ''}
-          ${locked ? `<span class="meeting-locked-badge">🔒 記録済み（編集できません）${selected.lockedBy?`／${escapeHtml(selected.lockedBy)}`:''}${selected.lockedAt?`　${escapeHtml(String(selected.lockedAt).slice(0,16).replace('T',' '))}`:''}</span>` : ''}
+          ${locked ? `<span class="meeting-locked-badge">🔒 記録済み（編集できません）${selected.lockedBy?`／${escapeHtml(selected.lockedBy)}`:''}${selected.lockedAt?`　${escapeHtml(fmtLocalDateTime(selected.lockedAt))}`:''}</span>` : ''}
           <span style="flex:1"></span>
           <button class="btn sm ghost" data-meeting-print="${escapeHtml(selected.id)}">🖨 PDF印刷</button>
-          ${locked
-            ? `<button class="btn sm ghost" data-meeting-unlock="${escapeHtml(selected.id)}">🔓 記録を解除</button>`
-            : `<button class="btn sm" data-meeting-lock="${escapeHtml(selected.id)}">✅ 記録する</button>`}
+          ${locked ? '' : `<button class="btn sm" data-meeting-lock="${escapeHtml(selected.id)}">✅ 記録する</button>`}
           <button class="btn sm ghost" data-meeting-dup="${escapeHtml(selected.id)}">📋 複製</button>
           ${locked ? '' : `<button class="btn sm danger" data-meeting-del="${escapeHtml(selected.id)}">🗑 削除</button>`}
         </div>
@@ -3373,20 +3380,6 @@ function renderMeetings(){
       save(true, `会議メモを記録：${m.name||m.id}`);
       renderMeetings();
       toast('会議メモを記録しました（編集できません）');
-    });
-  });
-  list.querySelectorAll('[data-meeting-unlock]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const m = (S.meetings||[]).find(x => x.id === btn.dataset.meetingUnlock); if(!m) return;
-      if(!confirm(
-        `会議メモ「${m.name||m.id}」の記録を解除します。\n\n` +
-        `解除すると内容を編集できるようになります。本当に解除しますか？`
-      )) return;
-      m.locked = false;
-      m.updatedAt = new Date().toISOString();
-      save(true, `会議メモの記録を解除：${m.name||m.id}`);
-      renderMeetings();
-      toast('記録を解除しました');
     });
   });
   // ===== PDF印刷 =====
@@ -4692,7 +4685,7 @@ function cellFor(col, t){
     case 'startD':
       return `<td class="input"><input type="date" value="${t.startD||''}" data-f="startD"></td>`;
     case 'time':
-      return `<td class="input"><input type="time" value="${t.time||''}" data-f="time"></td>`;
+      return `<td class="input"><input type="time" step="900" value="${t.time||''}" data-f="time"></td>`;
     case 'due': {
       let cls = 'input';
       if(t.due && diffDays(t.due,todayStr())<0 && t.status!=='完了' && t.status!=='中止') cls += ' alert-red';
