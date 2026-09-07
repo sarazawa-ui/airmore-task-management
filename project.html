@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1788514725853";</script>
+<script>window.__HITTATSU_BUILD__ = "1788773143309";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -301,8 +301,11 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 #tblGoals td.drive-cell .drive-link[href="#"]{color:var(--muted);text-decoration:none;font-style:italic;pointer-events:none}
 /* Project completion definition card (above daily tasks in tree view) */
 /* 会議メモセクション */
-.meetings-wrap{margin:8px 12px 12px 12px;background:#fff;border:1px solid var(--border);border-radius:8px;overflow:hidden}
-.meetings-header{padding:9px 14px;background:var(--primary-soft);cursor:pointer;display:flex;align-items:center;gap:10px;font-weight:700;color:var(--primary-dark);user-select:none;font-size:13px}
+/* overflow:hidden を付けると、中の position:sticky（装飾ツールバー）が効かなくなるため付けない。
+   角丸のはみ出しは、先頭のヘッダー側に角丸を持たせて見た目をそろえる。 */
+.meetings-wrap{margin:8px 12px 12px 12px;background:#fff;border:1px solid var(--border);border-radius:8px}
+.meetings-header{padding:9px 14px;background:var(--primary-soft);cursor:pointer;display:flex;align-items:center;gap:10px;font-weight:700;color:var(--primary-dark);user-select:none;font-size:13px;border-radius:7px 7px 0 0}
+.meetings-header.expanded{border-radius:7px 7px 0 0}
 .meetings-header:hover{background:#cfe3f5}
 .meetings-header .m-toggle{font-size:11px;width:14px;display:inline-block;transition:transform .15s}
 .meetings-header.expanded .m-toggle{transform:rotate(90deg)}
@@ -349,10 +352,10 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .meeting-editor .rt-toolbar{position:sticky;top:calc(var(--hdrH, 58px) + 2px);z-index:5;box-shadow:0 2px 4px rgba(44,62,80,.08);border-radius:5px;border-bottom:1px solid var(--border)}
 /* 会議メモ 表形式（担当・議題・議事録） */
 .meeting-rows-wrap{overflow-x:auto;margin-top:6px}
-.meeting-rows{display:grid;grid-template-columns:120px 260px 1fr 40px;min-width:700px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#fff}
+.meeting-rows{display:grid;grid-template-columns:110px 220px minmax(0,1.4fr) minmax(0,1fr) 40px;min-width:860px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#fff}
 .meeting-rows .mr-head{background:var(--primary-light);color:var(--primary-dark);font-size:11px;font-weight:700;padding:7px 9px;border-bottom:1px solid var(--border)}
 .meeting-rows .mr-cell{border-bottom:1px solid var(--border-soft);border-right:1px solid var(--border-soft);min-width:0}
-.meeting-rows .mr-cell:nth-child(4n){border-right:none}
+.meeting-rows .mr-cell:nth-child(5n){border-right:none}
 .meeting-rows input.mr-inp{width:100%;border:none;padding:8px;font:inherit;font-size:12.5px;box-sizing:border-box;background:transparent}
 .meeting-rows input.mr-inp:focus{outline:2px solid var(--primary-light);outline-offset:-2px}
 /* 議題：複数行入力（自動リサイズ・折り返し可） */
@@ -368,6 +371,50 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .rt-editor img{max-width:100%;height:auto;border-radius:4px}
 .rt-editor a{color:#1976D2;text-decoration:underline;cursor:pointer}
 .rt-editor:empty:before{content:attr(data-placeholder);color:var(--muted);font-style:italic}
+
+/* 会議情報（開閉できる。表が長いとき、たたんで議事録に集中できるように） */
+.meeting-info{border:1px solid var(--border);border-radius:6px;background:#fbfcfe;margin-bottom:10px}
+.meeting-info-head{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;user-select:none;font-size:12.5px;color:var(--primary-dark)}
+.meeting-info-head:hover{background:#eff6fc;border-radius:6px}
+.meeting-info-head .mi-toggle{font-size:10px;width:12px}
+.meeting-info-head .mi-sum{font-size:11px;color:var(--muted);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meeting-info-body{display:none;padding:0 10px 10px}
+.meeting-info.open .meeting-info-body{display:block}
+.meeting-field-row2{display:grid;grid-template-columns:1fr 140px 140px;gap:10px}
+.mi-atts{display:grid;grid-template-columns:1fr 1fr 92px 34px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#fff}
+.mi-atts .mi-att-head{background:var(--primary-light);color:var(--primary-dark);font-size:11px;font-weight:700;padding:6px 8px;border-bottom:1px solid var(--border)}
+.mi-atts .mi-att-cell{border-bottom:1px solid var(--border-soft);border-right:1px solid var(--border-soft);min-width:0}
+.mi-atts .mi-att-cell:nth-child(4n){border-right:none}
+.mi-atts input.mi-inp{width:100%;border:none;padding:7px 8px;font:inherit;font-size:12.5px;box-sizing:border-box;background:transparent}
+.mi-atts input.mi-inp:focus{outline:2px solid var(--primary-light);outline-offset:-2px}
+.mi-atts .mi-att-web{display:flex;align-items:center;justify-content:center;font-size:11.5px}
+.mi-atts .mi-att-web label{display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--muted)}
+.mi-atts .mi-att-del{display:flex;align-items:center;justify-content:center}
+.mi-atts .mi-att-empty{grid-column:1/-1;padding:10px;text-align:center;color:var(--muted);font-size:11.5px}
+/* 記録済み（改編不可） */
+.meeting-locked-badge{font-size:11px;font-weight:700;color:#7E5109;background:#FFF3CD;border:1px solid #FFE082;border-radius:999px;padding:2px 9px}
+.meeting-editor.locked .rt-editor{background:#fafafa;color:#333}
+.meeting-editor.locked input:disabled,.meeting-editor.locked textarea:disabled{background:#fafafa;color:#333;-webkit-text-fill-color:#333}
+/* 印刷（PDF保存）: 別ウィンドウを開かず、印刷のときだけ専用の内容を見せる */
+#meetingPrintArea{display:none}
+.mp-doc{font-size:11px;color:#000}
+.mp-title{font-size:17px;margin:0 0 10px;border-bottom:2px solid #333;padding-bottom:6px}
+.mp-info{width:100%;border-collapse:collapse;margin-bottom:10px}
+.mp-info th,.mp-info td{border:1px solid #999;padding:4px 7px;text-align:left;font-size:11px}
+.mp-info th{background:#eef2f6;width:80px;white-space:nowrap}
+.mp-rows{width:100%;border-collapse:collapse;table-layout:fixed}
+.mp-rows th,.mp-rows td{border:1px solid #999;padding:5px 7px;vertical-align:top;font-size:10.5px;word-break:break-word}
+.mp-rows th{background:#eef2f6;font-size:10.5px}
+.mp-rows img{max-width:100%}
+.mp-pre{white-space:pre-wrap}
+.mp-foot{margin-top:10px;font-size:10px;color:#555;border-top:1px solid #ccc;padding-top:5px}
+@media print{
+  @page{size:A4 portrait;margin:12mm 10mm}
+  body.printing-meeting > *{display:none !important}
+  body.printing-meeting #meetingPrintArea{display:block !important}
+  .mp-rows tr{break-inside:avoid}
+}
+
 /* 会議メモの右クリックメニュー */
 .meeting-ctx-menu{position:fixed;background:#fff;border:1px solid #ccd5e0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:4px;z-index:10000;min-width:220px}
 .meeting-ctx-menu button{display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;cursor:pointer;border-radius:4px;font:inherit;font-size:13px}
@@ -2780,6 +2827,125 @@ function renderGoals(){
 let _meetingsExpandedSession = false;
 let _meetingSearch = ''; // 会議メモ検索キーワード（セッション内保持）
 
+// ===== 会議メモの印刷（PDF保存） =====
+// 別ウィンドウを開くとポップアップブロックに引っかかるため、同じページの中に
+// 印刷用の内容を組み立て、印刷のときだけそれを見せる方式にしている。
+function printMeeting(m){
+  const rows = _meetingDisplayRows(m);
+  const atts = _meetingAttendees(m).filter(a => (a.name||'').trim());
+  const timeText = (m.startTime || m.endTime) ? `${m.startTime||'--:--'} 〜 ${m.endTime||'--:--'}` : '';
+  const host = document.getElementById('meetingPrintArea') || (() => {
+    const d = document.createElement('div');
+    d.id = 'meetingPrintArea';
+    document.body.appendChild(d);
+    return d;
+  })();
+  host.innerHTML = `
+    <div class="mp-doc">
+      <h1 class="mp-title">${escapeHtml(m.name || '(会議名未入力)')}</h1>
+      <table class="mp-info">
+        <tr><th>日付</th><td>${escapeHtml(m.date || '—')}</td>
+            <th>開催時間</th><td>${escapeHtml(timeText || '—')}</td></tr>
+        <tr><th>開催場所</th><td>${escapeHtml(m.place || '—')}</td>
+            <th>会議ID</th><td>${escapeHtml(m.id)}</td></tr>
+        <tr><th>参加者</th><td colspan="3">${
+          atts.length
+            ? atts.map(a => `${escapeHtml(a.name)}${a.role?`（${escapeHtml(a.role)}）`:''}${a.web?'［Web］':''}`).join('　')
+            : '—'
+        }</td></tr>
+      </table>
+      <table class="mp-rows">
+        <thead><tr><th style="width:12%">担当</th><th style="width:22%">議題</th><th style="width:38%">議事録</th><th style="width:28%">決定事項</th></tr></thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td>${escapeHtml(r.who||'')}</td>
+              <td class="mp-pre">${escapeHtml(r.topic||'')}</td>
+              <td>${r.minutes||''}</td>
+              <td>${r.decisions||''}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      <div class="mp-foot">
+        ${m.locked
+          ? `記録済み${m.lockedBy?`／記録者：${escapeHtml(m.lockedBy)}`:''}${m.lockedAt?`　${escapeHtml(String(m.lockedAt).slice(0,16).replace('T',' '))}`:''}`
+          : '※ この会議メモはまだ「記録する」を押していない下書きです'}
+        <span style="float:right">出力日：${new Date().toISOString().slice(0,10)}</span>
+      </div>
+    </div>`;
+  document.body.classList.add('printing-meeting');
+  const cleanup = () => {
+    document.body.classList.remove('printing-meeting');
+    window.removeEventListener('afterprint', cleanup);
+  };
+  window.addEventListener('afterprint', cleanup);
+  setTimeout(() => { window.print(); setTimeout(cleanup, 800); }, 60);
+}
+
+// ===== 会議情報（会議名・日付・開催場所・開催時間・参加者一覧） =====
+// ページをスクロールすると表の見出し付近に貼り付くため、たたんで邪魔にならないようにする。
+// 開閉状態は端末ごと（S.ui）に覚える。
+function _meetingInfoOpen(){ return !(S.ui && S.ui.meetingInfoCollapsed); }
+function toggleMeetingInfo(){
+  if(!S.ui) S.ui = {};
+  S.ui.meetingInfoCollapsed = _meetingInfoOpen();
+  save();
+  renderMeetings();
+}
+function _newAttId(){ return 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
+function _meetingAttendees(m){ return Array.isArray(m.attendees) ? m.attendees : []; }
+/** 参加者の要約（たたんでいる時にヘッダーへ出す） */
+function _attendeeSummary(m){
+  const a = _meetingAttendees(m).filter(x => (x.name||'').trim());
+  if(!a.length) return '参加者未登録';
+  const web = a.filter(x => x.web).length;
+  const head = a.slice(0,3).map(x => x.name).join('、');
+  return `参加者 ${a.length}名（${head}${a.length>3?' ほか':''}${web?`／Web ${web}名`:''}）`;
+}
+function _meetingInfoHtml(m){
+  const open = _meetingInfoOpen();
+  const locked = !!m.locked;
+  const la = locked ? ' disabled' : '';
+  const atts = _meetingAttendees(m);
+  const timeText = (m.startTime || m.endTime) ? `${m.startTime||'--:--'}〜${m.endTime||'--:--'}` : '時間未設定';
+  return `
+    <div class="meeting-info${open?' open':''}">
+      <div class="meeting-info-head" onclick="toggleMeetingInfo()" title="会議情報の開閉">
+        <span class="mi-toggle">${open?'▼':'▶'}</span>
+        <b>会議情報</b>
+        <span class="mi-sum">${escapeHtml(m.name||'(会議名未入力)')}／${escapeHtml(m.date||'日付未設定')}　${escapeHtml(timeText)}${m.place?`　@${escapeHtml(m.place)}`:''}</span>
+        <span style="flex:1"></span>
+        <span class="mi-sum">${escapeHtml(_attendeeSummary(m))}</span>
+      </div>
+      <div class="meeting-info-body">
+        <div class="meeting-field-row">
+          <div class="meeting-field"><label>会議名</label><input type="text" data-mf="name" value="${escapeHtml(m.name||'')}" placeholder="例：5/26 営業定例"${la}></div>
+          <div class="meeting-field"><label>日付</label><input type="date" data-mf="date" value="${m.date||''}"${la}></div>
+        </div>
+        <div class="meeting-field-row2">
+          <div class="meeting-field"><label>開催場所</label><input type="text" data-mf="place" value="${escapeHtml(m.place||'')}" placeholder="例：本社 3F 会議室 ／ Google Meet"${la}></div>
+          <div class="meeting-field"><label>開始</label><input type="time" data-mf="startTime" value="${escapeHtml(m.startTime||'')}"${la}></div>
+          <div class="meeting-field"><label>終了</label><input type="time" data-mf="endTime" value="${escapeHtml(m.endTime||'')}"${la}></div>
+        </div>
+        <div class="meeting-field">
+          <label>参加者一覧 <span style="color:var(--muted);font-weight:400;font-size:10.5px">（Web参加のチェック・役職は任意）</span></label>
+          <div class="mi-atts">
+            <div class="mi-att-head">氏名</div><div class="mi-att-head">役職（任意）</div><div class="mi-att-head">Web参加</div><div class="mi-att-head"></div>
+            ${atts.length ? atts.map(a => `
+              <div class="mi-att-cell"><input class="mi-inp" data-attf="name" data-aid="${escapeHtml(a.aid)}" value="${escapeHtml(a.name||'')}" placeholder="氏名"${la} list="meetingMemberNames"></div>
+              <div class="mi-att-cell"><input class="mi-inp" data-attf="role" data-aid="${escapeHtml(a.aid)}" value="${escapeHtml(a.role||'')}" placeholder="例：取締役・監査役"${la}></div>
+              <div class="mi-att-cell mi-att-web"><label><input type="checkbox" data-attf="web" data-aid="${escapeHtml(a.aid)}"${a.web?' checked':''}${la}> Web</label></div>
+              <div class="mi-att-cell mi-att-del">${locked?'':`<button class="mr-del" data-att-del="${escapeHtml(a.aid)}" title="この参加者を削除">✕</button>`}</div>
+            `).join('') : `<div class="mi-att-empty">参加者がまだ登録されていません。</div>`}
+          </div>
+          <datalist id="meetingMemberNames">${(activeMembers()||[]).map(x=>`<option value="${escapeHtml(x.name)}">`).join('')}</datalist>
+          ${locked ? '' : `<button class="btn sm ghost" data-att-add style="margin-top:6px">＋ 参加者を追加</button>
+          <button class="btn sm ghost" data-att-fill style="margin-top:6px">👥 メンバーから一括追加</button>`}
+        </div>
+      </div>
+    </div>`;
+}
+
 // ===== 会議メモ 行構造（担当・議題・議事録の3列） =====
 function _newRowId(){ return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 // 表示用の行配列（未移行メモは旧 agenda を先頭行として表示。この時点ではデータを変更しない）
@@ -2796,16 +2962,18 @@ function _ensureMeetingRows(m){
 // 検索用のプレーンテキスト（行構造＋旧 agenda 両対応）
 function _meetingPlainText(m){
   const parts = [String(m.agenda||'')];
-  (m.rows||[]).forEach(r => parts.push(r.who||'', r.topic||'', String(r.minutes||'')));
+  (m.rows||[]).forEach(r => parts.push(r.who||'', r.topic||'', String(r.minutes||''), String(r.decisions||'')));
+  parts.push(m.place||'');
+  (m.attendees||[]).forEach(a => parts.push(a.name||'', a.role||''));
   return parts.join(' ').replace(/<[^>]*>/g, ' ');
 }
 // エディタdiv（行の議事録 or 旧 agenda）へ HTML を書き戻す
 function _writeMeetingEditorHtml(m, div, html){
-  if(div.dataset.rowf === 'minutes'){
+  if(div.dataset.rowf === 'minutes' || div.dataset.rowf === 'decisions'){
     _ensureMeetingRows(m);
     const row = m.rows.find(r => r.rid === div.dataset.rid);
     if(!row) return false;
-    row.minutes = html;
+    row[div.dataset.rowf] = html;
     return true;
   }
   if(div.dataset.mf){ m[div.dataset.mf] = html; return true; }
@@ -2919,19 +3087,23 @@ function renderMeetings(){
   if(!selected){
     editorHtml = `<div class="meeting-empty">会議メモがまだありません。<br>「＋ 新規」ボタンから作成できます。</div>`;
   } else {
+    const locked = !!selected.locked;
+    const lockAttr = locked ? ' disabled' : '';
     editorHtml = `
-      <div class="meeting-editor" data-mid="${escapeHtml(selected.id)}">
+      <div class="meeting-editor${locked?' locked':''}" data-mid="${escapeHtml(selected.id)}">
         <div class="meeting-editor-head">
           <span class="meeting-id">${escapeHtml(selected.id)}</span>
           ${selected.createdBy ? `<span class="meeting-by">作成者：${escapeHtml(selected.createdBy)}</span>` : ''}
+          ${locked ? `<span class="meeting-locked-badge">🔒 記録済み（編集できません）${selected.lockedBy?`／${escapeHtml(selected.lockedBy)}`:''}${selected.lockedAt?`　${escapeHtml(String(selected.lockedAt).slice(0,16).replace('T',' '))}`:''}</span>` : ''}
           <span style="flex:1"></span>
+          <button class="btn sm ghost" data-meeting-print="${escapeHtml(selected.id)}">🖨 PDF印刷</button>
+          ${locked
+            ? `<button class="btn sm ghost" data-meeting-unlock="${escapeHtml(selected.id)}">🔓 記録を解除</button>`
+            : `<button class="btn sm" data-meeting-lock="${escapeHtml(selected.id)}">✅ 記録する</button>`}
           <button class="btn sm ghost" data-meeting-dup="${escapeHtml(selected.id)}">📋 複製</button>
-          <button class="btn sm danger" data-meeting-del="${escapeHtml(selected.id)}">🗑 削除</button>
+          ${locked ? '' : `<button class="btn sm danger" data-meeting-del="${escapeHtml(selected.id)}">🗑 削除</button>`}
         </div>
-        <div class="meeting-field-row">
-          <div class="meeting-field"><label>会議名</label><input type="text" data-mf="name" value="${escapeHtml(selected.name||'')}" placeholder="例：5/26 営業定例"></div>
-          <div class="meeting-field"><label>日付</label><input type="date" data-mf="date" value="${selected.date||''}"></div>
-        </div>
+        ${_meetingInfoHtml(selected)}
         <div class="meeting-field">
           <label>📋 議事録 <span style="color:var(--muted);font-weight:400;font-size:10.5px">（テキスト選択→右クリックでタスク化／URL貼付でリンク／画像貼付可）</span></label>
           <div class="rt-toolbar">
@@ -2968,12 +3140,13 @@ function renderMeetings(){
           </div>
           <div class="meeting-rows-wrap">
             <div class="meeting-rows">
-              <div class="mr-head">担当</div><div class="mr-head">議題</div><div class="mr-head">議事録</div><div class="mr-head"></div>
+              <div class="mr-head">担当</div><div class="mr-head">議題</div><div class="mr-head">議事録</div><div class="mr-head">決定事項</div><div class="mr-head"></div>
               ${_meetingDisplayRows(selected).map(r => `
-                <div class="mr-cell"><input class="mr-inp" data-rowf="who" data-rid="${escapeHtml(r.rid)}" value="${escapeHtml(r.who||'')}" placeholder="担当"></div>
-                <div class="mr-cell"><textarea class="mr-topic" data-rowf="topic" data-rid="${escapeHtml(r.rid)}" rows="1" placeholder="議題">${escapeHtml(r.topic||'')}</textarea></div>
-                <div class="mr-cell mr-minutes-cell"><div class="rt-editor mr-minutes" contenteditable="true" data-rowf="minutes" data-rid="${escapeHtml(r.rid)}" data-placeholder="議事録・決定事項・メモ">${r.minutes||''}</div></div>
-                <div class="mr-cell mr-del-cell"><button class="mr-ins" data-row-insert="${escapeHtml(r.rid)}" title="この行の下に行を挿入">＋</button><button class="mr-del" data-row-del="${escapeHtml(r.rid)}" title="この行を削除">✕</button></div>
+                <div class="mr-cell"><input class="mr-inp" data-rowf="who" data-rid="${escapeHtml(r.rid)}" value="${escapeHtml(r.who||'')}" placeholder="担当"${lockAttr}></div>
+                <div class="mr-cell"><textarea class="mr-topic" data-rowf="topic" data-rid="${escapeHtml(r.rid)}" rows="1" placeholder="議題"${lockAttr}>${escapeHtml(r.topic||'')}</textarea></div>
+                <div class="mr-cell mr-minutes-cell"><div class="rt-editor mr-minutes" contenteditable="${locked?'false':'true'}" data-rowf="minutes" data-rid="${escapeHtml(r.rid)}" data-placeholder="議事録・メモ">${r.minutes||''}</div></div>
+                <div class="mr-cell mr-decision-cell"><div class="rt-editor mr-decision" contenteditable="${locked?'false':'true'}" data-rowf="decisions" data-rid="${escapeHtml(r.rid)}" data-placeholder="決定事項・次のアクション">${r.decisions||''}</div></div>
+                <div class="mr-cell mr-del-cell">${locked?'':`<button class="mr-ins" data-row-insert="${escapeHtml(r.rid)}" title="この行の下に行を挿入">＋</button><button class="mr-del" data-row-del="${escapeHtml(r.rid)}" title="この行を削除">✕</button>`}</div>
               `).join('')}
             </div>
           </div>
@@ -2986,7 +3159,9 @@ function renderMeetings(){
   const _renderSig = JSON.stringify([
     selectedId, _meetingSearch, expanded,
     sorted.map(m => [m.id, m.name, m.date]),
-    selected ? [selected.name, selected.date, selected.agenda, selected.createdBy, selected.rows] : null,
+    selected ? [selected.name, selected.date, selected.agenda, selected.createdBy, selected.rows,
+                selected.place, selected.startTime, selected.endTime, selected.attendees, selected.locked] : null,
+    _meetingInfoOpen(),
     (S.agendaPresets||[]).length
   ]);
   if(list._lastRenderSig === _renderSig && list.querySelector('.meeting-toolbar')) return;
@@ -3056,6 +3231,7 @@ function renderMeetings(){
       const mid = editor.dataset.mid;
       const m = (S.meetings||[]).find(x => x.id === mid);
       if(!m) return;
+      if(m.locked) return; // 記録済みは変更しない
       if(inp.dataset.rowf){
         _ensureMeetingRows(m);
         const row = m.rows.find(r => r.rid === inp.dataset.rid);
@@ -3081,9 +3257,9 @@ function renderMeetings(){
   let _activeMinutesDiv = null;
   const _targetEditor = () => (_activeMinutesDiv && _activeMinutesDiv.isConnected)
     ? _activeMinutesDiv
-    : list.querySelector('.rt-editor[data-rowf="minutes"], .rt-editor[data-mf]');
+    : list.querySelector('.rt-editor[data-rowf="minutes"], .rt-editor[data-rowf="decisions"], .rt-editor[data-mf]');
 
-  list.querySelectorAll('.rt-editor[data-rowf="minutes"], .rt-editor[data-mf]').forEach(div => {
+  list.querySelectorAll('.rt-editor[data-rowf="minutes"], .rt-editor[data-rowf="decisions"], .rt-editor[data-mf]').forEach(div => {
     let _inputTimer = null;
     div.addEventListener('focus', () => { div._startVal = div.innerHTML; _activeMinutesDiv = div; });
     const commit = () => {
@@ -3091,6 +3267,7 @@ function renderMeetings(){
       const mid = editor.dataset.mid;
       const m = (S.meetings||[]).find(x => x.id === mid);
       if(!m) return;
+      if(m.locked) return; // 記録済みは変更しない
       const newVal = _addLinkTargets(div.innerHTML);
       if(div._startVal !== undefined && newVal === div._startVal) return; // ユーザー未変更 → 何もしない
       div._startVal = newVal;
@@ -3133,13 +3310,100 @@ function renderMeetings(){
       showMeetingCtxMenu(e.clientX, e.clientY, text);
     });
   });
+  // ===== 参加者一覧 =====
+  list.querySelectorAll('input[data-attf]').forEach(inp => {
+    const commit = () => {
+      const editor = inp.closest('.meeting-editor'); if(!editor) return;
+      const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m || m.locked) return;
+      const a = _meetingAttendees(m).find(x => x.aid === inp.dataset.aid); if(!a) return;
+      a[inp.dataset.attf] = inp.type === 'checkbox' ? inp.checked : inp.value;
+      m.updatedAt = new Date().toISOString();
+      save(true, `会議メモ更新：${m.name||m.id}`);
+    };
+    inp.addEventListener('change', commit);
+  });
+  const attAdd = list.querySelector('[data-att-add]');
+  if(attAdd) attAdd.addEventListener('click', () => {
+    const editor = list.querySelector('.meeting-editor[data-mid]'); if(!editor) return;
+    const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m || m.locked) return;
+    if(!Array.isArray(m.attendees)) m.attendees = [];
+    m.attendees.push({ aid:_newAttId(), name:'', role:'', web:false });
+    m.updatedAt = new Date().toISOString();
+    save(true, `会議メモ：参加者追加（${m.name||m.id}）`);
+    renderMeetings();
+  });
+  const attFill = list.querySelector('[data-att-fill]');
+  if(attFill) attFill.addEventListener('click', () => {
+    const editor = list.querySelector('.meeting-editor[data-mid]'); if(!editor) return;
+    const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m || m.locked) return;
+    if(!Array.isArray(m.attendees)) m.attendees = [];
+    const have = new Set(m.attendees.map(a => (a.name||'').trim()).filter(Boolean));
+    (activeMembers()||[]).forEach(mem => {
+      if(have.has(mem.name)) return;
+      m.attendees.push({ aid:_newAttId(), name:mem.name, role:'', web:false });
+    });
+    m.updatedAt = new Date().toISOString();
+    save(true, `会議メモ：参加者を一括追加（${m.name||m.id}）`);
+    renderMeetings();
+  });
+  list.querySelectorAll('[data-att-del]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const editor = btn.closest('.meeting-editor'); if(!editor) return;
+      const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m || m.locked) return;
+      m.attendees = _meetingAttendees(m).filter(a => a.aid !== btn.dataset.attDel);
+      m.updatedAt = new Date().toISOString();
+      save(true, `会議メモ：参加者削除（${m.name||m.id}）`);
+      renderMeetings();
+    });
+  });
+
+  // ===== 記録する（改編不可にする）／解除 =====
+  list.querySelectorAll('[data-meeting-lock]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const m = (S.meetings||[]).find(x => x.id === btn.dataset.meetingLock); if(!m) return;
+      if(!confirm(
+        `会議メモ「${m.name||m.id}」を記録します。\n\n` +
+        `記録すると内容を編集できなくなります（削除もできません）。\n` +
+        `本当に記録しますか？`
+      )) return;
+      m.locked = true;
+      m.lockedAt = new Date().toISOString();
+      m.lockedBy = (_currentUser && _currentUser.name) || '';
+      m.updatedAt = m.lockedAt;
+      save(true, `会議メモを記録：${m.name||m.id}`);
+      renderMeetings();
+      toast('会議メモを記録しました（編集できません）');
+    });
+  });
+  list.querySelectorAll('[data-meeting-unlock]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const m = (S.meetings||[]).find(x => x.id === btn.dataset.meetingUnlock); if(!m) return;
+      if(!confirm(
+        `会議メモ「${m.name||m.id}」の記録を解除します。\n\n` +
+        `解除すると内容を編集できるようになります。本当に解除しますか？`
+      )) return;
+      m.locked = false;
+      m.updatedAt = new Date().toISOString();
+      save(true, `会議メモの記録を解除：${m.name||m.id}`);
+      renderMeetings();
+      toast('記録を解除しました');
+    });
+  });
+  // ===== PDF印刷 =====
+  list.querySelectorAll('[data-meeting-print]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const m = (S.meetings||[]).find(x => x.id === btn.dataset.meetingPrint); if(!m) return;
+      printMeeting(m);
+    });
+  });
+
   // 行の追加・削除
   const addRowBtn = list.querySelector('[data-row-add]');
   if(addRowBtn) addRowBtn.addEventListener('click', () => {
     const editor = list.querySelector('.meeting-editor[data-mid]'); if(!editor) return;
     const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m) return;
     _ensureMeetingRows(m);
-    m.rows.push({ rid: _newRowId(), who:'', topic:'', minutes:'' });
+    m.rows.push({ rid: _newRowId(), who:'', topic:'', minutes:'', decisions:'' });
     m.updatedAt = new Date().toISOString();
     save(true, `会議メモ：行追加（${m.name||m.id}）`);
     renderMeetings();
@@ -3152,7 +3416,7 @@ function renderMeetings(){
       _ensureMeetingRows(m);
       const idx = m.rows.findIndex(r => r.rid === btn.dataset.rowInsert);
       const at = idx < 0 ? m.rows.length : idx + 1;
-      m.rows.splice(at, 0, { rid:_newRowId(), who:'', topic:'', minutes:'' });
+      m.rows.splice(at, 0, { rid:_newRowId(), who:'', topic:'', minutes:'', decisions:'' });
       m.updatedAt = new Date().toISOString();
       save(true, `会議メモ：行挿入（${m.name||m.id}）`);
       renderMeetings();
@@ -3184,7 +3448,7 @@ function renderMeetings(){
       const hasContent = (row.who||row.topic||String(row.minutes||'').replace(/<[^>]*>/g,'').trim());
       if(hasContent && !confirm('この行（担当・議題・議事録）を削除しますか？')) return;
       m.rows = m.rows.filter(r => r.rid !== btn.dataset.rowDel);
-      if(m.rows.length === 0) m.rows.push({ rid:_newRowId(), who:'', topic:'', minutes:'' });
+      if(m.rows.length === 0) m.rows.push({ rid:_newRowId(), who:'', topic:'', minutes:'', decisions:'' });
       m.updatedAt = new Date().toISOString();
       save(true, `会議メモ：行削除（${m.name||m.id}）`);
       renderMeetings();
@@ -3566,9 +3830,14 @@ function addMeeting(){
     id: mid,
     name: '',
     date: today,
+    place: '',        // 開催場所
+    startTime: '',    // 開催時間（開始）
+    endTime: '',      // 開催時間（終了）
+    attendees: [],   // 参加者一覧（氏名・役職・Web参加）
+    locked: false,   // 「記録する」で改編不可にする
     agenda: '',
     minutes: '',
-    rows: [{ rid: _newRowId(), who:'', topic:'', minutes:'' }], // 表形式（担当・議題・議事録）
+    rows: [{ rid: _newRowId(), who:'', topic:'', minutes:'', decisions:'' }], // 表形式（担当・議題・議事録）
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     createdBy: (_currentUser && _currentUser.name) || ''
@@ -6092,6 +6361,15 @@ function clearEvents(){
 }
 
 // ===== Calendar side panel (task list) =====
+// 完了・中止・保留にしたプロジェクトのタスクは、日々のタスク一覧に出さない。
+// 終わった案件のタスクが毎日並び続けると、いま追うべきものが埋もれるため。
+const CLOSED_GOAL_STATUS = ["完了","中止","保留"];
+function isClosedGoalTask(t){
+  if(!t || !t.goal) return false;
+  const g = (S.goals||[]).find(x => x.id === t.goal);
+  return !!g && CLOSED_GOAL_STATUS.includes(g.status);
+}
+
 function renderSideTasks(){
   const tab = S.ui.sideTab || 'undone';
   document.querySelectorAll('.side-tab button').forEach(b=>{
@@ -6118,6 +6396,7 @@ function renderSideTasks(){
     const wkEnd = wkStart ? addDays(wkStart, 6) : '';
     const today = todayStr();
     const passesFilters = t => {
+      if(isClosedGoalTask(t)) return false; // 終わったプロジェクトのタスクは出さない
       if(hideDoneCb && t.status === '完了') return false;
       if(effHideHeld && t.status === '保留') return false;
       if(effHideCanceled && t.status === '中止') return false;
@@ -6159,7 +6438,7 @@ function renderSideTasks(){
 
   const wkStart = S.ui.weekStart;
   const wkEnd = addDays(wkStart, 6);
-  let list = S.tasks.slice();
+  let list = S.tasks.slice().filter(t => !isClosedGoalTask(t));
   if(tab==='undone') list = list.filter(t=>t.status!=='完了');
   else if(tab==='unscheduled') list = list.filter(isUnassigned);
   if(memVal) list = list.filter(t=>t.owner===memVal);
