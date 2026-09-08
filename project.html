@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1788774831440";</script>
+<script>window.__HITTATSU_BUILD__ = "1788830177441";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -9242,7 +9242,13 @@ function subscribeWorkspaceCollections(wsId){
     const cloudIds = new Set(qs.docs.map(d => d.id));
     const arr = kind === 'tasks' ? S.tasks : S.goals;
     if(!Array.isArray(arr)) return;
-    const keep = arr.filter(it => !it || !it.id || cloudIds.has(it.id) || (it._modAt || 0) >= _pageBootAt);
+    // クラウドにまだ無い項目のうち、送信待ち(_pendingItems)のものは絶対に消さない。
+    // ワークスペースを作った直後は、tasks/goals 両方の初回受信がそろうまで送信を
+    // 止めているため、その間に作ったタスクがここで消えてしまっていた。
+    const pending = _pendingItems[kind] || new Map();
+    const keep = arr.filter(it =>
+      !it || !it.id || cloudIds.has(it.id) || pending.has(it.id) || (it._modAt || 0) >= _pageBootAt
+    );
     const dropped = arr.length - keep.length;
     if(dropped > 0){
       if(kind === 'tasks') S.tasks = keep; else S.goals = keep;
@@ -11020,11 +11026,32 @@ function openTaskEditModal(taskId, opts){
   `;
   document.getElementById('taskEditModal').classList.add('show');
 }
+/** 新規追加のモーダルで、利用者が何か入力したか（未入力なら破棄してよい） */
+function _newTaskWasEdited(t){
+  if(!t) return false;
+  try{
+    const f = {};
+    document.querySelectorAll('#taskEditFields [data-ef]').forEach(inp => { f[inp.dataset.ef] = inp.value; });
+    if((f.act || '').trim() && (f.act || '').trim() !== '新しいタスク') return true;
+    // 期日・時刻・メモ・完了条件など、初期値が空の項目に何か入っていれば「入力あり」
+    return ['due','startD','time','note','defn','goal','pri','weight','slot'].some(k => (f[k] || '').trim());
+  }catch(e){
+    return false;
+  }
+}
+
 function closeTaskEditModal(){
   // ★ 新規追加直後にキャンセル/✕で閉じた場合は、追加されたタスクを削除する
   //   （ユーザーが「やっぱ作るのやめた」と判断したケース）
+  //   ただし何か入力済みなら、黙って消さずに確認する（入力したのに消える事故を防ぐ）
   if(_editingIsNew && _editingTaskId){
     const idx = S.tasks.findIndex(x => x.id === _editingTaskId);
+    if(idx >= 0 && _newTaskWasEdited(S.tasks[idx])){
+      if(!confirm('入力した内容を破棄して、このタスクの追加を取り消しますか？\n\n「キャンセル」を選ぶと、入力内容はそのまま保存されます。')){
+        saveEditingTask(); // 破棄しない → 入力内容を保存して閉じる
+        return;
+      }
+    }
     if(idx >= 0){
       const _tid = S.tasks[idx].id;
       S.tasks.splice(idx, 1);
