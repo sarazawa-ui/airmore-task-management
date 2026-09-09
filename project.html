@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1788946827569";</script>
+<script>window.__HITTATSU_BUILD__ = "1788948508032";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -6928,6 +6928,8 @@ async function _sendViaClientGmail(recipients, subject, bodyText){
 async function sendMail(fromEmail, recipients, subject, bodyText){
   const list = Array.isArray(recipients) ? recipients.filter(Boolean) : [recipients].filter(Boolean);
   if(list.length === 0) return { ok:false, via:'none' };
+  // Hittatsuから出るメールは、受信箱で一目で分かるよう件名の先頭をそろえる
+  subject = '【☑Hittatsu】' + String(subject||'').replace(/^(【[☑✓]?Hittatsu】)+\s*/, '').trim();
   const from = (fromEmail || _currentUser?.email || '').trim();
   if(await _sendViaServer(from, list, subject, bodyText)) return { ok:true, via:'server' };
   if(await _sendViaClientGmail(list, subject, bodyText)) return { ok:true, via:'client' };
