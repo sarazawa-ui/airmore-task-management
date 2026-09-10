@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1788999586348";</script>
+<script>window.__HITTATSU_BUILD__ = "1789013222981";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -6857,7 +6857,7 @@ async function reauthGoogleAccessToken(reason){
     if(err && err.code === 'auth/popup-closed-by-user'){
       toast('再認証がキャンセルされました');
     } else if(err && err.code === 'auth/popup-blocked'){
-      alert('ポップアップがブロックされました。ブラウザのポップアップ許可設定を確認してください。');
+      hittShowPopupHelp({ what: 'Googleの権限の取り直し', onRetry: function(){ refreshGoogleAccessToken(false); } });
     } else {
       alert('再認証に失敗しました：' + (err.message || err.code || err));
     }
@@ -7552,6 +7552,85 @@ function startTokenAutoRefresh(){
   _tokenAutoRefreshTimer = setInterval(tick, 10*60*1000); // 10分ごと
   // ログイン直後にも一度温める
   setTimeout(()=>{ tick(); }, 4000);
+}
+
+// ============================================================
+// ポップアップブロックのお知らせ
+// Googleのログイン・権限取得は別ウィンドウで開くため、ブラウザが塞いで
+// いると何も起きないまま失敗する。そのときだけ解除の手順を出す。
+// ============================================================
+function hittPopupSteps(){
+  var ua = navigator.userAgent;
+  var ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && 'ontouchend' in document);
+  var key = 'other';
+  if(/Edg\//.test(ua)) key='edge';
+  else if(/CriOS|Chrome\//.test(ua)) key='chrome';
+  else if(/FxiOS|Firefox\//.test(ua)) key='firefox';
+  else if(/Safari\//.test(ua)) key='safari';
+  var all = [
+    {k:'chrome-ios', label:'iPhone・iPad の Chrome', steps:['右下の「…」→ 設定','コンテンツの設定 → ポップアップをブロック','スイッチをオフにする']},
+    {k:'safari-ios', label:'iPhone・iPad の Safari', steps:['ホーム画面の「設定」アプリ → アプリ → Safari','「ポップアップブロック」をオフにする']},
+    {k:'chrome', label:'パソコンの Chrome', steps:['アドレスバーの右端に出る「ポップアップがブロックされました」の印を押す','「(このサイト)のポップアップを常に許可する」を選ぶ','「完了」を押して、もう一度ボタンを押す']},
+    {k:'edge', label:'パソコンの Edge', steps:['アドレスバー右端のブロックの印を押す','「常に許可」を選ぶ','もう一度ボタンを押す']},
+    {k:'safari', label:'Mac の Safari', steps:['メニューの Safari → 設定 → Webサイト → ポップアップウインドウ','このサイトを「許可」にする']},
+    {k:'firefox', label:'Firefox', steps:['画面上部に出る通知バーの「設定」→「ポップアップを許可」を選ぶ']}
+  ];
+  var first = ios ? (key==='chrome' ? 'chrome-ios' : 'safari-ios') : key;
+  return all.filter(function(x){return x.k===first;}).concat(all.filter(function(x){return x.k!==first;}));
+}
+var _hittPopupHelpOpen = false;
+function hittShowPopupHelp(opts){
+  opts = opts || {};
+  if(_hittPopupHelpOpen) return;
+  _hittPopupHelpOpen = true;
+  var back = document.createElement('div');
+  back.style.cssText = 'position:fixed;inset:0;background:rgba(12,35,64,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto';
+  function close(){ back.remove(); _hittPopupHelpOpen = false; }
+  back.onclick = function(e){ if(e.target===back) close(); };
+  var card = document.createElement('div');
+  card.style.cssText = 'background:#fff;border-radius:12px;max-width:460px;width:100%;padding:18px 20px;box-shadow:0 20px 60px rgba(12,35,64,.3);font-size:13px;color:#1a2b45;max-height:90vh;overflow-y:auto;line-height:1.75';
+  var h = document.createElement('div');
+  h.style.cssText = 'font-size:15px;font-weight:700;color:#0c2340;margin-bottom:8px';
+  h.textContent = '⚠ ポップアップがブロックされています';
+  card.appendChild(h);
+  var lead = document.createElement('p');
+  lead.style.cssText = 'margin:0 0 10px';
+  lead.textContent = (opts.what || 'Googleの確認画面') + 'は、別の小さなウィンドウ(ポップアップ)で開きます。いまブラウザがそれを塞いでいるため、先に進めませんでした。下の手順でこのサイトのポップアップを許可してください。';
+  card.appendChild(lead);
+  var site = document.createElement('div');
+  site.style.cssText = 'background:#eef3fa;border-radius:8px;padding:7px 10px;margin-bottom:10px';
+  site.innerHTML = '<span style="font-size:11.5px;color:#6b7a90">許可するサイト</span> <b style="font-size:12.5px;word-break:break-all;color:#0c2340"></b>';
+  site.querySelector('b').textContent = location.origin;
+  card.appendChild(site);
+  hittPopupSteps().forEach(function(g,i){
+    var d = document.createElement('details');
+    d.style.cssText = 'border-top:1px solid #e3e8f0;padding:7px 0';
+    if(i===0) d.open = true;
+    var sm = document.createElement('summary');
+    sm.style.cssText = 'cursor:pointer;font-weight:600;font-size:12.5px;color:#1c5cab';
+    sm.textContent = g.label + (i===0 ? '（お使いのブラウザ）' : '');
+    d.appendChild(sm);
+    var ol = document.createElement('ol');
+    ol.style.cssText = 'margin:7px 0 2px;padding-left:1.3em';
+    g.steps.forEach(function(t){ var li=document.createElement('li'); li.textContent=t; ol.appendChild(li); });
+    d.appendChild(ol);
+    card.appendChild(d);
+  });
+  var foot = document.createElement('div');
+  foot.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:14px;flex-wrap:wrap';
+  var mk = function(text, primary){
+    var b = document.createElement('button');
+    b.textContent = text;
+    b.style.cssText = 'border:1px solid ' + (primary?'#1c5cab':'#e3e8f0') + ';background:' + (primary?'#1c5cab':'#fff') + ';color:' + (primary?'#fff':'#1a2b45') + ';border-radius:8px;padding:7px 12px;font-size:12.5px;cursor:pointer' + (primary?';font-weight:600':'');
+    return b;
+  };
+  if(opts.onAlt){ var alt = mk(opts.altLabel || '別の方法で続ける', false); alt.onclick = function(){ close(); opts.onAlt(); }; foot.appendChild(alt); }
+  var sp = document.createElement('span'); sp.style.flex = '1'; foot.appendChild(sp);
+  var cancel = mk('閉じる', false); cancel.onclick = close; foot.appendChild(cancel);
+  if(opts.onRetry){ var r = mk('許可したので、もう一度', true); r.onclick = function(){ close(); opts.onRetry(); }; foot.appendChild(r); }
+  card.appendChild(foot);
+  back.appendChild(card);
+  document.body.appendChild(back);
 }
 
 async function googleFetchEvents(silent){
@@ -10466,15 +10545,22 @@ async function appLogin(){
       } else if(code === 'auth/popup-closed-by-user'){
         toast('ログインがキャンセルされました');
       } else if(code === 'auth/popup-blocked'){
-        if(confirm('ポップアップがブラウザにブロックされました。\n\n別タブで Google ログイン画面を開く方式に切り替えますか？\n（[OK] でリダイレクト方式に変更）')){
-          try{
-            const provider = new firebase.auth.GoogleAuthProvider();
-            provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
-            provider.addScope('https://www.googleapis.com/auth/gmail.send');
-            provider.setCustomParameters({ prompt: 'consent', access_type: 'online', include_granted_scopes: 'true' });
-            await firebase.auth().signInWithRedirect(provider);
-          }catch(e){ alert('リダイレクト方式も失敗しました：'+(e.message||e)); }
-        }
+        // 何も起きないように見えるため、解除の手順を出す。
+        // どうしても解除できない場合に備え、画面切替(リダイレクト)も選べるようにする。
+        hittShowPopupHelp({
+          what: 'Googleへのログイン',
+          onRetry: function(){ try{ appLogin(); }catch(e){} },
+          altLabel: 'このまま画面を切り替えてログイン',
+          onAlt: async function(){
+            try{
+              const provider = new firebase.auth.GoogleAuthProvider();
+              provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
+              provider.addScope('https://www.googleapis.com/auth/gmail.send');
+              provider.setCustomParameters({ prompt: 'consent', access_type: 'online', include_granted_scopes: 'true' });
+              await firebase.auth().signInWithRedirect(provider);
+            }catch(e){ alert('リダイレクト方式も失敗しました：'+(e.message||e)); }
+          }
+        });
       } else if(code === 'auth/unauthorized-domain'){
         alert('このドメインは Firebase で承認されていません。\n\nFirebase Console → Authentication → Settings → Authorized domains に\n'+location.hostname+'\nを追加してください。');
       } else if(code === 'auth/operation-not-allowed'){
