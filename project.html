@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1789427402435";</script>
+<script>window.__HITTATSU_BUILD__ = "1789522180633";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -11750,10 +11750,10 @@ function renderMemberPane(){
   }
   list.innerHTML = '';
   const meEmail = _currentUser?.email;
-  const meAuth = S.authMembers.find(x => x.email === meEmail);
-  const meIsOwner = meAuth && meAuth.role === 'owner';
+  const meIsOwner = isWorkspaceOwner(meEmail);
 
   am.forEach(m=>{
+    const isMe = !!(meEmail && m.email === meEmail); // 自分の権限は自分で変えない
     const row = document.createElement('div');
     row.className = 'member-row' + (m._ghost ? ' member-ghost' : '');
     const initial = (m.name||'?').slice(0,1);
@@ -11764,20 +11764,85 @@ function renderMemberPane(){
         <div class="nm">${escapeHtml(m.name)}${m._ghost?' <span style="font-size:10px;color:#B7950B;font-weight:600">(未ログイン)</span>':''}</div>
         <div class="em">${escapeHtml(m.email)}${joinedDisp}</div>
       </div>
-      <span class="role ${m.role==='owner'?'':'guest'}">${m.role==='owner'?'オーナー':'メンバー'}</span>
-      ${m.role!=='owner' && meIsOwner ? `<button class="btn sm ghost" data-rm="${escapeHtml(m.email)}">削除</button>` : ''}
+      ${meIsOwner && !isMe ? `<select class="btn sm" data-role="${escapeHtml(m.email)}" title="権限を変える" style="padding:2px 6px">
+            <option value="member"${m.role==='owner'?'':' selected'}>メンバー</option>
+            <option value="owner"${m.role==='owner'?' selected':''}>オーナー</option>
+          </select>`
+        : `<span class="role ${m.role==='owner'?'':'guest'}">${m.role==='owner'?'オーナー':'メンバー'}</span>`}
+      ${meIsOwner && !isMe ? `<button class="btn sm ghost" data-rm="${escapeHtml(m.email)}">削除</button>` : ''}
     `;
     const rm = row.querySelector('[data-rm]');
-    if(rm) rm.onclick = ()=>{
-      if(!confirm(`${m.name} をメンバーから削除しますか？`)) return;
-      S.authMembers = S.authMembers.filter(x=>x.email!==m.email);
-      // 予実ロールも消す
-      if(S.budgetRoles && m.email) delete S.budgetRoles[m.email];
-      save(true,`メンバー削除：${m.name}`);
-      renderMemberPane();
-    };
+    if(rm) rm.onclick = ()=> removeWorkspaceMember(m);
+    const rl = row.querySelector('[data-role]');
+    if(rl) rl.onchange = ()=> setWorkspaceMemberRole(m, rl.value);
     list.appendChild(row);
   });
+}
+
+/** ワークスペースのオーナーか(作成者、またはオーナー権限を付与された人) */
+function isWorkspaceOwner(email){
+  if(!email) return false;
+  if(S.ownerEmail && S.ownerEmail === email) return true;
+  return (S.authMembers||[]).some(m => m && m.email === email && m.role === 'owner');
+}
+
+/** メンバーから外す。
+    memberEmails に残すと「プロフィール未取得のメンバー」として並び直してしまうため、
+    authMembers と memberEmails の両方から消す。クラウド側は配列から直接取り除く
+    (まとめ保存の突き合わせでは、消したものが戻ることがあるため)。 */
+async function removeWorkspaceMember(m){
+  if(!confirm(m.name + ' をメンバーから削除しますか？\n\nこのワークスペースは相手の一覧から外れます。')) return;
+  const email = m.email;
+  const authRow = (S.authMembers||[]).find(x => x && x.email === email);
+  S.authMembers = (S.authMembers||[]).filter(x => x.email !== email);
+  S.memberEmails = (S.memberEmails||[]).filter(e => e !== email);
+  if(S.budgetRoles && email) delete S.budgetRoles[email];
+  if(S.workspaceId && _firebaseReady && firebase.auth().currentUser){
+    try{
+      const ref = db.collection('workspaces').doc(S.workspaceId);
+      const upd = { memberEmails: firebase.firestore.FieldValue.arrayRemove(email) };
+      if(authRow) upd.authMembers = firebase.firestore.FieldValue.arrayRemove(authRow);
+      await ref.update(upd);
+      bumpFbUsage('write', 1);
+    }catch(e){ console.warn('member remove (cloud):', e && e.message); }
+  }
+  save(true, 'メンバー削除：' + m.name);
+  renderMemberPane();
+  toast(m.name + ' を削除しました');
+}
+
+/** オーナー権限の付与・解除。オーナーが誰もいなくならないようにする */
+async function setWorkspaceMemberRole(m, role){
+  const email = m.email;
+  if(role !== 'owner' && role !== 'member') return;
+  if(role === 'member'){
+    const owners = (S.authMembers||[]).filter(x => x && x.role === 'owner' && x.email !== email);
+    if(!owners.length && S.ownerEmail !== email){
+      alert('オーナーが誰もいなくなるため、変更できません。');
+      renderMemberPane();
+      return;
+    }
+  }
+  const msg = role === 'owner'
+    ? m.name + ' にオーナー権限を付与しますか？\n\nメンバーの追加・削除や権限の変更ができるようになります。'
+    : m.name + ' のオーナー権限を外しますか？';
+  if(!confirm(msg)){ renderMemberPane(); return; }
+  const before = (S.authMembers||[]).find(x => x && x.email === email);
+  S.authMembers = (S.authMembers||[]).map(x => (x && x.email === email ? Object.assign({}, x, { role: role }) : x));
+  // ログイン前(プロフィール未取得)の相手にも付けられるようにする
+  if(!before && email){
+    S.authMembers = (S.authMembers||[]).concat([{ email: email, name: m.name, picture: '', role: role, joinedAt: '' }]);
+  }
+  if(S.workspaceId && _firebaseReady && firebase.auth().currentUser){
+    try{
+      const ref = db.collection('workspaces').doc(S.workspaceId);
+      await ref.update({ authMembers: S.authMembers });
+      bumpFbUsage('write', 1);
+    }catch(e){ console.warn('member role (cloud):', e && e.message); }
+  }
+  save(true, '権限変更：' + m.name + ' → ' + (role === 'owner' ? 'オーナー' : 'メンバー'));
+  renderMemberPane();
+  toast(m.name + ' を' + (role === 'owner' ? 'オーナー' : 'メンバー') + 'にしました');
 }
 
 function generateInviteUrl(){
