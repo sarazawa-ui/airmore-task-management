@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1789540207533";</script>
+<script>window.__HITTATSU_BUILD__ = "1789553933663";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -8136,6 +8136,8 @@ function initFirebase(){
             firebaseUid: user.uid
           };
           saveSession();
+          // 参加WSをクラウドで探している間は、サンプルの画面を見せず「読み込み中」を出す
+          if(!S.workspaceId) _wsResolving = true;
           // アプリ画面を表示
           if(document.getElementById('loginScreen')?.style.display !== 'none'){
             showApp();
@@ -8151,11 +8153,14 @@ function initFirebase(){
                 let mine = [];
                 try{ mine = await fetchMyWorkspaces({ force: true }); }catch(e){}
                 if(Array.isArray(mine) && mine.length > 0){
-                  await joinOrCreateWorkspace(mine[0].id);
-                  renderAll();
+                  const ok = await joinOrCreateWorkspace(mine[0].id);
+                  _wsResolving = false;
+                  // 見つかったWSをその場で開く(購読・切替メニューまで。以前は再読み込みまで反映されなかった)
+                  if(ok) await _afterWorkspaceChosen();
                 }
               }
             }catch(e){ console.warn('workspace resolve (restore) failed:', e); }
+            _wsResolving = false;
             try{ enforceWorkspaceGate(); }catch(e){}
           })();
         }
@@ -9832,6 +9837,8 @@ function leaveWorkspace(){
 let _myWorkspaces = []; // [{id, name, ownerEmail, memberCount}]
 
 function getCurrentWsName(){
+  // ★ クラウド利用中で未参加の間は、サンプルデータの会社名(株式会社エアモア)を出さない
+  if(_firebaseReady && !S.workspaceId) return _wsResolving ? '読み込み中…' : '(未参加)';
   if(S.wsName) return S.wsName;
   if(S.profile && S.profile.companyName) return S.profile.companyName;
   if(S.workspaceId) return S.workspaceId;
@@ -10690,6 +10697,18 @@ async function onLoggedIn(){
 function hasJoinedWorkspace(){
   return !!(S && S.workspaceId);
 }
+// 参加中のWSをクラウドで確認している最中か(この間はサンプル画面も選択画面も出さない)
+var _wsResolving = false;
+function _showWsLoader(on){
+  let el = document.getElementById('wsResolveLoader');
+  if(!on){ if(el) el.remove(); return; }
+  if(el) return;
+  el = document.createElement('div');
+  el.id = 'wsResolveLoader';
+  el.style.cssText = 'position:fixed;inset:0;z-index:1090;display:flex;align-items:center;justify-content:center;background:var(--bg,#f5f7fa);color:var(--text-soft,#667);font-size:13px';
+  el.textContent = 'ワークスペースを読み込んでいます…';
+  document.body.appendChild(el);
+}
 function enforceWorkspaceGate(){
   // ログイン前・ローカルモードは対象外（従来どおり）
   if(!_firebaseReady || !_currentUser) return false;
@@ -10697,10 +10716,14 @@ function enforceWorkspaceGate(){
   const modal = document.getElementById('wsChoiceModal');
   if(hasJoinedWorkspace()){
     if(main && main.dataset.wsGated === '1'){ main.style.visibility = ''; delete main.dataset.wsGated; }
+    _showWsLoader(false);
+    if(modal && modal.classList.contains('show') && !_wsChoiceResolve) modal.classList.remove('show');
     return false;
   }
   // 未参加：本文を隠し、選択画面を出したままにする
   if(main){ main.style.visibility = 'hidden'; main.dataset.wsGated = '1'; }
+  if(_wsResolving){ _showWsLoader(true); return true; }
+  _showWsLoader(false);
   if(modal && !modal.classList.contains('show')){
     const nameEl = document.getElementById('wsChoiceName');
     const joinEl = document.getElementById('wsChoiceJoinId');
@@ -10734,11 +10757,24 @@ function chooseFirstWorkspace(){
 function _closeWsChoice(){
   const modal = document.getElementById('wsChoiceModal');
   if(modal) modal.classList.remove('show');
-  // ゲート中に隠していた本文を戻す(参加できたときだけここに来る)
-  const main = document.getElementById('appMain');
-  if(main && main.dataset.wsGated === '1'){ main.style.visibility = ''; delete main.dataset.wsGated; }
   const r = _wsChoiceResolve; _wsChoiceResolve = null;
-  if(r) r();
+  // ログイン直後の経路(onLoggedIn)は、この後に描画・購読まで進む
+  if(r){ r(); return; }
+  // 画面表示後のゲートから作成/参加した場合は、ここで新しいWSを開く。
+  // 以前は本文の表示を戻すだけで描画し直さなかったため、隠れていたサンプルデータ
+  // (株式会社エアモア)の画面が出て、再読み込みまで新しいWSに切り替わらなかった。
+  _afterWorkspaceChosen();
+}
+// 作成/参加したWSを、再読み込みなしで開く(描画 → 購読 → 切替メニュー → メンバー登録)
+async function _afterWorkspaceChosen(){
+  if(!S.workspaceId) return;
+  try{ if(typeof _origSave === 'function') _origSave(); else localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+  try{ localStorage.setItem('hittatsu_current_ws', S.workspaceId); }catch(e){}
+  _myWorkspacesFetchedAt = 0;
+  renderAll(); // ゲートもここで外れる(描画してから本文を出す)
+  try{ subscribeWorkspace(); }catch(e){ console.warn('subscribeWorkspace (after choose) failed:', e); }
+  try{ refreshWorkspaceSwitcher(); }catch(e){}
+  try{ await registerCurrentMember(); }catch(e){ console.warn('registerCurrentMember (after choose) failed:', e); }
 }
 async function wsChoiceCreate(){
   const msg = document.getElementById('wsChoiceMsg');
