@@ -1,0 +1,27 @@
+rules_version = '2';
+// 添付ファイル(案件・稟議)の保存場所
+//  - 読み書きは許可ドメインのGoogleアカウントでログインした人だけ
+//  - 1ファイル20MBまで
+service firebase.storage {
+  match /b/{bucket}/o {
+    function _fixedDomainOk(email) {
+      return email.lower().matches('.*@(nimomakezu\.com|leaklab-japan\.com|n-mobily\.com|n-airmore\.com|dustlabo\.com)');
+    }
+    function _extraDomainOk(email) {
+      return firestore.exists(/databases/(default)/documents/appConfig/authDomains)
+        && email.lower().split('@')[1] in firestore.get(/databases/(default)/documents/appConfig/authDomains).data.domains;
+    }
+    function _domainOk() {
+      return request.auth != null && request.auth.token.email != null
+        && (_fixedDomainOk(request.auth.token.email) || _extraDomainOk(request.auth.token.email));
+    }
+
+    match /attachments/{allPaths=**} {
+      allow read, delete: if _domainOk();
+      allow create, update: if _domainOk() && request.resource.size < 20 * 1024 * 1024;
+    }
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
