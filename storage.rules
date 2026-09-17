@@ -5,7 +5,7 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     function _fixedDomainOk(email) {
-      return email.lower().matches('.*@(nimomakezu\.com|leaklab-japan\.com|n-mobily\.com|n-airmore\.com|dustlabo\.com)');
+      return email.lower().matches('.*@(nimomakezu\\.com|leaklab-japan\\.com|n-mobily\\.com|n-airmore\\.com|dustlabo\\.com)');
     }
     function _extraDomainOk(email) {
       return firestore.exists(/databases/(default)/documents/appConfig/authDomains)
