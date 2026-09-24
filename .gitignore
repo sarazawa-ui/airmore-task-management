@@ -27,3 +27,11 @@ airmore-task-management-app-*.json
 # バックアップ処理の依存パッケージ（GitHub Actions 側で install する）
 backup/node_modules/
 backup/package-lock.json
+
+# データのバックアップ(公開リポジトリのため絶対に入れない。保存先はGoogleドライブ)
+backup/*.json
+!backup/package.json
+!backup/package-lock.json
+*.backup.json
+backup-*.json
+hittatsu-backup-*.json
