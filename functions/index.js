@@ -627,3 +627,111 @@ exports.watchLeadReplies = onSchedule(
   }
 );
 
+
+// ============================================================
+// スプレッドシートの読み取り(売上・得意先・商品・在庫の「データを更新」用)
+//   通常はアプリが「ログインした本人のGoogleアカウント」でシートを読むが、
+//   本人にシートの閲覧権限が無いと失敗する(別ドメインのユーザーなど)。
+//   そのときはこの関数が「サービスアカウント」でシートを読んで返す。
+//   ※ 事前設定: 読むスプレッドシートを、サービスアカウントのメールアドレス
+//     (GMAIL_SA_KEY の client_email。エラー時に返す saEmail)に「閲覧者」で共有する。
+//   呼べるのはログイン済み・許可ドメインのユーザーのみ(Firestoreルールと同じ判定)。
+//   値は大きくなるため gzip+base64 で返す(Callableの応答サイズ上限対策)。
+// ============================================================
+const zlib = require("zlib");
+const FIXED_DOMAIN_RE = /@(nimomakezu\.com|leaklab-japan\.com|n-mobily\.com|n-airmore\.com|dustlabo\.com)$/i;
+
+async function isAllowedEmail(email) {
+  const e = String(email || "").toLowerCase();
+  if (!e) return false;
+  if (FIXED_DOMAIN_RE.test(e)) return true;
+  try {
+    const snap = await admin.firestore().doc("appConfig/authDomains").get();
+    const domains = (snap.exists && snap.data().domains) || [];
+    return domains.map((d) => String(d).toLowerCase()).includes(e.split("@")[1]);
+  } catch (err) {
+    return false;
+  }
+}
+
+let _sheetsAuth = null;
+function sheetsAuth() {
+  if (_sheetsAuth) return _sheetsAuth;
+  const key = JSON.parse(GMAIL_SA_KEY.value());
+  _sheetsAuth = {
+    email: key.client_email,
+    jwt: new google.auth.JWT({
+      email: key.client_email,
+      key: key.private_key,
+      // サービスアカウント自身として読む(ドメイン全体の委任は使わない)
+      scopes: [
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "https://www.googleapis.com/auth/drive.metadata.readonly",
+      ],
+    }),
+  };
+  return _sheetsAuth;
+}
+
+exports.readSheet = onCall(
+  { secrets: [GMAIL_SA_KEY], memory: "1GiB", timeoutSeconds: 120 },
+  async (req) => {
+    if (!req.auth) throw new HttpsError("unauthenticated", "ログインが必要です");
+    if (!(await isAllowedEmail(req.auth.token.email))) throw new HttpsError("permission-denied", "許可されていないアカウントです");
+    const { id, gid, mode, match } = req.data || {};
+    if (!id || !/^[a-zA-Z0-9-_]+$/.test(String(id))) throw new HttpsError("invalid-argument", "スプレッドシートIDが不正です");
+    const { email: saEmail, jwt } = sheetsAuth();
+    const sheets = google.sheets({ version: "v4", auth: jwt });
+    const quote = (t) => "'" + String(t).replace(/'/g, "''") + "'";
+    try {
+      // 最終更新日時だけ
+      if (mode === "modified") {
+        const drive = google.drive({ version: "v3", auth: jwt });
+        const r = await drive.files.get({ fileId: id, fields: "modifiedTime,lastModifyingUser(displayName)", supportsAllDrives: true });
+        return { modifiedTime: r.data.modifiedTime || null, by: (r.data.lastModifyingUser && r.data.lastModifyingUser.displayName) || "" };
+      }
+      const meta = await sheets.spreadsheets.get({ spreadsheetId: id, fields: "sheets(properties(sheetId,title))" });
+      const tabs = (meta.data.sheets || []).map((s) => s.properties || {});
+      let payload;
+      if (mode === "tabs") {
+        // タブ名に match を含むものをまとめて(在庫一覧など)
+        const titles = tabs.map((t) => t.title).filter((t) => t && (!match || String(t).includes(String(match))));
+        if (!titles.length) payload = [];
+        else {
+          const r = await sheets.spreadsheets.values.batchGet({
+            spreadsheetId: id,
+            ranges: titles.map(quote),
+            majorDimension: "ROWS",
+            valueRenderOption: "FORMATTED_VALUE",
+          });
+          payload = (r.data.valueRanges || []).map((vr, i) => ({ title: titles[i], values: vr.values || [] }));
+        }
+      } else {
+        // gid のタブ(無ければ先頭タブ)
+        let target = gid != null ? tabs.find((t) => t.sheetId === Number(gid)) : null;
+        if (!target) target = tabs[0];
+        if (!target) throw new HttpsError("not-found", "シート(タブ)が見つかりませんでした");
+        const r = await sheets.spreadsheets.values.get({
+          spreadsheetId: id,
+          range: quote(target.title),
+          majorDimension: "ROWS",
+          valueRenderOption: "FORMATTED_VALUE",
+        });
+        payload = { values: r.data.values || [], sheetTitle: target.title };
+      }
+      return { gz: zlib.gzipSync(Buffer.from(JSON.stringify(payload), "utf8")).toString("base64") };
+    } catch (e) {
+      if (e instanceof HttpsError) throw e;
+      const code = (e && (e.code || (e.response && e.response.status))) || 0;
+      if (code === 403 || code === 404) {
+        throw new HttpsError(
+          "permission-denied",
+          `サーバー用アカウントがこのスプレッドシートを読めません。スプレッドシートを ${saEmail} に「閲覧者」で共有してください。`,
+          { saEmail }
+        );
+      }
+      console.error("[readSheet] failed:", e && e.message);
+      throw new HttpsError("internal", "スプレッドシートを読めませんでした: " + ((e && e.message) || e));
+    }
+  }
+);
