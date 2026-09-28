@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1790575928070";</script>
+<script>window.__HITTATSU_BUILD__ = "1790587598138";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -370,6 +370,10 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .meeting-rows .mr-ins:hover{background:#D5F5E3}
 .rt-editor img{max-width:100%;height:auto;border-radius:4px}
 .rt-editor a{color:#1976D2;text-decoration:underline;cursor:pointer}
+.rt-link-pop{position:fixed;z-index:5000;display:none;align-items:center;gap:8px;max-width:min(520px,calc(100vw - 16px));background:#fff;border:1px solid #d0d7e2;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.16);padding:6px 8px;font-size:12.5px}
+.rt-link-pop .rt-link-url{color:#1976D2;text-decoration:underline;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.rt-link-pop button{border:1px solid #cfd6e0;background:#f5f7fb;border-radius:6px;padding:3px 10px;font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
+.rt-link-pop .rt-link-open{background:#1F4E78;color:#fff;border-color:#1F4E78}
 .rt-editor:empty:before{content:attr(data-placeholder);color:var(--muted);font-style:italic}
 
 /* 会議情報（開閉できる。表が長いとき、たたんで議事録に集中できるように） */
@@ -9086,6 +9090,61 @@ async function syncSharedToSubcoll(wsId){
   return count;
 }
 
+// ============ リッチエディタのリンク: ホバーで「開く」小窓 ============
+// 編集できる欄(contenteditable)の中のリンクは、クリックするとカーソルが入るだけで開かない。
+// スプレッドシートと同じく、リンクにマウスを合わせる(または中にカーソルを置く)と
+// リンク先と「開く」ボタンの小窓を出し、そこから開けるようにする。
+(function setupRtLinkPopup(){
+  let pop = null, hideTimer = null, curA = null;
+  const ensure = () => {
+    if(pop) return pop;
+    pop = document.createElement('div');
+    pop.className = 'rt-link-pop';
+    pop.innerHTML = '<span class="rt-link-ico">🔗</span><a class="rt-link-url" target="_blank" rel="noopener"></a><button type="button" class="rt-link-open">開く</button><button type="button" class="rt-link-copy" title="リンクをコピー">コピー</button>';
+    pop.addEventListener('mouseenter', () => { clearTimeout(hideTimer); });
+    pop.addEventListener('mouseleave', () => scheduleHide());
+    pop.querySelector('.rt-link-open').addEventListener('click', (e) => { e.preventDefault(); if(curA) window.open(curA.href, '_blank', 'noopener'); hide(); });
+    pop.querySelector('.rt-link-url').addEventListener('click', () => setTimeout(hide, 0));
+    pop.querySelector('.rt-link-copy').addEventListener('click', async (e) => {
+      e.preventDefault();
+      try{ await navigator.clipboard.writeText(curA ? curA.href : ''); toast('リンクをコピーしました'); }catch(err){}
+    });
+    document.body.appendChild(pop);
+    return pop;
+  };
+  const show = (a) => {
+    if(!a || !a.href) return;
+    clearTimeout(hideTimer);
+    curA = a;
+    const p = ensure();
+    const u = p.querySelector('.rt-link-url');
+    u.href = a.href;
+    u.textContent = a.href.length > 60 ? a.href.slice(0, 57) + '…' : a.href;
+    u.title = a.href;
+    p.style.display = 'flex';
+    const r = a.getBoundingClientRect();
+    const w = p.offsetWidth, h = p.offsetHeight;
+    let left = Math.min(window.innerWidth - w - 8, Math.max(8, r.left));
+    let top = r.bottom + 6;
+    if(top + h > window.innerHeight - 8) top = r.top - h - 6;
+    p.style.left = left + 'px';
+    p.style.top = top + 'px';
+  };
+  const hide = () => { if(pop) pop.style.display = 'none'; curA = null; };
+  const scheduleHide = () => { clearTimeout(hideTimer); hideTimer = setTimeout(hide, 350); };
+  const linkIn = (el) => el && el.closest && el.closest('.rt-editor a[href]');
+  document.addEventListener('mouseover', (e) => { const a = linkIn(e.target); if(a) show(a); });
+  document.addEventListener('mouseout', (e) => { if(linkIn(e.target) && !(pop && pop.contains(e.relatedTarget))) scheduleHide(); });
+  // キーボードやクリックでリンクの中にカーソルが入ったときも出す
+  document.addEventListener('selectionchange', () => {
+    const sel = window.getSelection();
+    const n = sel && sel.anchorNode;
+    const a = n && linkIn(n.nodeType === 1 ? n : n.parentElement);
+    if(a) show(a);
+  });
+  window.addEventListener('scroll', hide, true);
+})();
+
 // ============ 会議メモ サブコレクション ============
 // 現在ユーザーが編集中（フォーカス中）の会議メモ ID を返す（無ければ null）。
 //   会議メモのリッチエディタ（contenteditable）は blur 時に保存するため、
@@ -9098,6 +9157,76 @@ function _editingMeetingId(){
   return ed ? (ed.dataset.mid || null) : null;
 }
 let _meetingsRenderPending = false; // 編集中に保留した会議メモの再描画があるか
+// ===== 会議メモの同期: 欄ごとの3方向マージ =====
+// 会議メモは1件=1ドキュメントで、行(rows)の中に 担当・議題・議事録・決定事項 を持つ。
+// 以前は受信時に行の配列を丸ごと置き換え、送信時もドキュメントを丸ごと上書きしていたため、
+//  ・Aさんが議事録を入力中(未送信)にBさんの決定事項の保存が届くと、Aさんの入力が消える
+//  ・2人がほぼ同時に保存すると、後から保存した人の内容で全体が置き換わる
+// という不具合があった。そこで「前回そろっていた内容(base)」と比べ、欄ごとに
+// 「自分が変えた欄は自分の値・変えていない欄は相手の値」を採る3方向マージにする。
+// 送信はトランザクションでクラウドの最新を読み、同じマージをしてから書く(同時保存でも消えない)。
+const _MT_SKIP = { _uiExpanded: 1 };
+function _mtEq(a, b){ return _sortedJson(a === undefined ? null : a) === _sortedJson(b === undefined ? null : b); }
+function _mtMergeVal(base, local, remote){
+  // 自分が変えていなければ相手の値、変えていれば自分の値(同じ欄を両方が変えたときは自分を優先)
+  return _mtEq(local, base) ? remote : local;
+}
+function _mtMergeRows(baseRows, localRows, remoteRows){
+  const B = new Map((baseRows||[]).map(r => [r && r.rid, r]));
+  const L = new Map((localRows||[]).map(r => [r && r.rid, r]));
+  const R = new Map((remoteRows||[]).map(r => [r && r.rid, r]));
+  const out = [];
+  const used = new Set();
+  const mergeRow = (rid) => {
+    const b = B.get(rid), l = L.get(rid), r = R.get(rid);
+    if(l && r){
+      const keys = new Set([...Object.keys(l), ...Object.keys(r), ...Object.keys(b||{})]);
+      const m = {};
+      keys.forEach(k => { const v = _mtMergeVal(b ? b[k] : undefined, l[k], r[k]); if(v !== undefined) m[k] = v; });
+      return m;
+    }
+    if(l && !r){
+      // 相手が消した行: 自分が触っていなければ消す。自分が新しく足した行・編集した行は残す
+      if(b && _mtEq(l, b)) return null;
+      return l;
+    }
+    if(!l && r){
+      // 自分が消した行: 相手が触っていなければ消す。相手が新しく足した行・編集した行は残す
+      if(b && _mtEq(r, b)) return null;
+      return r;
+    }
+    return null;
+  };
+  // 並びは相手(クラウド)を基本にし、自分だけにある行は自分の並びの直後に差し込む
+  (remoteRows||[]).forEach(r => { if(!r) return; const m = mergeRow(r.rid); used.add(r.rid); if(m) out.push(m); });
+  (localRows||[]).forEach((l, i) => {
+    if(!l || used.has(l.rid)) return;
+    used.add(l.rid);
+    const m = mergeRow(l.rid);
+    if(!m) return;
+    const prev = i > 0 ? (localRows[i-1] && localRows[i-1].rid) : null;
+    const at = prev ? out.findIndex(x => x.rid === prev) : -1;
+    if(at >= 0) out.splice(at + 1, 0, m); else if(i === 0) out.unshift(m); else out.push(m);
+  });
+  return out;
+}
+function _mtMerge(base, local, remote){
+  base = base || {};
+  const keys = new Set([...Object.keys(local||{}), ...Object.keys(remote||{}), ...Object.keys(base)]);
+  const out = {};
+  keys.forEach(k => {
+    if(_MT_SKIP[k]) return;
+    let v;
+    if(k === 'rows') v = _mtMergeRows(base.rows, (local||{}).rows, (remote||{}).rows);
+    else if(k === 'updatedAt') v = [ (local||{}).updatedAt, (remote||{}).updatedAt ].filter(Boolean).sort().pop();
+    else v = _mtMergeVal(base[k], (local||{})[k], (remote||{})[k]);
+    if(v !== undefined) out[k] = v;
+  });
+  return out;
+}
+function _mtBaseOf(id){ try{ const j = _lastSyncedMeetings.get(id); return j ? JSON.parse(j) : null; }catch(e){ return null; } }
+function _mtClean(m){ const c = Object.assign({}, m); Object.keys(_MT_SKIP).forEach(k => delete c[k]); return c; }
+
 function subscribeMeetings(wsId){
   if(_wsMeetingsUnsubscribe){ _wsMeetingsUnsubscribe(); _wsMeetingsUnsubscribe = null; }
   if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
@@ -9111,7 +9240,7 @@ function subscribeMeetings(wsId){
     qs.docChanges().forEach(c => {
       const id = c.doc.id;
       const data = c.doc.data() || {};
-      const remoteJson = JSON.stringify(data);
+      const remoteJson = _sortedJson(data);
       if(c.type !== 'removed' && _lastSyncedMeetings.get(id) === remoteJson) return;
       if(c.type === 'removed'){
         const idx = S.meetings.findIndex(m => m && m.id === id);
@@ -9121,7 +9250,11 @@ function subscribeMeetings(wsId){
         const existing = S.meetings.find(m => m && m.id === id);
         if(existing){
           const uiExp = existing._uiExpanded;
-          Object.keys(data).forEach(k => { existing[k] = data[k]; });
+          // 欄ごとの3方向マージ(自分がまだ送っていない欄は残し、それ以外は相手の値にする)
+          // 基準(base)が無い=このセッションでまだ受信していない会議は、クラウドの内容を正とする(端末の古い保存で上書きしない)
+          const merged = _mtMerge(_mtBaseOf(id) || _mtClean(existing), _mtClean(existing), data);
+          Object.keys(existing).forEach(k => { if(!_MT_SKIP[k] && !(k in merged)) delete existing[k]; });
+          Object.keys(merged).forEach(k => { existing[k] = merged[k]; });
           existing._uiExpanded = uiExp; // UI 状態を保持
         } else {
           S.meetings.push(Object.assign({}, data));
@@ -9160,9 +9293,8 @@ async function syncMeetingsToSubcoll(wsId){
     if(!m || !m.id) return;
     currentIds.add(m.id);
     // _uiExpanded は同期しない（ユーザー個別の UI 状態）
-    const clean = Object.assign({}, m);
-    delete clean._uiExpanded;
-    const json = JSON.stringify(clean);
+    const clean = _mtClean(m);
+    const json = _sortedJson(clean);
     if(_lastSyncedMeetings.get(m.id) !== json){
       writes.push({id: m.id, payload: clean, json});
     }
@@ -9171,18 +9303,45 @@ async function syncMeetingsToSubcoll(wsId){
   _lastSyncedMeetings.forEach((_, id) => { if(!currentIds.has(id)) deletes.push(id); });
   if(writes.length === 0 && deletes.length === 0) return 0;
   try{
-    const ops = [...writes.map(w => ({type:'set', ...w})), ...deletes.map(id => ({type:'delete', id}))];
-    for(let i=0; i<ops.length; i+=400){
-      const batch = db.batch();
-      ops.slice(i, i+400).forEach(op => {
-        const ref = db.doc(`workspaces/${wsId}/meetings/${op.id}`);
-        if(op.type === 'set') batch.set(ref, op.payload);
-        else batch.delete(ref);
+    // 書き込みは1件ずつトランザクションで: クラウドの最新を読み、前回の基準(base)と自分の内容で
+    // 欄ごとにマージしてから書く。途中で他の人が書くと自動でやり直すので、同時保存でも消えない
+    let needRender = false;
+    for(const w of writes){
+      const ref = db.doc(`workspaces/${wsId}/meetings/${w.id}`);
+      const base = _mtBaseOf(w.id);
+      const merged = await db.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        const remote = snap.exists ? (snap.data() || {}) : null;
+        const out = remote && base ? _mtMerge(base, w.payload, remote) : w.payload;
+        tx.set(ref, out);
+        return out;
       });
+      const mj = _sortedJson(merged);
+      _lastSyncedMeetings.set(w.id, mj);
+      // 相手の変更を取り込んだ結果が手元と違えば、手元も合わせる
+      if(mj !== w.json){
+        const cur = (S.meetings||[]).find(x => x && x.id === w.id);
+        if(cur){
+          const fresh = _mtMerge(w.payload, _mtClean(cur), merged); // 書き込み中にさらに入力された分は残す
+          const uiExp = cur._uiExpanded;
+          Object.keys(cur).forEach(k => { if(!_MT_SKIP[k] && !(k in fresh)) delete cur[k]; });
+          Object.keys(fresh).forEach(k => { cur[k] = fresh[k]; });
+          cur._uiExpanded = uiExp;
+          needRender = true;
+        }
+      }
+    }
+    for(let i=0; i<deletes.length; i+=400){
+      const batch = db.batch();
+      deletes.slice(i, i+400).forEach(id => batch.delete(db.doc(`workspaces/${wsId}/meetings/${id}`)));
       await batch.commit();
     }
-    writes.forEach(w => _lastSyncedMeetings.set(w.id, w.json));
     deletes.forEach(id => _lastSyncedMeetings.delete(id));
+    if(needRender){
+      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      if(_editingMeetingId()) _meetingsRenderPending = true;
+      else withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
+    }
     logSync('write.meetings', {writes: writes.length, deletes: deletes.length});
     return writes.length + deletes.length;
   }catch(e){
