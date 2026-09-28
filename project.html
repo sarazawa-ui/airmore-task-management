@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1790330105166";</script>
+<script>window.__HITTATSU_BUILD__ = "1790568517817";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -8400,6 +8400,9 @@ async function joinOrCreateWorkspace(targetWsId){
 // Firestoreから受信したスナップショットデータをローカル状態に適用
 function applySnapshotData(data, wsId){
   if(!data) return;
+  if(typeof _switchingWs !== 'undefined' && _switchingWs) return; // 切替中に届いた旧WSのデータは使わない
+  // 今のWSと違うWSのスナップショット(購読の解除前に届いたもの)は適用しない
+  if(wsId && S.workspaceId && wsId !== S.workspaceId) return;
   logSync('apply.start', {wsId, schemaVersion: data._schemaVersion || 0});
   // === 安全弁：呼び出し元が漏らした場合に備え、ここでも pending/cooldown を再チェック ===
   if(_pendingLocalChanges){
@@ -9612,6 +9615,7 @@ window.flushPendingSync = flushPendingSync;
 
 // ページ離脱時に未送信書込があれば flush（特に delete 直後にリフレッシュされても確実に書く）
 window.addEventListener('beforeunload', (e) => {
+  if(typeof _switchingWs !== 'undefined' && _switchingWs) return; // 切替の再読込では送らない(送り済み)
   if(_pendingLocalChanges || _saveDebounce){
     try{
       // デバウンスを即時実行（同期的に setTimeout を発火させる手段はないので、警告を出して
@@ -9629,6 +9633,7 @@ window.addEventListener('beforeunload', (e) => {
 
 function syncToFirestore(){
   if(_isRemoteUpdate) return;
+  if(typeof _switchingWs !== 'undefined' && _switchingWs) return; // 切替中は送らない
   if(!S.workspaceId || !_firebaseReady) return;
   if(!firebase.auth().currentUser) return;
   _pendingLocalChanges = true;
@@ -9952,6 +9957,37 @@ function _wsMenuOutsideClick(e){
   if(!sw.contains(e.target)) sw.classList.remove('open');
 }
 
+// ===== ワークスペース切替中の保護 =====
+// 切替は「S を新WSに書き換えて保存 → 再読込」で行う。その間に
+//  ・旧WSのスナップショットが届くと、S.workspaceId が旧WSに戻されて保存され、再読込後も旧WSが開く
+//  ・離脱時の保存(beforeunload)や遅延保存が走ると、空にした S のまま新WSへ書き込み、
+//    旧WSのタスクIDと同じIDのタスクを新WSから消してしまうおそれがある
+// ため、切替を始めたら購読・保存・スナップショット適用をすべて止める。
+var _switchingWs = false;
+function _detachWorkspaceListeners(){
+  const off = (fn) => { try{ if(typeof fn === 'function') fn(); }catch(e){} };
+  off(typeof _wsUnsubscribe !== 'undefined' && _wsUnsubscribe); _wsUnsubscribe = null;
+  if(typeof _wsTasksUnsubscribe !== 'undefined'){ off(_wsTasksUnsubscribe); _wsTasksUnsubscribe = null; }
+  if(typeof _wsGoalsUnsubscribe !== 'undefined'){ off(_wsGoalsUnsubscribe); _wsGoalsUnsubscribe = null; }
+  if(typeof _wsWeeklyReportsUnsubscribe !== 'undefined'){ off(_wsWeeklyReportsUnsubscribe); _wsWeeklyReportsUnsubscribe = null; }
+  if(typeof _wsHistoryUnsubscribe !== 'undefined'){ off(_wsHistoryUnsubscribe); _wsHistoryUnsubscribe = null; }
+  if(typeof _wsSharedUnsubscribe !== 'undefined'){ off(_wsSharedUnsubscribe); _wsSharedUnsubscribe = null; }
+  if(typeof _wsMeetingsUnsubscribe !== 'undefined'){ off(_wsMeetingsUnsubscribe); _wsMeetingsUnsubscribe = null; }
+  if(_snapshotApplyTimer){ clearTimeout(_snapshotApplyTimer); _snapshotApplyTimer = null; }
+  _deferredSnapshot = null;
+}
+// 旧WSの未送信の変更を先に送ってから(最大2.5秒待つ)、同期を止める
+async function _beginWorkspaceSwitch(){
+  try{
+    if(_saveDebounce){ clearTimeout(_saveDebounce); _saveDebounce = null; flushPendingSync(); }
+    else if(_pendingLocalChanges){ flushPendingSync(); }
+    const t0 = Date.now();
+    while(_pendingLocalChanges && Date.now() - t0 < 2500) await new Promise(r => setTimeout(r, 100));
+  }catch(e){ console.warn('flush before switch failed:', e); }
+  _switchingWs = true;
+  _detachWorkspaceListeners();
+}
+
 async function switchWorkspace(wsId){
   closeWsMenu();
   if(!wsId || wsId === S.workspaceId) return;
@@ -9988,6 +10024,9 @@ async function switchWorkspace(wsId){
     alert(`ワークスペースへの参加に失敗しました：\n${e.message || e.code || e}`);
     return;
   }
+  toast('ワークスペースを切替中...');
+  // 旧WSの変更を送り切ってから、購読・保存を止める(ここから再読込までは S を触らせない)
+  await _beginWorkspaceSwitch();
   // 切替を確実に反映するため、ローカル状態をクリアし、S.workspaceId を新WSに書き換えてからフルリロード。
   // 多段のサブコレ購読・キャッシュのレースを避けるため、ブートから新WSを読み込む方式を採用。
   try{ _resetWorkspaceLocalCaches(); }catch(e){}
@@ -10014,7 +10053,6 @@ async function switchWorkspace(wsId){
       window.history.replaceState(null, '', url.toString());
     }
   }catch(e){}
-  toast('ワークスペースを切替中...');
   location.reload();
 }
 
@@ -10023,6 +10061,9 @@ async function createNewWorkspace(){
   if(!_firebaseReady || !firebase.auth().currentUser){ alert('Firebase未接続です'); return; }
   const name = prompt('新規ワークスペースの名前を入力してください\n（例：営業チーム / プロジェクトX）');
   if(!name || !name.trim()) return;
+  // 旧WSの変更を送ってから購読を外す(作成中に旧WSのデータが届いて S を上書きしないように)
+  await _beginWorkspaceSwitch();
+  _switchingWs = false; // 再読込しない経路なので、購読の解除だけ残して保存は再開する
   // 会社情報（profile）と userPrefs はユーザー共通のため保持
   const keepUserPrefs = S.userPrefs;
   const keepProfile = S.profile;
@@ -11979,6 +12020,7 @@ const _origSave = function(){
   syncToFirestore();
 };
 save = function(withLog, desc){
+  if(_switchingWs) return; // ワークスペース切替中は保存しない(再読込で新WSを読み直す)
   if(withLog && desc) logHistory('edit', desc);
   try{
     // ① 真にローカルで変更された項目に _modAt を打つ（per-item LWW のキー）
