@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1790642106492";</script>
+<script>window.__HITTATSU_BUILD__ = "1790642423082";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -848,6 +848,18 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
 .member-row img,.member-row .ph{width:36px;height:36px;border-radius:50%;flex:0 0 36px}
 .member-row .ph{background:var(--primary-light);color:var(--primary-dark);display:flex;align-items:center;justify-content:center;font-weight:700}
 .member-row .info{flex:1 1 auto;min-width:0;overflow:hidden}
+.member-role-select{flex:0 0 auto;width:auto;min-width:96px;padding:4px 8px;border:1px solid var(--border);border-radius:7px;background:#fff;color:var(--text);font:inherit;font-size:12px;cursor:pointer}
+.invite-box{margin-top:18px;padding:12px 14px;border:1px solid var(--border);border-radius:9px;background:var(--section)}
+.invite-box .inv-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.invite-box .inv-search{position:relative;flex:1;min-width:220px}
+.invite-box .inv-search input{width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:7px;font:inherit;font-size:13px}
+.invite-box .inv-list{position:absolute;left:0;right:0;top:calc(100% + 3px);background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.12);max-height:240px;overflow:auto;z-index:50}
+.invite-box .inv-item{padding:7px 10px;cursor:pointer;font-size:12.5px;display:flex;gap:8px;justify-content:space-between}
+.invite-box .inv-item:hover,.invite-box .inv-item.hl{background:var(--primary-light)}
+.invite-box .inv-item .em{color:var(--muted);font-size:11.5px}
+.invite-box .inv-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.invite-box .inv-chip{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--border);border-radius:999px;padding:3px 6px 3px 10px;font-size:12px}
+.invite-box .inv-chip button{border:none;background:none;cursor:pointer;color:var(--muted);font-size:13px}
 .member-row .info .nm{font-weight:600;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .member-row .info .em{color:var(--muted);font-size:11px;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .member-row .role{font-size:10.5px;background:var(--primary);color:#fff;padding:3px 10px;border-radius:10px;font-weight:600;flex:0 0 auto;height:22px;line-height:16px;white-space:nowrap;display:inline-flex;align-items:center}
@@ -1440,6 +1452,18 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
 
       <h4 style="font-size:13.5px;color:var(--primary-dark);margin:26px 0 8px;border-top:1px solid var(--border);padding-top:18px">👥 参加メンバー</h4>
       <div class="member-list" id="memberList"></div>
+      <div class="invite-box" id="inviteBox">
+        <div style="font-weight:700;font-size:13px;color:var(--primary-dark);margin-bottom:4px">✉ メンバーを招待</div>
+        <div class="help" style="font-size:11.5px;margin-bottom:8px">ユーザーを検索して選ぶと、このワークスペースへの参加URLをメールで送ります(Hittatsuを使ったことのない人は、メールアドレスをそのまま入力できます)。</div>
+        <div class="inv-row">
+          <div class="inv-search">
+            <input type="text" id="inviteSearch" placeholder="名前・メールアドレスで検索" autocomplete="off">
+            <div class="inv-list" id="inviteList" style="display:none"></div>
+          </div>
+          <button class="btn sm" id="inviteSendBtn" onclick="sendWorkspaceInvites()">招待メールを送る</button>
+        </div>
+        <div class="inv-chips" id="inviteChips"></div>
+      </div>
       <p class="help" style="font-size:11px;color:#666;margin-top:8px">※ 各メンバーがGoogleでログインすると、ここに自動追加されます（最初にログインした方がオーナー）。</p>
 
       <div id="wsDangerZone" style="display:none;margin-top:24px;padding-top:18px;border-top:2px solid #FADBD8">
@@ -11985,6 +12009,7 @@ function renderMemberPane(){
     return;
   }
   list.innerHTML = '';
+  try{ setupInviteBox(); _renderInviteChips(); }catch(e){ console.warn('invite box:', e); }
   const meEmail = _currentUser?.email;
   const meIsOwner = isWorkspaceOwner(meEmail);
 
@@ -12000,7 +12025,7 @@ function renderMemberPane(){
         <div class="nm">${escapeHtml(m.name)}${m._ghost?' <span style="font-size:10px;color:#B7950B;font-weight:600">(未ログイン)</span>':''}</div>
         <div class="em">${escapeHtml(m.email)}${joinedDisp}</div>
       </div>
-      ${meIsOwner && !isMe ? `<select class="btn sm" data-role="${escapeHtml(m.email)}" title="権限を変える" style="padding:2px 6px">
+      ${meIsOwner && !isMe ? `<select class="member-role-select" data-role="${escapeHtml(m.email)}" title="権限を変える">
             <option value="member"${m.role==='owner'?'':' selected'}>メンバー</option>
             <option value="owner"${m.role==='owner'?' selected':''}>オーナー</option>
           </select>`
@@ -12013,6 +12038,99 @@ function renderMemberPane(){
     if(rl) rl.onchange = ()=> setWorkspaceMemberRole(m, rl.value);
     list.appendChild(row);
   });
+}
+
+// ===== メンバーの招待(参加URLをメールで送る) =====
+let _invitePicked = []; // [{email, name}]
+function _inviteCandidates(){
+  // Hittatsuのユーザー名簿(同じ端末に保存されている全ログインユーザー)+ 他ワークスペースのメンバー
+  const map = new Map();
+  try{
+    const dir = JSON.parse(localStorage.getItem('hittatsu_user_dir') || '{}');
+    Object.values(dir || {}).forEach(u => { const e = String(u && u.email || '').toLowerCase(); if(e) map.set(e, { email: e, name: u.name || e.split('@')[0] }); });
+  }catch(e){}
+  (S.members || []).forEach(m => { if(m && m.email){ const e = m.email.toLowerCase(); if(!map.has(e)) map.set(e, { email: e, name: m.name || e }); } });
+  const inWs = new Set([...(S.memberEmails || []), ...(S.authMembers || []).map(m => m && m.email)].filter(Boolean).map(e => e.toLowerCase()));
+  return [...map.values()].filter(u => !inWs.has(u.email));
+}
+function _renderInviteChips(){
+  const box = document.getElementById('inviteChips');
+  if(!box) return;
+  box.innerHTML = _invitePicked.map((u, i) => `<span class="inv-chip">${escapeHtml(u.name)} <span style="color:var(--muted);font-size:11px">${escapeHtml(u.email)}</span><button data-i="${i}" title="外す">×</button></span>`).join('');
+  box.querySelectorAll('button[data-i]').forEach(b => b.onclick = () => { _invitePicked.splice(Number(b.dataset.i), 1); _renderInviteChips(); });
+  const btn = document.getElementById('inviteSendBtn');
+  if(btn) btn.textContent = _invitePicked.length ? `招待メールを送る(${_invitePicked.length}名)` : '招待メールを送る';
+}
+function _pickInvite(u){
+  if(!u || !u.email) return;
+  if(!_invitePicked.some(x => x.email === u.email)) _invitePicked.push(u);
+  const inp = document.getElementById('inviteSearch');
+  if(inp) inp.value = '';
+  const list = document.getElementById('inviteList');
+  if(list) list.style.display = 'none';
+  _renderInviteChips();
+}
+function setupInviteBox(){
+  const inp = document.getElementById('inviteSearch');
+  const list = document.getElementById('inviteList');
+  if(!inp || !list || inp._bound) return;
+  inp._bound = true;
+  let hl = 0, hits = [];
+  const draw = () => {
+    const q = inp.value.trim().toLowerCase();
+    if(!q){ list.style.display = 'none'; return; }
+    hits = _inviteCandidates().filter(u => (u.name + ' ' + u.email).toLowerCase().includes(q)).slice(0, 20);
+    // 候補に無いメールアドレスは、そのまま招待できるようにする
+    if(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q) && !hits.some(u => u.email === q)) hits.push({ email: q, name: q.split('@')[0], _free: true });
+    if(hl >= hits.length) hl = 0;
+    list.innerHTML = hits.length
+      ? hits.map((u, i) => `<div class="inv-item${i === hl ? ' hl' : ''}" data-i="${i}"><span>${u._free ? '✉ このアドレスに送る' : escapeHtml(u.name)}</span><span class="em">${escapeHtml(u.email)}</span></div>`).join('')
+      : '<div class="inv-item" style="cursor:default;color:var(--muted)">該当するユーザーがいません(メールアドレスを入力すると招待できます)</div>';
+    list.style.display = 'block';
+    list.querySelectorAll('.inv-item[data-i]').forEach(el => el.onmousedown = (e) => { e.preventDefault(); _pickInvite(hits[Number(el.dataset.i)]); });
+  };
+  inp.addEventListener('input', () => { hl = 0; draw(); });
+  inp.addEventListener('keydown', (e) => {
+    if(list.style.display !== 'block') return;
+    if(e.key === 'ArrowDown'){ e.preventDefault(); hl = Math.min(hl + 1, hits.length - 1); draw(); }
+    else if(e.key === 'ArrowUp'){ e.preventDefault(); hl = Math.max(hl - 1, 0); draw(); }
+    else if(e.key === 'Enter'){ e.preventDefault(); if(hits[hl]) _pickInvite(hits[hl]); }
+    else if(e.key === 'Escape'){ list.style.display = 'none'; }
+  });
+  inp.addEventListener('blur', () => setTimeout(() => { list.style.display = 'none'; }, 150));
+}
+async function sendWorkspaceInvites(){
+  if(!S.workspaceId){ alert('ワークスペースが未作成です'); return; }
+  if(!_invitePicked.length){ toast('招待するユーザーを選んでください'); return; }
+  const url = `${window.location.origin}${window.location.pathname}?ws=${encodeURIComponent(S.workspaceId)}`;
+  const wsName = S.wsName || S.profile?.companyName || S.workspaceId;
+  const me = _currentUser?.name || '';
+  const names = _invitePicked.map(u => u.name).join('、');
+  if(!confirm(`${names} に、ワークスペース「${wsName}」への招待メールを送りますか？`)) return;
+  const subject = `${wsName} への招待（プロジェクト管理）`;
+  const body = [
+    `${me} さんから、Hittatsu プロジェクト管理のワークスペース「${wsName}」への招待が届きました。`,
+    '',
+    '▼ 下のリンクを開き、会社のGoogleアカウントでログインすると参加できます',
+    url,
+    '',
+    '— Hittatsu より自動送信',
+  ].join('\r\n');
+  const btn = document.getElementById('inviteSendBtn');
+  if(btn) btn.disabled = true;
+  try{
+    const res = await sendMail(_currentUser?.email || '', _invitePicked.map(u => u.email), subject, body);
+    if(res.ok){
+      toast(`✉️ ${_invitePicked.length}名に招待メールを送りました`);
+      logHistory('edit', '招待メール送信：' + names);
+      _invitePicked = [];
+      _renderInviteChips();
+    } else {
+      alert('招待メールを送れませんでした。招待URLをコピーして直接送ってください：\n' + url);
+    }
+  } finally {
+    if(btn) btn.disabled = false;
+  }
 }
 
 /** ワークスペースのオーナーか(作成者、またはオーナー権限を付与された人) */
@@ -12035,12 +12153,12 @@ async function removeWorkspaceMember(m){
   if(S.budgetRoles && email) delete S.budgetRoles[email];
   if(S.workspaceId && _firebaseReady && firebase.auth().currentUser){
     try{
-      const ref = db.collection('workspaces').doc(S.workspaceId);
+      const ref = firebase.firestore().collection('workspaces').doc(S.workspaceId);
       const upd = { memberEmails: firebase.firestore.FieldValue.arrayRemove(email) };
       if(authRow) upd.authMembers = firebase.firestore.FieldValue.arrayRemove(authRow);
       await ref.update(upd);
       bumpFbUsage('write', 1);
-    }catch(e){ console.warn('member remove (cloud):', e && e.message); }
+    }catch(e){ console.warn('member remove (cloud):', e && e.message); alert('クラウドへの保存に失敗しました：' + (e && e.message || e)); }
   }
   save(true, 'メンバー削除：' + m.name);
   renderMemberPane();
@@ -12071,10 +12189,10 @@ async function setWorkspaceMemberRole(m, role){
   }
   if(S.workspaceId && _firebaseReady && firebase.auth().currentUser){
     try{
-      const ref = db.collection('workspaces').doc(S.workspaceId);
+      const ref = firebase.firestore().collection('workspaces').doc(S.workspaceId);
       await ref.update({ authMembers: S.authMembers });
       bumpFbUsage('write', 1);
-    }catch(e){ console.warn('member role (cloud):', e && e.message); }
+    }catch(e){ console.warn('member role (cloud):', e && e.message); alert('クラウドへの保存に失敗しました：' + (e && e.message || e)); }
   }
   save(true, '権限変更：' + m.name + ' → ' + (role === 'owner' ? 'オーナー' : 'メンバー'));
   renderMemberPane();
