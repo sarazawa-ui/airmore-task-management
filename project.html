@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1790842609866";</script>
+<script>window.__HITTATSU_BUILD__ = "1790842664349";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -11363,8 +11363,6 @@ function openTaskEditModal(taskId, opts){
       </div>
       <div class="field"><label>成果物（完了の定義）</label><textarea data-ef="defn" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font:inherit;background:#fff;resize:vertical">${escapeHtml(t.defn||'')}</textarea></div>
       <div class="field"><label>備考</label><textarea data-ef="note" rows="2" style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:7px;font:inherit;background:#fff;resize:vertical">${escapeHtml(t.note||'')}</textarea></div>
-      ${(t.hittLink && t.hittLink.id) ? `<div class="field"><label>連携レコード（Hittatsu）</label>
-        <button type="button" class="btn ghost" style="justify-content:flex-start;width:100%;text-align:left" onclick="hittOpenRecord('${escapeHtml(t.id)}')">🔗 ${escapeHtml(t.hittLink.label || (t.hittLink.kind === 'newbiz' ? '新事業' : '新商品'))} を開く</button></div>` : ''}
       <div style="display:flex;gap:8px;justify-content:space-between;margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
         <button class="btn danger" onclick="deleteEditingTask()">🗑 削除</button>
         <div style="display:flex;gap:8px">
@@ -11376,23 +11374,6 @@ function openTaskEditModal(taskId, opts){
   `;
   document.getElementById('taskEditModal').classList.add('show');
 }
-/** タスクに付いた Hittatsu のレコード（新商品・新事業）を開く。
- *  Hittatsu の中（iframe）なら親画面へ知らせてその場で開き、単独で開いているときはリンク先へ移る */
-function hittOpenRecord(taskId){
-  const t = (S.tasks||[]).find(x => x && x.id === taskId);
-  const l = t && t.hittLink;
-  if(!l || !l.id) return;
-  try{ closeTaskEditModal(); }catch(e){}
-  try{
-    if(window.parent && window.parent !== window){
-      window.parent.postMessage({ type:'hitt-open-record', kind:l.kind, id:l.id, step:l.step||'' }, window.location.origin);
-      return;
-    }
-  }catch(e){}
-  const url = l.url || ('./?page=' + encodeURIComponent(l.kind) + '&id=' + encodeURIComponent(l.id) + (l.step ? '&step=' + encodeURIComponent(l.step) : ''));
-  window.location.href = url;
-}
-window.hittOpenRecord = hittOpenRecord;
 /** 新規追加のモーダルで、利用者が何か入力したか（未入力なら破棄してよい） */
 function _newTaskWasEdited(t){
   if(!t) return false;
