@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1790905280696";</script>
+<script>window.__HITTATSU_BUILD__ = "1790905590716";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -13158,6 +13158,8 @@ setInterval(()=>{ if(document.getElementById('view-calendar').classList.contains
 (function(){
   var cur = String(window.__HITTATSU_BUILD__ || "");
   if(!cur || cur.indexOf("%") >= 0) return; // 未刻印(開発時)は無効
+  // 統合アプリの中(iframe)では、アプリ側が同じお知らせを出して全体を更新するので、ここでは出さない
+  try{ if(window.top !== window.self) return; }catch(e){ return; }
   var GUARD = "hittatsu_update_reload";
   var pendingV = null, banner = null;
   function guardOk(v){
@@ -13172,11 +13174,16 @@ setInterval(()=>{ if(document.getElementById('view-calendar').classList.contains
   function showBanner(v){
     if(banner) return;
     banner = document.createElement("div");
-    banner.style.cssText = "position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#1F4E78;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:13px;z-index:9999;display:flex;align-items:center;gap:10px";
-    banner.innerHTML = '✨ 新しいバージョンがあります <button style="background:#2f6fb3;color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:12.5px;cursor:pointer;font-weight:700">更新</button>';
+    banner.style.cssText = "position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#1F4E78;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:13px;z-index:9999;display:flex;align-items:center;gap:10px;max-width:calc(100vw - 32px);box-sizing:border-box";
+    banner.innerHTML = '✨ 新しいバージョンがあります。更新してください <button style="background:#2f6fb3;color:#fff;border:none;border-radius:7px;padding:6px 12px;font-size:12.5px;cursor:pointer;font-weight:700;white-space:nowrap;flex-shrink:0">ページを更新</button>';
     banner.querySelector("button").addEventListener("click", function(){
       banner.remove(); banner = null;
-      doReload(v, 1500); // 保存デバウンス・同期送信が終わるのを待つ
+      try{ sessionStorage.setItem(GUARD, JSON.stringify({v:v, at:Date.now()})); }catch(e){}
+      // 保存・同期の送信を待ってから、配信側のキャッシュを迂回して読み込み直す(?_r= は読み込み後に消す)
+      setTimeout(function(){
+        try{ fetch(location.pathname + "?t=" + Date.now(), {cache:"reload"}).catch(function(){}); }catch(e){}
+        var u = new URL(location.href); u.searchParams.set("_r", String(Date.now())); location.replace(u.toString());
+      }, 1500);
     });
     document.body.appendChild(banner);
   }
@@ -13192,12 +13199,16 @@ setInterval(()=>{ if(document.getElementById('view-calendar').classList.contains
       else showBanner(v);
     }).catch(function(){});
   }
-  setInterval(check, 5*60*1000);
+  // 強制更新の目印(?_r=)を消す
+  try{ var uu = new URL(location.href); if(uu.searchParams.has("_r")){ uu.searchParams.delete("_r"); history.replaceState(null, "", uu.pathname + uu.search + uu.hash); } }catch(e){}
+  setInterval(check, 60*1000);
+  window.addEventListener("focus", check);
+  window.addEventListener("online", check);
   document.addEventListener("visibilitychange", function(){
     if(document.hidden){ if(pendingV && guardOk(pendingV)) doReload(pendingV, 3000); }
     else check();
   });
-  setTimeout(check, 20*1000);
+  setTimeout(check, 5*1000);
 })();
 </script>
 </body>
