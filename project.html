@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1790925885097";</script>
+<script>window.__HITTATSU_BUILD__ = "1790990815654";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -848,7 +848,10 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
 .member-row img,.member-row .ph{width:36px;height:36px;border-radius:50%;flex:0 0 36px}
 .member-row .ph{background:var(--primary-light);color:var(--primary-dark);display:flex;align-items:center;justify-content:center;font-weight:700}
 .member-row .info{flex:1 1 auto;min-width:0;overflow:hidden}
-.member-role-select{flex:0 0 auto;width:auto;min-width:96px;padding:4px 8px;border:1px solid var(--border);border-radius:7px;background:#fff;color:var(--text);font:inherit;font-size:12px;cursor:pointer}
+/* 権限の選択。ワークスペース情報は .profile-form の中にあり「select{width:100%}」が効いて
+   名前・メールが押し出されて見えなくなっていたため、メンバー行の中では幅を内容なりに固定する */
+.member-row .member-role-select,.profile-form .member-row .member-role-select{flex:0 0 auto;width:auto;min-width:96px;max-width:120px;padding:4px 8px;border:1px solid var(--border);border-radius:7px;background:#fff;color:var(--text);font:inherit;font-size:12px;cursor:pointer}
+.member-row .btn{flex:0 0 auto;white-space:nowrap}
 .invite-box{margin-top:18px;padding:12px 14px;border:1px solid var(--border);border-radius:9px;background:var(--section)}
 .invite-box .inv-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .invite-box .inv-search{position:relative;flex:1;min-width:220px}
