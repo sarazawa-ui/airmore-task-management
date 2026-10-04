@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1791007837963";</script>
+<script>window.__HITTATSU_BUILD__ = "1791154929876";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -3565,6 +3565,7 @@ function renderMeetings(){
       if(!m) return;
       if(!confirm(`会議メモ「${m.name||'(無題)'}」を削除しますか？\n（この操作は取り消せません）`)) return;
       S.meetings = S.meetings.filter(x => x.id !== mid);
+      _addTombstone('meetings', mid); // 明示削除(記録の無い削除はクラウドへ送らない)
       _addTombstone('meetings', mid);
       // 削除後の選択を次の会議へ
       const remaining = S.meetings.slice().sort((a,b) =>
@@ -8962,9 +8963,10 @@ async function syncWeeklyReportsToSubcoll(wsId){
       }
     });
   });
-  // ローカルから消えた weekly report は削除
+  // 週報には削除の操作が無い。手元に無いだけの週報をクラウドから消さない(Tombstone があるものだけ消す)
   const deletes = [];
-  _lastSyncedWeeklyReports.forEach((_, id) => { if(!currentIds.has(id)) deletes.push(id); });
+  const _tombW = _tombstoneSetFor('weeklyReports');
+  _lastSyncedWeeklyReports.forEach((_, id) => { if(!currentIds.has(id) && _tombW.has(id)) deletes.push(id); });
   if(writes.length === 0 && deletes.length === 0) return 0;
   try{
     const ops = [...writes.map(w => ({type:'set', ...w})), ...deletes.map(id => ({type:'delete', id}))];
@@ -9326,8 +9328,20 @@ async function syncMeetingsToSubcoll(wsId){
       writes.push({id: m.id, payload: clean, json});
     }
   });
+  // 削除は「削除の操作(Tombstone)」があるものだけ。記録の無いものは前回同期した内容で手元に戻す
   const deletes = [];
-  _lastSyncedMeetings.forEach((_, id) => { if(!currentIds.has(id)) deletes.push(id); });
+  const _tombM = _tombstoneSetFor('meetings');
+  const _restoreM = [];
+  _lastSyncedMeetings.forEach((json, id) => {
+    if(currentIds.has(id)) return;
+    if(_tombM.has(id)) deletes.push(id);
+    else { try{ _restoreM.push(JSON.parse(json)); }catch(e){} }
+  });
+  if(_restoreM.length){
+    S.meetings = (S.meetings||[]).concat(_restoreM);
+    logSync('restore.noTombstone', {kind:'meetings', count: _restoreM.length});
+    try{ setTimeout(()=>{ try{ renderAll(); }catch(e){} }, 0); }catch(e){}
+  }
   if(writes.length === 0 && deletes.length === 0) return 0;
   try{
     // 書き込みは1件ずつトランザクションで: クラウドの最新を読み、前回の基準(base)と自分の内容で
@@ -9619,12 +9633,21 @@ async function syncTasksGoalsToSubcollections(wsId){
       writes.push({path:`workspaces/${wsId}/tasks/${t.id}`, clean, prevJson, kind:'tasks', id:t.id, json});
     }
   });
-  // ローカルから消えたタスク → 削除
+  // ローカルから消えたタスク → 削除。ただし「削除の操作(Tombstone)」があるものだけ。
+  //   手元に無いだけ(読み込み途中・別WSのデータ・保存失敗など)のタスクをクラウドから消さないため、
+  //   記録の無いものは前回同期した内容で手元に戻す(データが消えることを構造的に防ぐ)
+  const _tombT = _tombstoneSetFor('tasks');
+  const _restoreT = [];
   _lastSyncedTasks.forEach((json, id) => {
-    if(!curTaskIds.has(id)){
-      deletes.push({path:`workspaces/${wsId}/tasks/${id}`, kind:'tasks', id});
-    }
+    if(curTaskIds.has(id)) return;
+    if(_tombT.has(id)) deletes.push({path:`workspaces/${wsId}/tasks/${id}`, kind:'tasks', id});
+    else { try{ _restoreT.push(JSON.parse(json)); }catch(e){} }
   });
+  if(_restoreT.length){
+    S.tasks = (S.tasks||[]).concat(_restoreT);
+    logSync('restore.noTombstone', {kind:'tasks', count: _restoreT.length});
+    try{ setTimeout(()=>{ try{ renderAll(); }catch(e){} }, 0); }catch(e){}
+  }
 
   // goals 差分
   const curGoalIds = new Set();
@@ -9638,11 +9661,19 @@ async function syncTasksGoalsToSubcollections(wsId){
       writes.push({path:`workspaces/${wsId}/goals/${g.id}`, clean, prevJson, kind:'goals', id:g.id, json});
     }
   });
+  // プロジェクトも同じく「削除の操作(Tombstone)」があるものだけ消す。記録の無いものは手元に戻す
+  const _tombG = _tombstoneSetFor('goals');
+  const _restoreG = [];
   _lastSyncedGoals.forEach((json, id) => {
-    if(!curGoalIds.has(id)){
-      deletes.push({path:`workspaces/${wsId}/goals/${id}`, kind:'goals', id});
-    }
+    if(curGoalIds.has(id)) return;
+    if(_tombG.has(id)) deletes.push({path:`workspaces/${wsId}/goals/${id}`, kind:'goals', id});
+    else { try{ _restoreG.push(JSON.parse(json)); }catch(e){} }
   });
+  if(_restoreG.length){
+    S.goals = (S.goals||[]).concat(_restoreG);
+    logSync('restore.noTombstone', {kind:'goals', count: _restoreG.length});
+    try{ setTimeout(()=>{ try{ renderAll(); }catch(e){} }, 0); }catch(e){}
+  }
 
   const total = writes.length + deletes.length;
   if(total === 0) return 0;
@@ -11902,6 +11933,8 @@ async function executeProjectTransfer(){
     if(mode === 'move'){
       // 現ワークスペースから削除
       setStat('現ワークスペースから削除中…');
+      S.tasks.filter(t => t.goal === goalId).forEach(t => _addTombstone('tasks', t.id)); // 明示削除
+      _addTombstone('goals', goalId);
       S.tasks = S.tasks.filter(t => t.goal !== goalId);
       S.goals = S.goals.filter(g => g.id !== goalId);
       save(true, `プロジェクト「${goal.name||goalId}」を別WSへ移動`);
