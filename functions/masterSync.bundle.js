@@ -20,6 +20,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // server/masterSync.ts
 var masterSync_exports = {};
 __export(masterSync_exports, {
+  dedupeCompany: () => dedupeCompany,
   lastScheduledJst: () => lastScheduledJst,
   runMasterSync: () => runMasterSync
 });
@@ -431,6 +432,99 @@ function diff(b, n, path = [], out = [], inRows = false) {
   return out;
 }
 
+// src/masterDedupe.ts
+var REF_KEY = { customers: "customerId", products: "productId" };
+var REF_LISTS = ["deals", "activities", "quotes", "trips", "rideAlongs", "repairs", "expos", "leads"];
+var filled = (x) => Object.values(x || {}).filter((v) => v !== void 0 && v !== null && v !== "").length;
+function sameKey(kind, x) {
+  const code = String(x?.code || "").trim();
+  if (code) return "c:" + code;
+  if (kind === "customers" && x?.name) return "n:" + String(x.name).trim() + "|" + String(x.site || "").trim();
+  return "";
+}
+function countRefs(v, key, out) {
+  if (Array.isArray(v)) v.forEach((x) => countRefs(x, key, out));
+  else if (v && typeof v === "object") {
+    for (const [k, x] of Object.entries(v)) {
+      if (k === key && typeof x === "string" && x) out.set(x, (out.get(x) || 0) + 1);
+      else if (x && typeof x === "object") countRefs(x, key, out);
+    }
+  }
+}
+function remapRefs(v, key, map) {
+  if (Array.isArray(v)) {
+    let ch = false;
+    const n = v.map((x) => {
+      const y = remapRefs(x, key, map);
+      if (y !== x) ch = true;
+      return y;
+    });
+    return ch ? n : v;
+  }
+  if (v && typeof v === "object") {
+    let out = null;
+    for (const [k, x] of Object.entries(v)) {
+      let y = x;
+      if (k === key && typeof x === "string" && map[x]) y = map[x];
+      else if (x && typeof x === "object") y = remapRefs(x, key, map);
+      if (y !== x) {
+        out ||= { ...v };
+        out[k] = y;
+      }
+    }
+    return out || v;
+  }
+  return v;
+}
+function planMasterDedupe(d) {
+  const plan = { customers: {}, products: {}, fill: { customers: {}, products: {} } };
+  for (const kind of ["customers", "products"]) {
+    const list = (d[kind] || []).filter(Boolean);
+    const groups = /* @__PURE__ */ new Map();
+    for (const x of list) {
+      if (typeof x.id !== "string" || !x.id) continue;
+      const k = sameKey(kind, x);
+      if (!k) continue;
+      const g = groups.get(k);
+      if (g) g.push(x);
+      else groups.set(k, [x]);
+    }
+    if (![...groups.values()].some((g) => g.length > 1)) continue;
+    const refs = /* @__PURE__ */ new Map();
+    REF_LISTS.forEach((n) => countRefs(d[n] || [], REF_KEY[kind], refs));
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      const sorted = [...g].sort(
+        (a, b) => (refs.get(b.id) || 0) - (refs.get(a.id) || 0) || filled(b) - filled(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+      );
+      const keep = sorted[0];
+      const add = {};
+      for (const other of sorted.slice(1)) {
+        plan[kind][other.id] = keep.id;
+        for (const [k, v] of Object.entries(other)) {
+          if (k === "id" || v === void 0 || v === null || v === "") continue;
+          const cur = keep[k] !== void 0 && keep[k] !== null && keep[k] !== "" ? keep[k] : add[k];
+          if (cur === void 0 || cur === null || cur === "") add[k] = v;
+        }
+      }
+      if (Object.keys(add).length) plan.fill[kind][keep.id] = add;
+    }
+  }
+  return plan;
+}
+var planIsEmpty = (p) => !Object.keys(p.customers).length && !Object.keys(p.products).length;
+function applyMasterDedupe(d, p) {
+  if (planIsEmpty(p)) return d;
+  const next = { ...d };
+  for (const kind of ["customers", "products"]) {
+    const drop = p[kind];
+    if (!Object.keys(drop).length) continue;
+    next[kind] = (d[kind] || []).filter((x) => !drop[x?.id]).map((x) => p.fill[kind][x.id] ? { ...x, ...p.fill[kind][x.id] } : x);
+    for (const n of REF_LISTS) if (next[n]) next[n] = remapRefs(next[n], REF_KEY[kind], drop);
+  }
+  return next;
+}
+
 // src/budget/salesImport.js
 var num = (v) => {
   const n = parseFloat(String(v ?? "").replace(/[,¥\s"']/g, ""));
@@ -644,6 +738,54 @@ async function writeList(ctx, ws, name, before, after) {
   }
   return ops.length;
 }
+async function markDeletedDocs(ctx, ws, name, ids) {
+  const { db, FieldPath } = ctx;
+  const at = (/* @__PURE__ */ new Date()).toISOString();
+  for (let i = 0; i < ids.length; i += 400) {
+    const b = db.batch();
+    ids.slice(i, i + 400).forEach(
+      (id) => b.update(db.doc(`sales3/${ws}/${name}/${id}`), new FieldPath("_deleted"), true, new FieldPath("_delAt"), at, new FieldPath("_at"), Date.now(), new FieldPath("_by"), BY)
+    );
+    await b.commit();
+  }
+}
+var REF_LISTS2 = ["deals", "activities", "quotes", "trips", "rideAlongs", "repairs", "expos", "leads"];
+async function dedupeCompany(ctx, ws, dryRun = false) {
+  const { db } = ctx;
+  const lists = {};
+  for (const n of ["customers", "products", ...REF_LISTS2]) lists[n] = await readList(db, ws, n);
+  const d = Object.fromEntries(Object.entries(lists).map(([k, v]) => [k, v.items]));
+  const plan = planMasterDedupe(d);
+  const res = { customers: Object.keys(plan.customers).length, products: Object.keys(plan.products).length, refs: {} };
+  if (planIsEmpty(plan)) return res;
+  const next = applyMasterDedupe(d, plan);
+  for (const n of REF_LISTS2) {
+    const before = new Map(d[n].map((x) => [x.id, x]));
+    const changed = (next[n] || []).filter((x) => before.get(x.id) !== x).length;
+    if (changed) res.refs[n] = changed;
+  }
+  const rq = await db.collection("sync3/repair/repairs").get();
+  const repairs = rq.docs.map((x) => ({ ...dec(x.data()), id: x.id, _raw: x.data() })).filter((x) => !x._raw?._deleted && String(x.company || "") === ws);
+  const repNext = repairs.map((x) => remapRefs(remapRefs(x, "customerId", plan.customers), "productId", plan.products));
+  const repChanged = repNext.filter((x, i) => x !== repairs[i]);
+  if (repChanged.length) res.refs["\u4FEE\u7406\u54C1"] = repChanged.length;
+  if (dryRun) return res;
+  for (const n of REF_LISTS2) if (res.refs[n]) await writeList(ctx, ws, n, d[n], next[n]);
+  for (const x of repChanged) {
+    const pairs = diff(enc(repairs.find((y) => y.id === x.id)), enc(x)).filter(([p]) => p[0] !== "_raw");
+    if (!pairs.length) continue;
+    const args = [];
+    for (const [p, v] of [...pairs, [["_at"], Date.now()], [["_by"], BY]]) args.push(new ctx.FieldPath(...p), v === void 0 ? null : v);
+    await db.doc(`sync3/repair/repairs/${x.id}`).update(...args);
+  }
+  for (const kind of ["customers", "products"]) {
+    const drop = Object.keys(plan[kind]);
+    if (!drop.length) continue;
+    await writeList(ctx, ws, kind, d[kind], next[kind]);
+    await markDeletedDocs(ctx, ws, kind, drop);
+  }
+  return res;
+}
 async function syncCompany(ctx, ws, out) {
   const { db } = ctx;
   const now = ctx.now || /* @__PURE__ */ new Date();
@@ -652,6 +794,7 @@ async function syncCompany(ctx, ws, out) {
   const mods = { ...fields.sheetModified || {} };
   let modsChanged = false;
   let stocks = fields.stocks;
+  let deduped = false;
   for (const which of WHICH) {
     const url = String(urls[which] || "").trim();
     if (!url) continue;
@@ -668,6 +811,11 @@ async function syncCompany(ctx, ws, out) {
         continue;
       }
       let msg = "";
+      if (which !== "stocks" && !deduped) {
+        deduped = true;
+        const dd = await dedupeCompany(ctx, ws);
+        if (dd.customers || dd.products) out.push({ ws, which: "dedupe", status: "done", msg: `\u91CD\u8907\u3092\u307E\u3068\u3081\u307E\u3057\u305F(\u5F97\u610F\u5148 ${dd.customers}\u4EF6\u30FB\u5546\u54C1 ${dd.products}\u4EF6)` });
+      }
       if (which === "stocks") {
         const tabs = await ctx.sheets.tabs(url, "\u5728\u5EAB");
         const next = buildStockData(tabs);
@@ -785,6 +933,7 @@ async function runMasterSync(ctx) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  dedupeCompany,
   lastScheduledJst,
   runMasterSync
 });

@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1791208266840";</script>
+<script>window.__HITTATSU_BUILD__ = "1791215775814";</script>
 <script>
 // プロジェクト管理を単体で開いたとき(以前の招待メール・タスク通知のリンク、ブックマークなど)は、
 // 現行の Hittatsu の画面(左メニュー付き)のプロジェクト管理へ移す。現行の画面の中(iframe)では何もしない
@@ -37,14 +37,14 @@
 </script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-functions-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-functions-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-messaging-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-storage-compat.js"></script>
 <!-- 文字単位の同時編集の共通の仕組み(src/collab → npm run build:collab) -->
-<script src="vendor/hittatsu-collab.js?v=1791208266840"></script>
+<script src="vendor/hittatsu-collab.js?v=1791215775814"></script>
 <style>
 :root{
   --primary:#1c5cab;
@@ -8272,25 +8272,11 @@ function initFirebase(){
         }
       }catch(e){ console.warn('[firebase] emulator setup failed', e); }
     }
-    // ★ オフライン永続化を有効化：未送信の write が IndexedDB に保存され、
-    //   ページ再読込後も自動的に再送される。「削除直後にリフレッシュ → 復活」を構造的に防ぐ。
-    //   失敗してもアプリ自体は動くので catch のみで握りつぶす。
-    try{
-      // キャッシュ上限(既定40MB)に達すると古いドキュメントが追い出され、次回の
-      // 全件再読み込みが復活してしまうため無制限にする(settings は persistence より先に呼ぶ)
-      try{ firebase.firestore().settings({ cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED, merge: true }); }catch(e){}
-      firebase.firestore().enablePersistence({synchronizeTabs: true})
-        .then(()=> logSync('persistence.enabled'))
-        .catch(err => {
-          logSync('persistence.failed', {code: err && err.code});
-          // failed-precondition: 他のタブで既に開かれている等。動作には影響なし。
-          if(err && err.code !== 'failed-precondition' && err.code !== 'unimplemented'){
-            console.warn('[firestore] persistence not enabled:', err);
-          }
-        });
-    }catch(e){
-      logSync('persistence.error', {err: String(e && e.message || e)});
-    }
+    // ★ 端末の永続キャッシュ(IndexedDB)は使わない(メモリのみ)。
+    //   統合アプリ(Firebase 12・複数タブ共有のキャッシュ)と同じページ・同じ保存領域を共有すると、
+    //   どちらが通信の担当になるかの調整が噛み合わず、統合アプリ側の保存が送られないまま止まったり、
+    //   入力が消えて見えたりすることがあった(2026-10-06)。プロジェクト管理のデータは少ないので、開くたびに読む
+    logSync('persistence.memory');
     _firebaseReady = true;
     updateSyncStatus('offline');
     // ★ PWA Service Worker 登録（プッシュ通知の受信に必要）
