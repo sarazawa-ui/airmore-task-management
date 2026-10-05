@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1791154929876";</script>
+<script>window.__HITTATSU_BUILD__ = "1791160030549";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -3077,8 +3077,92 @@ function _handleMeetingPaste(e, div, commitFn){
     commitFn();
   }
 }
+// ===== 会議メモ: 入力中の判定・値だけの更新・入力途中の文字の反映 =====
+// 文字を入力する欄(テキスト・日時・議事録/決定事項の書式付き欄)にカーソルがあるか。選択肢・ボタンは含めない
+function _meetingTypingEl(list){
+  const ae = document.activeElement;
+  if(!ae || !list || !list.contains(ae)) return null;
+  if(ae.isContentEditable) return ae;
+  if(ae.tagName === 'TEXTAREA') return ae;
+  if(ae.tagName === 'INPUT' && !/^(button|checkbox|radio|submit|file|range|color)$/i.test(ae.type||'')) return ae;
+  return null;
+}
+// 構造が同じとき: 変わった欄の値だけを書き換える(カーソルのある欄・その中には触らない)
+function _patchMeetingEditorInPlace(list, selected, sorted, selectedId){
+  const ae = document.activeElement;
+  const busy = (el) => el === ae || (ae && el.contains && el.contains(ae));
+  // 会議の選択肢の表示名(日付・会議名)
+  const sel = list.querySelector('#meetingSelect');
+  if(sel){
+    const byId = new Map(sorted.map(m => [m.id, m]));
+    Array.from(sel.options).forEach(o => {
+      const m = byId.get(o.value); if(!m) return;
+      const label = `${m.date||'----/--/--'}  ${(m.name||'(無題)')}  [${m.id}]`;
+      if(o.textContent !== label) o.textContent = label;
+    });
+  }
+  if(!selected) return;
+  const editor = list.querySelector(`.meeting-editor[data-mid="${CSS.escape(selectedId)}"]`);
+  if(!editor) return;
+  // 会議名・日付・場所・時間など
+  editor.querySelectorAll('[data-mf]').forEach(el => {
+    if(busy(el)) return;
+    const v = selected[el.dataset.mf] == null ? '' : String(selected[el.dataset.mf]);
+    if(el.isContentEditable){ if(el.innerHTML !== v) el.innerHTML = v; }
+    else if(el.value !== v) el.value = v;
+  });
+  // 行: 担当・議題・議事録・決定事項
+  _meetingDisplayRows(selected).forEach(row => {
+    ['who','topic','minutes','decisions'].forEach(f => {
+      const el = editor.querySelector(`[data-rowf="${f}"][data-rid="${CSS.escape(row.rid)}"]`);
+      if(!el || busy(el)) return;
+      const v = row[f] == null ? '' : String(row[f]);
+      if(el.isContentEditable){ if(el.innerHTML !== v){ el.innerHTML = v; el._startVal = undefined; } }
+      else if(el.value !== v) el.value = v;
+    });
+  });
+  // 参加者の要約(見出し)
+  const sum = editor.querySelector('.mi-sum');
+  if(sum && typeof _attendeeSummary === 'function'){ const t = _attendeeSummary(selected); if(sum.textContent !== t) sum.textContent = t; }
+}
+// 作り直す前に: 入力途中(まだ保存していない)の文字をデータへ反映して保存する
+function _flushMeetingInputs(list){
+  if(!list) return;
+  try{
+    list.querySelectorAll('.rt-editor').forEach(div => { if(typeof div._commit === 'function') div._commit(); });
+    list.querySelectorAll('input[data-mf], textarea[data-mf], input[data-rowf], textarea[data-rowf], input[data-attf]').forEach(inp => {
+      const editor = inp.closest('.meeting-editor'); if(!editor) return;
+      const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m || m.locked) return;
+      let cur;
+      if(inp.dataset.rowf){ const row = (m.rows||[]).find(r => r.rid === inp.dataset.rid); cur = row ? row[inp.dataset.rowf] : undefined; }
+      else if(inp.dataset.attf){ const a = (m.attendees||[]).find(x => x.aid === inp.dataset.aid); cur = a ? a[inp.dataset.attf] : undefined; }
+      else cur = m[inp.dataset.mf];
+      if(inp.type === 'checkbox') return;
+      if(String(cur == null ? '' : cur) !== String(inp.value)) inp.dispatchEvent(new Event('change', {bubbles: true})); // 各欄の保存処理を通す
+    });
+  }catch(e){ console.warn('[meetings] flush failed', e); }
+}
+// 入力欄を離れたら、保留していた作り直しを行う
+document.addEventListener('focusout', (e) => {
+  const list = document.getElementById('meetingsList');
+  if(!list || !_meetingsRenderPending || !list.contains(e.target)) return;
+  setTimeout(() => {
+    if(!_meetingsRenderPending || _meetingTypingEl(list)) return; // まだ別の欄で入力中
+    _meetingsRenderPending = false;
+    try{ withFocusPreserved(() => renderMeetings()); }catch(err){}
+  }, 0);
+}, true);
+
+let _meetingsFlushing = false; // 入力途中の文字をデータへ反映している最中(その間の描き直しは行わない)
 function renderMeetings(){
   const list = document.getElementById('meetingsList');
+  if(_meetingsFlushing) return;
+  // 描き直しの前に、入力欄に残っている入力途中の文字をデータへ反映する(作り直しで古い値に戻さないため)。
+  // カーソルのある欄で入力中のときは触らない(値だけの更新で済ませ、その欄はそのまま残す)
+  if(list && list.querySelector('.meeting-toolbar') && !_meetingTypingEl(list)){
+    _meetingsFlushing = true;
+    try{ _flushMeetingInputs(list); } finally { _meetingsFlushing = false; }
+  }
   const countEl = document.getElementById('meetingsCount');
   const header = document.getElementById('meetingsHeader');
   if(!list || !header) return;
@@ -3193,6 +3277,32 @@ function renderMeetings(){
       </div>
     `;
   }
+  // ★ 同時編集でも入力が消えない・画面が飛ばないように:
+  //   ・「構造」(会議の選択・行の並び・参加者・記録済み など)が前回の描画と同じなら、画面を作り直さず
+  //     変わった欄の値だけを書き換える。入力中の欄には触らないので、入力途中の文字は消えず、
+  //     他の人が入力した行はその場で反映される
+  //   ・構造が変わった(行の追加・削除など)とき、入力中なら作り直しを入力が終わるまで保留する
+  //   ・作り直す前には、入力途中の文字を必ずデータへ反映してから作り直す
+  const _structSig = JSON.stringify([
+    selectedId, _meetingSearch, expanded,
+    sorted.map(m => m.id),
+    selected ? [_meetingDisplayRows(selected).map(r => r.rid), selected.attendees, selected.createdBy, selected.locked, selected.lockedBy, selected.lockedAt] : null,
+    _meetingInfoOpen(),
+    (S.agendaPresets||[]).length
+  ]);
+  const _hasEditor = !!list.querySelector('.meeting-toolbar');
+  if(_hasEditor && list._lastStructSig === _structSig){
+    _patchMeetingEditorInPlace(list, selected, sorted, selectedId);
+    list._lastRenderSig = null;
+    return;
+  }
+  if(_hasEditor && _meetingTypingEl(list)){
+    // 入力中は構造の作り直しを保留(入力欄を離れた時点で描き直す)。値の変わった欄はいま反映する
+    _meetingsRenderPending = true;
+    if(list._lastStructSig) _patchMeetingEditorInPlace(list, selected, sorted, selectedId);
+    return;
+  }
+  list._lastStructSig = _structSig;
   // 表示内容が前回描画と同一なら再構築しない（DOM再生成によるスクロール・フォーカスの揺れを防止）
   const _renderSig = JSON.stringify([
     selectedId, _meetingSearch, expanded,
@@ -3205,10 +3315,13 @@ function renderMeetings(){
   if(list._lastRenderSig === _renderSig && list.querySelector('.meeting-toolbar')) return;
   list._lastRenderSig = _renderSig;
 
-  // ページのスクロール位置を保持したまま再構築（ページスクロール方式なので通常は動かないが保険）
-  const _pageY = window.scrollY;
-  list.innerHTML = toolbarHtml + editorHtml;
-  if(Math.abs(window.scrollY - _pageY) > 2) window.scrollTo(0, _pageY);
+  // スクロール位置を保持したまま再構築。スクロールしているのはページ(window)ではなく #appMain のため、
+  // 以前の window.scrollY の保持は効かず、作り直すたびに一番上へ飛んでいた。
+  // 高さも一時的に固定し、中身が空になった瞬間に縮んでスクロールが戻されるのを防ぐ
+  const _h = list.offsetHeight;
+  if(_h) list.style.minHeight = _h + 'px';
+  _withScrollKept(() => { list.innerHTML = toolbarHtml + editorHtml; });
+  list.style.minHeight = '';
   // select の change → 選択保存 + 再描画
   const sel = list.querySelector('#meetingSelect');
   if(sel){
@@ -9298,11 +9411,8 @@ function subscribeMeetings(wsId){
       // ★ 誰かが会議メモを編集中（フォーカス中）の場合は、アクティブなエディタDOMを
       //   作り直すと入力途中の未保存テキストが消えるため、再描画を編集終了まで保留する。
       //   （モデル S.meetings へは反映済み。編集終了の blur で flush する）
-      if(editingId){
-        _meetingsRenderPending = true;
-      } else {
-        withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
-      }
+      // renderMeetings が「値だけ更新(入力中の欄は触らない)」か「作り直し(入力中は保留)」かを判断する
+      withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
     }
   }, err => {
     logSync('subscribe.error', {kind:'meetings', code: err && err.code});
@@ -9380,8 +9490,7 @@ async function syncMeetingsToSubcoll(wsId){
     deletes.forEach(id => _lastSyncedMeetings.delete(id));
     if(needRender){
       try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
-      if(_editingMeetingId()) _meetingsRenderPending = true;
-      else withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
+      withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
     }
     logSync('write.meetings', {writes: writes.length, deletes: deletes.length});
     return writes.length + deletes.length;
@@ -12662,6 +12771,14 @@ document.addEventListener('change', _selectRelease, true);
 document.addEventListener('focusout', _selectRelease, true);
 document.addEventListener('keydown', e => { if(['Escape', 'Enter', 'Tab'].includes(e.key)) _selectRelease(e); }, true);
 
+// スクロール位置を保ったまま描き直す。スクロールしているのは #appMain(とスマホ時はページ)。
+// 表を作り直す瞬間に高さが縮むとスクロールが戻され、一番上へ飛んで見えていた
+function _withScrollKept(fn){
+  const boxes = [document.getElementById('appMain'), document.scrollingElement].filter(Boolean);
+  const pos = boxes.map(b => b.scrollTop);
+  try{ return fn(); }
+  finally{ boxes.forEach((b, i) => { if(Math.abs(b.scrollTop - pos[i]) > 2) b.scrollTop = pos[i]; }); }
+}
 function renderAll(){
   // IME 合成中は描画を完全保留（compositionend で再開）
   if(_imeComposing){
@@ -12672,7 +12789,7 @@ function renderAll(){
   // プルダウンを開いている間は保留（閉じた直後に描く）
   if(_selectHolding()){ _deferBySelect(null); return; }
   const cap = _captureFocus();
-  _origRenderAll();
+  _withScrollKept(() => _origRenderAll());
   if(cap) _restoreFocus(cap);
   // ワークスペース未参加なら、どのビューを開いても参加画面を出したままにする
   try{ enforceWorkspaceGate(); }catch(e){}
@@ -12689,7 +12806,7 @@ window.withFocusPreserved = function(fn){
   // プルダウンを開いている間は保留(閉じた直後にこの描画を行う)
   if(_selectHolding()){ _deferBySelect(fn); return; }
   const cap = _captureFocus();
-  try { fn(); }
+  try { _withScrollKept(fn); }
   catch(e){ console.warn('[render] error in withFocusPreserved:', e); }
   finally { if(cap) _restoreFocus(cap); }
 };
