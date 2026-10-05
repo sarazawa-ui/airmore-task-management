@@ -121,15 +121,15 @@ service cloud.firestore {
     //   案件・商談記録・見積・出張・展示会リード・メンバーを全員で共有する。
     //   プロジェクト管理（workspaces/*）と同じく、許可ドメインのユーザーのみ読み書き可。
     match /salesWs/{wsId} {
-      allow read, write: if _domainOk();
-      // 会社ごとの商談管理の一覧は sales3(欄ごとの保存)へ移行済み → 旧置き場所は読むだけ(旧版の画面の書き込みを拒否)。
-      // 稟議・日報・ポータル・修理品・新商品などの共有ワークスペースと、マスタの項目(mFields)は従来どおり
-      // (共有ワークスペースも sync3 へ移行後、全端末の更新を待って読むだけにする)
+      // 稟議・日報・ポータル・修理品・新商品の共有ワークスペースは sync3 へ移行済み → 読むだけ(旧版の画面の書き込みを拒否)
+      allow read: if _domainOk();
+      allow write: if _domainOk() && !(wsId in ['ringi-shared', 'nippo-shared', 'portal-shared', 'repair-shared', 'newbiz-v2', 'newbiz-shared']);
+      // 会社ごとの商談管理の一覧は sales3 へ移行済み → 読むだけ。マスタの項目(mFields)は従来どおり書ける
       match /{coll}/{doc=**} {
         allow read: if _domainOk();
-        allow write: if _domainOk() && (
-          wsId in ['ringi-shared', 'nippo-shared', 'portal-shared', 'repair-shared', 'newbiz-v2', 'newbiz-shared']
-          || !(coll in ['deals', 'activities', 'quotes', 'trips', 'rideAlongs', 'repairs', 'expos', 'leads', 'members', 'mCustomers', 'mProducts', 'attachments', 'masters']));
+        allow write: if _domainOk()
+          && !(wsId in ['ringi-shared', 'nippo-shared', 'portal-shared', 'repair-shared', 'newbiz-v2', 'newbiz-shared'])
+          && !(coll in ['deals', 'activities', 'quotes', 'trips', 'rideAlongs', 'repairs', 'expos', 'leads', 'members', 'mCustomers', 'mProducts', 'attachments', 'masters']);
       }
     }
 
