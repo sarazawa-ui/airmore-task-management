@@ -15,7 +15,26 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1791192409065";</script>
+<script>window.__HITTATSU_BUILD__ = "1791192646433";</script>
+<script>
+// プロジェクト管理を単体で開いたとき(以前の招待メール・タスク通知のリンク、ブックマークなど)は、
+// 現行の Hittatsu の画面(左メニュー付き)のプロジェクト管理へ移す。現行の画面の中(iframe)では何もしない
+(function(){
+  try{
+    if(window.top !== window) return;
+    var sp = new URLSearchParams(location.search);
+    if(sp.get('standalone') === '1') return; // 確認用
+    if(/^(localhost|127\.0\.0\.1|[a-z0-9-]+\.localhost)$/.test(location.hostname) && localStorage.getItem('hittatsu_emulator') === '1') return; // 開発用
+    var q = new URLSearchParams();
+    q.set('page', 'project');
+    var ws = sp.get('ws');
+    if(!ws){ var m = /[?&#]ws=([^&]+)/.exec(location.hash || ''); if(m) ws = decodeURIComponent(m[1]); }
+    if(ws) q.set('ws', ws);
+    if(sp.get('task')) q.set('task', sp.get('task'));
+    location.replace(new URL('./', location.href).pathname + '?' + q.toString());
+  }catch(e){}
+})();
+</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -25,7 +44,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
 <!-- 文字単位の同時編集の共通の仕組み(src/collab → npm run build:collab) -->
-<script src="vendor/hittatsu-collab.js?v=1791192409065"></script>
+<script src="vendor/hittatsu-collab.js?v=1791192646433"></script>
 <style>
 :root{
   --primary:#1c5cab;
@@ -7143,7 +7162,7 @@ async function sendCompletionEmail(t){
     `■ プロジェクト進捗：${prog ? prog.value+'％' : '-'}`,
     '',
     '▼ アプリでこのタスクを開く',
-    `${location.origin}${location.pathname}?ws=${encodeURIComponent(S.workspaceId||'')}&task=${encodeURIComponent(t.id)}`,
+    _hittatsuAppUrl({ ws: S.workspaceId || '', task: t.id }),
     '',
     `— Hittatsu | ${wsName} より自動送信`
   ];
@@ -8390,6 +8409,12 @@ function updateSyncStatus(state){
   else lbl.textContent = _firebaseConfig ? '未接続' : 'ローカル';
 }
 
+// 招待・タスクのリンク: 現行の Hittatsu の画面(左メニュー付き)のプロジェクト管理を開くURL
+function _hittatsuAppUrl(params){
+  const u = new URL('./', window.location.href);
+  u.search = new URLSearchParams(Object.assign({ page: 'project' }, params || {})).toString();
+  return u.toString();
+}
 function readWsFromUrl(){
   try{
     const params = new URLSearchParams(window.location.search);
@@ -11008,8 +11033,7 @@ function renderFirebaseSettings(){
   document.getElementById('cfgWorkspaceId').value = S.workspaceId || '(未作成)';
   const inv = document.getElementById('cfgInviteUrl');
   if(S.workspaceId){
-    const base = window.location.origin + window.location.pathname;
-    inv.value = `${base}?ws=${S.workspaceId}`;
+    inv.value = _hittatsuAppUrl({ ws: S.workspaceId });
   } else {
     inv.value = '';
   }
@@ -12822,7 +12846,7 @@ function setupInviteBox(){
 async function sendWorkspaceInvites(){
   if(!S.workspaceId){ alert('ワークスペースが未作成です'); return; }
   if(!_invitePicked.length){ toast('招待するユーザーを選んでください'); return; }
-  const url = `${window.location.origin}${window.location.pathname}?ws=${encodeURIComponent(S.workspaceId)}`;
+  const url = _hittatsuAppUrl({ ws: S.workspaceId });
   const wsName = S.wsName || S.profile?.companyName || S.workspaceId;
   const me = _currentUser?.name || '';
   const names = _invitePicked.map(u => u.name).join('、');
