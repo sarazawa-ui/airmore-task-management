@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1791177667548";</script>
+<script>window.__HITTATSU_BUILD__ = "1791181589470";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -3117,7 +3117,7 @@ function _patchMeetingEditorInPlace(list, selected, sorted, selectedId){
       const el = editor.querySelector(`[data-rowf="${f}"][data-rid="${CSS.escape(row.rid)}"]`);
       if(!el || busy(el)) return;
       const v = row[f] == null ? '' : String(row[f]);
-      if(el.isContentEditable){ if(el.innerHTML !== v){ el.innerHTML = v; el._startVal = undefined; } }
+      if(el.isContentEditable){ if(el.innerHTML !== v){ el.innerHTML = v; el._startVal = undefined; el._dirty = false; } }
       else if(el.value !== v) el.value = v;
     });
   });
@@ -3129,7 +3129,9 @@ function _patchMeetingEditorInPlace(list, selected, sorted, selectedId){
 function _flushMeetingInputs(list){
   if(!list) return;
   try{
-    list.querySelectorAll('.rt-editor').forEach(div => { if(typeof div._commit === 'function') div._commit(); });
+    // ★ 実際に入力した(未保存の)欄だけを保存する。入力していない欄まで保存すると、描き直すたびに
+    //   閲覧中の全員が会議メモを書き込み直し、Firestore の読み書きが急増していた(2026-10-05)
+    list.querySelectorAll('.rt-editor').forEach(div => { if(div._dirty && typeof div._commit === 'function') div._commit(); });
     list.querySelectorAll('input[data-mf], textarea[data-mf], input[data-rowf], textarea[data-rowf], input[data-attf]').forEach(inp => {
       const editor = inp.closest('.meeting-editor'); if(!editor) return;
       const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m || m.locked) return;
@@ -3137,7 +3139,8 @@ function _flushMeetingInputs(list){
       if(inp.dataset.rowf){ const row = (m.rows||[]).find(r => r.rid === inp.dataset.rid); cur = row ? row[inp.dataset.rowf] : undefined; }
       else if(inp.dataset.attf){ const a = (m.attendees||[]).find(x => x.aid === inp.dataset.aid); cur = a ? a[inp.dataset.attf] : undefined; }
       else cur = m[inp.dataset.mf];
-      if(inp.type === 'checkbox') return;
+      if(inp.type === 'checkbox' || !inp._dirty) return; // 入力していない欄は保存しない(日付・時刻の表記ゆれで書き換えない)
+      inp._dirty = false;
       if(String(cur == null ? '' : cur) !== String(inp.value)) inp.dispatchEvent(new Event('change', {bubbles: true})); // 各欄の保存処理を通す
     });
   }catch(e){ console.warn('[meetings] flush failed', e); }
@@ -3376,6 +3379,10 @@ function renderMeetings(){
     if(_meetingSearch) applySearch(); // セッションの検索語を復元時に再適用
   }
   // 通常 input/select 変更 → 自動保存（会議名・日付＝data-mf ／ 行の担当・議題＝data-rowf）
+  // 実際に入力した印(描き直し前の保存は入力した欄だけ)
+  list.querySelectorAll('input[data-mf], textarea[data-mf], input[data-rowf], textarea[data-rowf], input[data-attf]').forEach(inp => {
+    inp.addEventListener('input', () => { inp._dirty = true; });
+  });
   list.querySelectorAll('input[data-mf], select[data-mf], input[data-rowf], textarea[data-rowf]').forEach(inp => {
     inp.addEventListener('change', () => {
       const editor = inp.closest('.meeting-editor'); if(!editor) return;
@@ -3420,14 +3427,20 @@ function renderMeetings(){
       if(!m) return;
       if(m.locked) return; // 記録済みは変更しない
       const newVal = _addLinkTargets(div.innerHTML);
+      div._dirty = false;
       if(div._startVal !== undefined && newVal === div._startVal) return; // ユーザー未変更 → 何もしない
       div._startVal = newVal;
+      // データと同じ内容なら保存しない(更新日時だけ変わる無駄な書き込みを出さない)
+      const _rowF = div.dataset.rowf;
+      const _cur = _rowF ? ((m.rows||[]).find(r => r.rid === div.dataset.rid) || {})[_rowF] : m[div.dataset.mf];
+      if(newVal === String(_cur == null ? '' : _cur)) return;
       if(!_writeMeetingEditorHtml(m, div, newVal)) return;
       m.updatedAt = new Date().toISOString();
       save(true, `会議メモ更新：${m.name||m.id}`);
     };
     div._commit = commit; // 貼付処理などから呼べるよう公開
     div.addEventListener('input', () => {
+      div._dirty = true; // 実際に入力した印(描き直し前の保存はこの欄だけ)
       if(_inputTimer) clearTimeout(_inputTimer);
       _inputTimer = setTimeout(() => { _inputTimer = null; commit(); }, 1200);
     });
