@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1791198765985";</script>
+<script>window.__HITTATSU_BUILD__ = "1791199881332";</script>
 <script>
 // プロジェクト管理を単体で開いたとき(以前の招待メール・タスク通知のリンク、ブックマークなど)は、
 // 現行の Hittatsu の画面(左メニュー付き)のプロジェクト管理へ移す。現行の画面の中(iframe)では何もしない
@@ -44,7 +44,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
 <!-- 文字単位の同時編集の共通の仕組み(src/collab → npm run build:collab) -->
-<script src="vendor/hittatsu-collab.js?v=1791198765985"></script>
+<script src="vendor/hittatsu-collab.js?v=1791199881332"></script>
 <style>
 :root{
   --primary:#1c5cab;
@@ -5939,11 +5939,13 @@ async function _fetchOtherWsTasks(weekDays){
         const auth = Array.isArray(d.authMembers) ? d.authMembers.find(m=>m && m.email===email) : null;
         if(auth && auth.name) selfName = auth.name;
         try{
-          const ts = await db.collection(`workspaces/${doc.id}/tasks`)
+          const _c = await PM3.coll(doc.id, 'tasks'); // 新しい置き場所へ移っていればそちら
+          const ts = await _c.ref
             .where('startD','>=',weekDays[0]).where('startD','<=',weekDays[6]).get();
           bumpFbUsage('read', Math.max(1, ts.size));
           ts.forEach(td=>{
-            const t = td.data() || {};
+            const t = PM3.docOf(_c.v3, td);
+            if(!t) return;
             if(t.owner !== selfName && t.owner !== myName) return;
             if(t.status === '完了' || t.status === '中止') return;
             rows.push({ wsId: doc.id, wsName, task: t });
@@ -8103,6 +8105,7 @@ function _mergeTombstones(remoteList){
 }
 function _addTombstone(kind, id){
   if(!id || !kind) return;
+  try{ if(window.HittatsuCollab && S.workspaceId && (kind === 'tasks' || kind === 'goals')) window.HittatsuCollab.markDeleted('pm:' + S.workspaceId + ':' + kind, [id]); }catch(e){}
   if(!Array.isArray(S._tombstones)) S._tombstones = [];
   S._tombstones.push({ kind, id, at: Date.now() });
   // 即座にプルーン
@@ -10123,9 +10126,124 @@ async function migrateWorkspaceToSubcollections(wsId){
 }
 
 // サブコレクションを購読：各ドキュメントの変更を S.tasks / S.goals に反映
+// ============ プロジェクト管理 v3: タスク・プロジェクトを欄ごとに保存 ============
+// 保存場所: sync3/pm-{ワークスペースID}/tasks/{ID}・goals/{ID}(1件=1ドキュメント)
+//   ・送るのは変えた欄だけ(他の人が同じタスクの別の欄を同時に変えても消えない)
+//   ・削除は「削除済み」の印だけ。削除の操作(Tombstone)をしたものだけ送る
+//   ・旧置き場所(workspaces/{ws}/tasks・goals)は最初に開いた人が1回移す。旧版の画面はここを知らないので上書きできない
+//   ・仕組みは統合アプリと共通(window.HittatsuCollab.Sync3Engine)
+// 表示用の欄(開閉など)は送らない。受け取った内容は、手元のタスクをその場で書き換えて反映する
+// (開いている編集画面が持っているタスクの参照を切らないため)
+const PM3 = (() => {
+  const UI_KEYS = ['_expanded', '_prevStatus', '_treeCollapsed', 'expanded', '_modAt', '_modBy'];
+  const strip = (x) => { const o = {}; Object.keys(x || {}).forEach(k => { if(!UI_KEYS.includes(k)) o[k] = x[k]; }); return o; };
+  let eng = null, wsId = null, pushTimer = null, renderTimer = null;
+  function applyInPlace(cur, next){
+    const byId = new Map((cur || []).map(x => [x && x.id, x]));
+    return next.map(n => {
+      const o = byId.get(n.id);
+      if(!o || o === n) return n;
+      Object.keys(o).forEach(k => { if(!UI_KEYS.includes(k) && !(k in n)) delete o[k]; });
+      Object.keys(n).forEach(k => { o[k] = n[k]; });
+      return o;
+    });
+  }
+  function renderSoon(){
+    clearTimeout(renderTimer);
+    renderTimer = setTimeout(() => {
+      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ withFocusPreserved(() => renderAll()); }catch(e){ console.warn('[pm3] render', e); }
+    }, 60);
+  }
+  function def(ws){
+    const db = firebase.firestore();
+    const list = (name, label) => ({
+      name, label,
+      get: d => (d && d[name]) || [],
+      set: (d, a) => Object.assign({}, d, { [name]: a }),
+      delScope: 'pm:' + ws + ':' + name,
+      toStored: strip,
+      titleOf: x => (x && (x.name || x.title)) || '',
+    });
+    return {
+      root: 'sync3', mod: 'pm-' + ws, label: 'プロジェクト管理', compareByValue: true,
+      lists: [list('tasks', 'タスク'), list('goals', 'プロジェクト')],
+      metaFields: [], getMeta: () => ({}), setMeta: d => d,
+      // 移行元: 旧置き場所のタスク・プロジェクト(削除の記録 Tombstone のあるものは除く)
+      readOld: async () => {
+        const [t, g, w] = await Promise.all([
+          db.collection(`workspaces/${ws}/tasks`).get(),
+          db.collection(`workspaces/${ws}/goals`).get(),
+          db.doc(`workspaces/${ws}`).get(),
+        ]);
+        const tombs = (w.exists && (w.data() || {})._tombstones) || [];
+        const dead = new Set(tombs.filter(x => x && x.id).map(x => x.kind + ':' + x.id));
+        const rows = (qs, kind) => qs.docs.map(d => Object.assign({}, d.data(), { id: d.id })).filter(x => !dead.has(kind + ':' + x.id));
+        return { lists: { tasks: rows(t, 'tasks'), goals: rows(g, 'goals') }, meta: {} };
+      },
+    };
+  }
+  function stop(){
+    if(eng){ try{ eng.stop(); }catch(e){} eng = null; }
+  }
+  function start(ws){
+    stop();
+    wsId = ws;
+    if(!ws || !window.HittatsuCollab || !_firebaseReady || !firebase.auth().currentUser){ logSync('pm3.unavailable', {ws}); return; }
+    const H = window.HittatsuCollab;
+    _subcollectionInitialLoaded.tasks = false;
+    _subcollectionInitialLoaded.goals = false;
+    eng = new H.Sync3Engine(def(ws), H.compatV3Api(firebase.firestore(), firebase),
+      () => S,
+      (fn) => {
+        const next = fn(S);
+        if(!next || next === S) return;
+        if(next.tasks !== S.tasks) S.tasks = applyInPlace(S.tasks, next.tasks || []);
+        if(next.goals !== S.goals) S.goals = applyInPlace(S.goals, next.goals || []);
+        renderSoon();
+      },
+      () => {
+        _subcollectionInitialLoaded.tasks = true;
+        _subcollectionInitialLoaded.goals = true;
+        logSync('pm3.ready', {ws});
+        pushSoon();
+      }
+    );
+    eng.start();
+  }
+  // 画面の操作(save)のたびに少し待って送る。タスクはその場で書き換えられるので、中身で変更を見つける
+  function pushSoon(){
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => { try{ eng && eng.push(); }catch(e){ console.warn('[pm3] push', e); } }, 400);
+  }
+  function flush(){ clearTimeout(pushTimer); try{ eng && eng.push(); }catch(e){} }
+  window.addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'hidden') flush(); });
+  // 他のワークスペースのタスク・プロジェクトを読む(新しい置き場所へ移っていればそちら、まだなら旧置き場所)
+  async function coll(ws, kind){
+    const db = firebase.firestore();
+    try{
+      const p = await db.doc(`sync3/pm-${ws}`).get();
+      if(p.exists && (p.data() || {}).migratedAt) return { ref: db.collection(`sync3/pm-${ws}/${kind}`), v3: true };
+    }catch(e){}
+    return { ref: db.collection(`workspaces/${ws}/${kind}`), v3: false };
+  }
+  function docOf(v3, d){
+    const x = d.data() || {};
+    if(!v3) return x;
+    if(x._deleted) return null;
+    return Object.assign(window.HittatsuCollab.dec(x), { id: d.id });
+  }
+  return { start, stop, pushSoon, flush, coll, docOf, _debug: () => ({ wsId, ready: !!(eng && eng.isReady) }) };
+})();
+window.PM3 = PM3;
+
 function subscribeWorkspaceCollections(wsId){
   if(_wsTasksUnsubscribe){ _wsTasksUnsubscribe(); _wsTasksUnsubscribe = null; }
   if(_wsGoalsUnsubscribe){ _wsGoalsUnsubscribe(); _wsGoalsUnsubscribe = null; }
+  // ★ タスク・プロジェクトは欄ごとの保存(PM3, sync3/pm-{ws})で同期する。旧置き場所は移行元として読むだけ
+  PM3.start(wsId);
+  return;
   if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
   const db = firebase.firestore();
   _subcollectionInitialLoaded = Object.assign({}, _subcollectionInitialLoaded, { tasks:false, goals:false });
@@ -10298,6 +10416,8 @@ function _fieldDiffPayload(curClean, prevJson){
 //   ★ Path 1：既存ドキュメントは「変更フィールドのみ」を merge 書込み（全文上書きをやめる）。
 //     新規ドキュメントのみ全体を set する。これで別フィールド同時編集の消失が構造的に消える。
 async function syncTasksGoalsToSubcollections(wsId){
+  // ★ タスク・プロジェクトは PM3 が欄ごとに保存する。旧置き場所へは書かない(旧版の画面との上書き合戦を起こさない)
+  return 0;
   if(!wsId || !_firebaseReady) return 0;
   // ★ 送信ゲート：初回受信が終わるまで一切書かない。
   //   受信前は _lastSyncedTasks/Goals が空で全項目が「新規」扱いになり、
@@ -13059,6 +13179,7 @@ save = function(withLog, desc){
     (S.goals||[]).forEach(g => _markPendingItem('goals', g));
   }catch(e){ console.warn('pending mark failed:', e); }
   _origSave();
+  try{ PM3.pushSoon(); }catch(e){} // タスク・プロジェクトの変えた欄を送る(欄ごとの保存)
 };
 
 // ============ INIT ============
@@ -13437,12 +13558,14 @@ async function renderPersonalView(){
       let goals = [];
       if(Number(d._schemaVersion||0) >= SCHEMA_VERSION){
         try{
-          const ts = await db.collection(`workspaces/${doc.id}/tasks`).get();
+          const _ct = await PM3.coll(doc.id, 'tasks'); // 新しい置き場所へ移っていればそちら
+          const ts = await _ct.ref.get();
           bumpFbUsage('read', Math.max(1, ts.size));
-          ts.forEach(t => tasks.push(t.data()));
-          const gs = await db.collection(`workspaces/${doc.id}/goals`).get();
+          ts.forEach(t => { const x = PM3.docOf(_ct.v3, t); if(x) tasks.push(x); });
+          const _cg = await PM3.coll(doc.id, 'goals');
+          const gs = await _cg.ref.get();
           bumpFbUsage('read', Math.max(1, gs.size));
-          gs.forEach(g => goals.push(g.data()));
+          gs.forEach(g => { const x = PM3.docOf(_cg.v3, g); if(x) goals.push(x); });
         }catch(e){
           console.warn(`[personal] subcollection fetch failed for ${doc.id}:`, e);
         }
