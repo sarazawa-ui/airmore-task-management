@@ -122,9 +122,31 @@ service cloud.firestore {
     //   プロジェクト管理（workspaces/*）と同じく、許可ドメインのユーザーのみ読み書き可。
     match /salesWs/{wsId} {
       allow read, write: if _domainOk();
-      // ※ 会社ごとの商談管理の一覧は sales3 へ移行する。旧版の画面がすべて更新されたら、
-      //   ここを「商談の一覧(deals 等)は読むだけ」に変える(次のルール公開で)
-      match /{sub=**} { allow read, write: if _domainOk(); }
+      // 会社ごとの商談管理の一覧は sales3(欄ごとの保存)へ移行済み → 旧置き場所は読むだけ(旧版の画面の書き込みを拒否)。
+      // 稟議・日報・ポータル・修理品・新商品などの共有ワークスペースと、マスタの項目(mFields)は従来どおり
+      // (共有ワークスペースも sync3 へ移行後、全端末の更新を待って読むだけにする)
+      match /{coll}/{doc=**} {
+        allow read: if _domainOk();
+        allow write: if _domainOk() && (
+          wsId in ['ringi-shared', 'nippo-shared', 'portal-shared', 'repair-shared', 'newbiz-v2', 'newbiz-shared']
+          || !(coll in ['deals', 'activities', 'quotes', 'trips', 'rideAlongs', 'repairs', 'expos', 'leads', 'members', 'mCustomers', 'mProducts', 'attachments', 'masters']));
+      }
+    }
+
+    // === 各機能 v3(稟議・日報・ポータル・修理品・新商品。商談管理 v3 と同じ決まり) ===
+    match /sync3/{mod} {
+      allow read: if _domainOk();
+      allow create: if _domainOk();
+      allow update: if _domainOk() && request.resource.data.diff(resource.data).removedKeys().size() == 0;
+      allow delete: if false;
+      match /{list}/{id} {
+        allow read: if _domainOk();
+        allow create: if _domainOk() && request.resource.data._schema == 3;
+        allow update: if _domainOk()
+          && request.resource.data._schema == 3
+          && request.resource.data.diff(resource.data).removedKeys().size() == 0;
+        allow delete: if false;
+      }
     }
 
     // === 商談管理 v3(欄ごとの保存 = スプレッドシート方式) ===
@@ -151,7 +173,9 @@ service cloud.firestore {
     //   マスタ・設定タブでの一括編集はアプリ側でadminに限定しているが、案件入力中の
     //   マスタ外得意先の登録は全員が行えるようにするため、書込はドメイン全員に許可する。
     match /salesMasters/{cid} {
-      allow read, write: if _domainOk();
+      // 旧置き場所(得意先・商品は sales3 へ移行済み)。読むだけ
+      allow read: if _domainOk();
+      allow write: if false;
     }
 
     // === Budget Access Requests ===
