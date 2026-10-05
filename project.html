@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1791181589470";</script>
+<script>window.__HITTATSU_BUILD__ = "1791186044435";</script>
 <link rel="apple-touch-icon" href="favicon.png">
 <!-- Firebase SDK (compat for non-module use) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
@@ -23,6 +23,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
+<!-- 文字単位の同時編集の共通の仕組み(src/collab → npm run build:collab) -->
+<script src="vendor/hittatsu-collab.js?v=1791186044435"></script>
 <style>
 :root{
   --primary:#1c5cab;
@@ -420,6 +423,10 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 }
 
 /* 会議メモの右クリックメニュー */
+/* 会議メモ: 他の人が入力中の欄 */
+.mt3-busy{position:relative;box-shadow:inset 0 0 0 2px #e8a33d}
+.mt3-busy::after{content:attr(data-busy);position:absolute;top:-1px;right:-1px;font-size:10px;line-height:15px;padding:0 5px;background:#e8a33d;color:#fff;border-radius:0 0 0 4px;pointer-events:none;z-index:3;white-space:nowrap;max-width:90%;overflow:hidden;text-overflow:ellipsis}
+.mt3-loading{font-size:11px;color:var(--muted);font-weight:400;margin-left:6px}
 .meeting-ctx-menu{position:fixed;background:#fff;border:1px solid #ccd5e0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:4px;z-index:10000;min-width:220px}
 .meeting-ctx-menu button{display:block;width:100%;text-align:left;padding:8px 12px;border:none;background:transparent;cursor:pointer;border-radius:4px;font:inherit;font-size:13px}
 .meeting-ctx-menu button:hover{background:#eff6fc}
@@ -1850,6 +1857,12 @@ const PER_USER_UI_FIELDS = new Set([
   'sideTab','taskCols','sideMember','sideHideDone','sideHideHeld','sideHideCanceled',
   'showCompletedProjects','showCanceledProjects','showHeldProjects'
 ]);
+// 会議メモの選択・会議情報の開閉は端末ごと(同期しない)。
+//   共有すると、誰かが別の会議を開いた瞬間に全員の画面が切り替わる。人ごとに同期しても、
+//   少し前の自分の保存が後から届いて選択が戻ることがあるため、この端末だけで覚える
+const LOCAL_UI_FIELDS = new Set(['selectedMeetingId','meetingInfoCollapsed']);
+function _localUiGet(k){ try{ const v = localStorage.getItem('hittatsu_ui_local::' + k); return v == null ? undefined : JSON.parse(v); }catch(e){ return undefined; } }
+function _localUiSet(k, v){ try{ if(v === undefined || v === null) localStorage.removeItem('hittatsu_ui_local::' + k); else localStorage.setItem('hittatsu_ui_local::' + k, JSON.stringify(v)); }catch(e){} }
 
 let S = load();
 
@@ -2953,27 +2966,27 @@ function _meetingInfoHtml(m){
       <div class="meeting-info-head" onclick="toggleMeetingInfo()" title="会議情報の開閉">
         <span class="mi-toggle">${open?'▼':'▶'}</span>
         <b>会議情報</b>
-        <span class="mi-sum">${escapeHtml(m.name||'(会議名未入力)')}／${escapeHtml(m.date||'日付未設定')}　${escapeHtml(timeText)}${m.place?`　@${escapeHtml(m.place)}`:''}</span>
+        <span class="mi-sum mi-sum-main">${escapeHtml(m.name||'(会議名未入力)')}／${escapeHtml(m.date||'日付未設定')}　${escapeHtml(timeText)}${m.place?`　@${escapeHtml(m.place)}`:''}</span>
         <span style="flex:1"></span>
-        <span class="mi-sum">${escapeHtml(_attendeeSummary(m))}</span>
+        <span class="mi-sum mi-sum-att">${escapeHtml(_attendeeSummary(m))}</span>
       </div>
       <div class="meeting-info-body">
         <div class="meeting-field-row">
-          <div class="meeting-field"><label>会議名</label><input type="text" data-mf="name" value="${escapeHtml(m.name||'')}" placeholder="例：5/26 営業定例"${la}></div>
-          <div class="meeting-field"><label>日付</label><input type="date" data-mf="date" value="${m.date||''}"${la}></div>
+          <div class="meeting-field" data-cell="f:name"><label>会議名</label><input type="text" data-mf="name" value="${escapeHtml(m.name||'')}" placeholder="例：5/26 営業定例"${la}></div>
+          <div class="meeting-field" data-cell="f:date"><label>日付</label><input type="date" data-mf="date" value="${m.date||''}"${la}></div>
         </div>
         <div class="meeting-field-row2">
-          <div class="meeting-field"><label>開催場所</label><input type="text" data-mf="place" value="${escapeHtml(m.place||'')}" placeholder="例：本社 3F 会議室 ／ Google Meet"${la}></div>
-          <div class="meeting-field"><label>開始</label><input type="time" step="900" data-mf="startTime" value="${escapeHtml(m.startTime||'')}"${la}></div>
-          <div class="meeting-field"><label>終了</label><input type="time" step="900" data-mf="endTime" value="${escapeHtml(m.endTime||'')}"${la}></div>
+          <div class="meeting-field" data-cell="f:place"><label>開催場所</label><input type="text" data-mf="place" value="${escapeHtml(m.place||'')}" placeholder="例：本社 3F 会議室 ／ Google Meet"${la}></div>
+          <div class="meeting-field" data-cell="f:startTime"><label>開始</label><input type="time" step="900" data-mf="startTime" value="${escapeHtml(m.startTime||'')}"${la}></div>
+          <div class="meeting-field" data-cell="f:endTime"><label>終了</label><input type="time" step="900" data-mf="endTime" value="${escapeHtml(m.endTime||'')}"${la}></div>
         </div>
         <div class="meeting-field">
           <label>参加者一覧 <span style="color:var(--muted);font-weight:400;font-size:10.5px">（Web参加のチェック・役職は任意）</span></label>
           <div class="mi-atts">
             <div class="mi-att-head">氏名</div><div class="mi-att-head">役職（任意）</div><div class="mi-att-head">Web参加</div><div class="mi-att-head"></div>
             ${atts.length ? atts.map(a => `
-              <div class="mi-att-cell"><input class="mi-inp" data-attf="name" data-aid="${escapeHtml(a.aid)}" value="${escapeHtml(a.name||'')}" placeholder="氏名"${la} list="meetingMemberNames"></div>
-              <div class="mi-att-cell"><input class="mi-inp" data-attf="role" data-aid="${escapeHtml(a.aid)}" value="${escapeHtml(a.role||'')}" placeholder="例：取締役・監査役"${la}></div>
+              <div class="mi-att-cell" data-cell="att:${escapeHtml(a.aid)}:name"><input class="mi-inp" data-attf="name" data-aid="${escapeHtml(a.aid)}" value="${escapeHtml(a.name||'')}" placeholder="氏名"${la} list="meetingMemberNames"></div>
+              <div class="mi-att-cell" data-cell="att:${escapeHtml(a.aid)}:role"><input class="mi-inp" data-attf="role" data-aid="${escapeHtml(a.aid)}" value="${escapeHtml(a.role||'')}" placeholder="例：取締役・監査役"${la}></div>
               <div class="mi-att-cell mi-att-web"><label><input type="checkbox" data-attf="web" data-aid="${escapeHtml(a.aid)}"${a.web?' checked':''}${la}> Web</label></div>
               <div class="mi-att-cell mi-att-del">${locked?'':`<button class="mr-del" data-att-del="${escapeHtml(a.aid)}" title="この参加者を削除">✕</button>`}</div>
             `).join('') : `<div class="mi-att-empty">参加者がまだ登録されていません。</div>`}
@@ -3056,6 +3069,27 @@ function _handleMeetingPaste(e, div, commitFn){
       const editor = div.closest('.meeting-editor');
       const mid = editor ? editor.dataset.mid : null;
       const m = (S.meetings||[]).find(x => x.id === mid);
+      // 貼り付けた位置を覚えておき、アップロードが終わったらそこへ入れる
+      const sel0 = window.getSelection();
+      const range0 = sel0 && sel0.rangeCount ? sel0.getRangeAt(0).cloneRange() : null;
+      const insertAt = (html) => {
+        if(!div.isConnected) return;
+        div.focus();
+        if(range0 && div.contains(range0.startContainer)){ const s = window.getSelection(); s.removeAllRanges(); s.addRange(range0); }
+        document.execCommand('insertHTML', false, html);
+        commitFn();
+      };
+      toast('画像をアップロードしています…');
+      MT3.uploadImage(file, mid).then(url => {
+        insertAt(`<img src="${escapeHtml(url)}" style="max-width:100%">`);
+      }).catch(err => {
+        console.warn('[meetings] image upload failed, fallback to inline', err);
+        _resizeImageToDataUrl(file, (dataUrl) => {
+          if(!dataUrl || dataUrl.length > 300000){ toast('⚠ 画像を保存できませんでした（通信を確認してください）'); return; }
+          insertAt(`<img src="${dataUrl}" style="max-width:100%">`);
+        });
+      });
+      return;
       _resizeImageToDataUrl(file, (dataUrl) => {
         if(!dataUrl){ toast('⚠ 画像が大きすぎるため貼り付けできません（縮小後500KB以内）'); return; }
         if(m && (JSON.stringify(m).length + dataUrl.length) > 850000){
@@ -3111,18 +3145,32 @@ function _patchMeetingEditorInPlace(list, selected, sorted, selectedId){
     if(el.isContentEditable){ if(el.innerHTML !== v) el.innerHTML = v; }
     else if(el.value !== v) el.value = v;
   });
-  // 行: 担当・議題・議事録・決定事項
+  // 行: 担当・議題・議事録・決定事項(議題・議事録・決定事項は文字単位の同期が画面を直接更新する)
   _meetingDisplayRows(selected).forEach(row => {
     ['who','topic','minutes','decisions'].forEach(f => {
       const el = editor.querySelector(`[data-rowf="${f}"][data-rid="${CSS.escape(row.rid)}"]`);
-      if(!el || busy(el)) return;
+      if(!el || busy(el) || el._yb) return;
       const v = row[f] == null ? '' : String(row[f]);
       if(el.isContentEditable){ if(el.innerHTML !== v){ el.innerHTML = v; el._startVal = undefined; el._dirty = false; } }
       else if(el.value !== v) el.value = v;
     });
   });
-  // 参加者の要約(見出し)
-  const sum = editor.querySelector('.mi-sum');
+  // 参加者(氏名・役職・Web参加)
+  editor.querySelectorAll('input[data-attf]').forEach(el => {
+    if(busy(el)) return;
+    const a = (selected.attendees||[]).find(x => x.aid === el.dataset.aid);
+    if(!a) return;
+    if(el.type === 'checkbox'){ if(el.checked !== !!a.web) el.checked = !!a.web; }
+    else { const v = a[el.dataset.attf] || ''; if(el.value !== v) el.value = v; }
+  });
+  // 見出しの要約(会議名・日付・時間・場所／参加者)
+  const sumMain = editor.querySelector('.mi-sum-main');
+  if(sumMain){
+    const timeText = (selected.startTime || selected.endTime) ? `${selected.startTime||'--:--'}〜${selected.endTime||'--:--'}` : '時間未設定';
+    const t = `${selected.name||'(会議名未入力)'}／${selected.date||'日付未設定'}　${timeText}${selected.place?`　@${selected.place}`:''}`;
+    if(sumMain.textContent !== t) sumMain.textContent = t;
+  }
+  const sum = editor.querySelector('.mi-sum-att');
   if(sum && typeof _attendeeSummary === 'function'){ const t = _attendeeSummary(selected); if(sum.textContent !== t) sum.textContent = t; }
 }
 // 作り直す前に: 入力途中(まだ保存していない)の文字をデータへ反映して保存する
@@ -3132,7 +3180,7 @@ function _flushMeetingInputs(list){
     // ★ 実際に入力した(未保存の)欄だけを保存する。入力していない欄まで保存すると、描き直すたびに
     //   閲覧中の全員が会議メモを書き込み直し、Firestore の読み書きが急増していた(2026-10-05)
     list.querySelectorAll('.rt-editor').forEach(div => { if(div._dirty && typeof div._commit === 'function') div._commit(); });
-    list.querySelectorAll('input[data-mf], textarea[data-mf], input[data-rowf], textarea[data-rowf], input[data-attf]').forEach(inp => {
+    list.querySelectorAll('input[data-mf], input[data-rowf], input[data-attf]').forEach(inp => {
       const editor = inp.closest('.meeting-editor'); if(!editor) return;
       const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m || m.locked) return;
       let cur;
@@ -3210,6 +3258,8 @@ function renderMeetings(){
   `;
   // 選択中の会議の編集フォーム
   const selected = sorted.find(m => m.id === selectedId);
+  // 議題・議事録・決定事項は文字単位の同時編集(会議ごとの文書を開き、読み込みが済むまでは編集できない)
+  const _mtReady = !!(selected && typeof MT3 !== 'undefined' && MT3.ensure(selected.id));
   let editorHtml;
   if(!selected){
     editorHtml = `<div class="meeting-empty">会議メモがまだありません。<br>「＋ 新規」ボタンから作成できます。</div>`;
@@ -3230,7 +3280,7 @@ function renderMeetings(){
         </div>
         ${_meetingInfoHtml(selected)}
         <div class="meeting-field">
-          <label>📋 議事録 <span style="color:var(--muted);font-weight:400;font-size:10.5px">（テキスト選択→右クリックでタスク化／URL貼付でリンク／画像貼付可）</span></label>
+          <label>📋 議事録 <span style="color:var(--muted);font-weight:400;font-size:10.5px">（テキスト選択→右クリックでタスク化／URL貼付でリンク／画像貼付可）</span>${_mtReady ? '' : `<span class="mt3-loading">${(typeof MT3 !== 'undefined' && MT3.available()) ? '読み込み中…' : (!window.HittatsuCollab ? '編集用の部品を読み込めませんでした。ページを更新してください' : 'ログインすると編集できます')}</span>`}</label>
           <div class="rt-toolbar">
             <button type="button" data-rt="bold" title="太字 (Ctrl+B)"><b>B</b></button>
             <button type="button" data-rt="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
@@ -3267,10 +3317,10 @@ function renderMeetings(){
             <div class="meeting-rows">
               <div class="mr-head">担当</div><div class="mr-head">議題</div><div class="mr-head">議事録</div><div class="mr-head">決定事項</div><div class="mr-head"></div>
               ${_meetingDisplayRows(selected).map(r => `
-                <div class="mr-cell"><input class="mr-inp" data-rowf="who" data-rid="${escapeHtml(r.rid)}" value="${escapeHtml(r.who||'')}" placeholder="担当"${lockAttr}></div>
-                <div class="mr-cell"><textarea class="mr-topic" data-rowf="topic" data-rid="${escapeHtml(r.rid)}" rows="1" placeholder="議題"${lockAttr}>${escapeHtml(r.topic||'')}</textarea></div>
-                <div class="mr-cell mr-minutes-cell"><div class="rt-editor mr-minutes" contenteditable="${locked?'false':'true'}" data-rowf="minutes" data-rid="${escapeHtml(r.rid)}" data-placeholder="議事録・メモ">${r.minutes||''}</div></div>
-                <div class="mr-cell mr-decision-cell"><div class="rt-editor mr-decision" contenteditable="${locked?'false':'true'}" data-rowf="decisions" data-rid="${escapeHtml(r.rid)}" data-placeholder="決定事項・次のアクション">${r.decisions||''}</div></div>
+                <div class="mr-cell" data-cell="who:${escapeHtml(r.rid)}"><input class="mr-inp" data-rowf="who" data-rid="${escapeHtml(r.rid)}" value="${escapeHtml(r.who||'')}" placeholder="担当"${lockAttr}></div>
+                <div class="mr-cell" data-cell="t:${escapeHtml(r.rid)}"><textarea class="mr-topic" data-rowf="topic" data-rid="${escapeHtml(r.rid)}" rows="1" placeholder="議題"${lockAttr}${_mtReady?'':' readonly'}>${escapeHtml(r.topic||'')}</textarea></div>
+                <div class="mr-cell mr-minutes-cell" data-cell="m:${escapeHtml(r.rid)}"><div class="rt-editor mr-minutes" contenteditable="${(locked||!_mtReady)?'false':'true'}" data-rowf="minutes" data-rid="${escapeHtml(r.rid)}" data-placeholder="議事録・メモ">${r.minutes||''}</div></div>
+                <div class="mr-cell mr-decision-cell" data-cell="d:${escapeHtml(r.rid)}"><div class="rt-editor mr-decision" contenteditable="${(locked||!_mtReady)?'false':'true'}" data-rowf="decisions" data-rid="${escapeHtml(r.rid)}" data-placeholder="決定事項・次のアクション">${r.decisions||''}</div></div>
                 <div class="mr-cell mr-del-cell">${locked?'':`<button class="mr-ins" data-row-insert="${escapeHtml(r.rid)}" title="この行の下に行を挿入">＋</button><button class="mr-del" data-row-del="${escapeHtml(r.rid)}" title="この行を削除">✕</button>`}</div>
               `).join('')}
             </div>
@@ -3289,7 +3339,7 @@ function renderMeetings(){
   const _structSig = JSON.stringify([
     selectedId, _meetingSearch, expanded,
     sorted.map(m => m.id),
-    selected ? [_meetingDisplayRows(selected).map(r => r.rid), selected.attendees, selected.createdBy, selected.locked, selected.lockedBy, selected.lockedAt] : null,
+    selected ? [_meetingDisplayRows(selected).map(r => r.rid), (selected.attendees||[]).map(a => a.aid), selected.createdBy, selected.locked, selected.lockedBy, selected.lockedAt, _mtReady] : null,
     _meetingInfoOpen(),
     (S.agendaPresets||[]).length
   ]);
@@ -3311,7 +3361,7 @@ function renderMeetings(){
     selectedId, _meetingSearch, expanded,
     sorted.map(m => [m.id, m.name, m.date]),
     selected ? [selected.name, selected.date, selected.agenda, selected.createdBy, selected.rows,
-                selected.place, selected.startTime, selected.endTime, selected.attendees, selected.locked] : null,
+                selected.place, selected.startTime, selected.endTime, selected.attendees, selected.locked, _mtReady] : null,
     _meetingInfoOpen(),
     (S.agendaPresets||[]).length
   ]);
@@ -3323,8 +3373,15 @@ function renderMeetings(){
   // 高さも一時的に固定し、中身が空になった瞬間に縮んでスクロールが戻されるのを防ぐ
   const _h = list.offsetHeight;
   if(_h) list.style.minHeight = _h + 'px';
+  if(typeof MT3 !== 'undefined') MT3.unbindAll(); // 作り直す前に、入力途中の文字を反映して接続を外す
   _withScrollKept(() => { list.innerHTML = toolbarHtml + editorHtml; });
   list.style.minHeight = '';
+  // 議題・議事録・決定事項を文字単位の同時編集に接続し、入力中の表示を出す
+  if(typeof MT3 !== 'undefined' && selected){
+    MT3.bindEditors(list, selected.id);
+    MT3.attachFocus(list);
+    MT3.paintPresence();
+  }
   // select の change → 選択保存 + 再描画
   const sel = list.querySelector('#meetingSelect');
   if(sel){
@@ -3380,26 +3437,25 @@ function renderMeetings(){
   }
   // 通常 input/select 変更 → 自動保存（会議名・日付＝data-mf ／ 行の担当・議題＝data-rowf）
   // 実際に入力した印(描き直し前の保存は入力した欄だけ)
-  list.querySelectorAll('input[data-mf], textarea[data-mf], input[data-rowf], textarea[data-rowf], input[data-attf]').forEach(inp => {
+  list.querySelectorAll('input[data-mf], input[data-rowf], input[data-attf]').forEach(inp => {
     inp.addEventListener('input', () => { inp._dirty = true; });
   });
-  list.querySelectorAll('input[data-mf], select[data-mf], input[data-rowf], textarea[data-rowf]').forEach(inp => {
-    inp.addEventListener('change', () => {
+  list.querySelectorAll('input[data-mf], select[data-mf], input[data-rowf]').forEach(inp => {
+    const commitField = () => {
       const editor = inp.closest('.meeting-editor'); if(!editor) return;
       const mid = editor.dataset.mid;
-      const m = (S.meetings||[]).find(x => x.id === mid);
-      if(!m) return;
-      if(m.locked) return; // 記録済みは変更しない
-      if(inp.dataset.rowf){
-        _ensureMeetingRows(m);
-        const row = m.rows.find(r => r.rid === inp.dataset.rid);
-        if(!row) return;
-        row[inp.dataset.rowf] = inp.value;
-      } else {
-        m[inp.dataset.mf] = inp.value;
-      }
-      m.updatedAt = new Date().toISOString();
-      save(true, `会議メモ更新：${m.name||m.id}`);
+      inp._dirty = false;
+      if(inp.dataset.rowf) MT3.setRowField(mid, inp.dataset.rid, inp.dataset.rowf, inp.value);
+      else MT3.setField(mid, inp.dataset.mf, inp.value);
+    };
+    // 文字の欄は入力が止まったら保存(他の人へ早く反映)。日付・時刻は確定時
+    if(inp.type === 'text'){
+      let t = null;
+      inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(commitField, 700); });
+      inp.addEventListener('change', () => clearTimeout(t));
+    }
+    inp.addEventListener('change', () => {
+      commitField();
       // 編集中に保留した他端末の更新があれば反映（change は blur 相当）
       if(_meetingsRenderPending){
         _meetingsRenderPending = false;
@@ -3418,35 +3474,11 @@ function renderMeetings(){
     : list.querySelector('.rt-editor[data-rowf="minutes"], .rt-editor[data-rowf="decisions"], .rt-editor[data-mf]');
 
   list.querySelectorAll('.rt-editor[data-rowf="minutes"], .rt-editor[data-rowf="decisions"], .rt-editor[data-mf]').forEach(div => {
-    let _inputTimer = null;
-    div.addEventListener('focus', () => { div._startVal = div.innerHTML; _activeMinutesDiv = div; });
-    const commit = () => {
-      const editor = div.closest('.meeting-editor'); if(!editor) return;
-      const mid = editor.dataset.mid;
-      const m = (S.meetings||[]).find(x => x.id === mid);
-      if(!m) return;
-      if(m.locked) return; // 記録済みは変更しない
-      const newVal = _addLinkTargets(div.innerHTML);
-      div._dirty = false;
-      if(div._startVal !== undefined && newVal === div._startVal) return; // ユーザー未変更 → 何もしない
-      div._startVal = newVal;
-      // データと同じ内容なら保存しない(更新日時だけ変わる無駄な書き込みを出さない)
-      const _rowF = div.dataset.rowf;
-      const _cur = _rowF ? ((m.rows||[]).find(r => r.rid === div.dataset.rid) || {})[_rowF] : m[div.dataset.mf];
-      if(newVal === String(_cur == null ? '' : _cur)) return;
-      if(!_writeMeetingEditorHtml(m, div, newVal)) return;
-      m.updatedAt = new Date().toISOString();
-      save(true, `会議メモ更新：${m.name||m.id}`);
-    };
+    div.addEventListener('focus', () => { _activeMinutesDiv = div; });
+    // 保存は文字単位の同期(MT3.bindEditors)が入力のたびに行う。ここでは画面の内容をいま反映するだけ
+    const commit = () => { if(div._yb) div._yb.push(); };
     div._commit = commit; // 貼付処理などから呼べるよう公開
-    div.addEventListener('input', () => {
-      div._dirty = true; // 実際に入力した印(描き直し前の保存はこの欄だけ)
-      if(_inputTimer) clearTimeout(_inputTimer);
-      _inputTimer = setTimeout(() => { _inputTimer = null; commit(); }, 1200);
-    });
     div.addEventListener('blur', () => {
-      if(_inputTimer){ clearTimeout(_inputTimer); _inputTimer = null; }
-      commit();
       if(_meetingsRenderPending){
         _meetingsRenderPending = false;
         withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
@@ -3475,49 +3507,37 @@ function renderMeetings(){
     });
   });
   // ===== 参加者一覧 =====
+  // 参加者は1人ずつ・欄ごとに保存(同時に別の人を足しても両方残る)
   list.querySelectorAll('input[data-attf]').forEach(inp => {
     const commit = () => {
       const editor = inp.closest('.meeting-editor'); if(!editor) return;
-      const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m || m.locked) return;
-      const a = _meetingAttendees(m).find(x => x.aid === inp.dataset.aid); if(!a) return;
-      a[inp.dataset.attf] = inp.type === 'checkbox' ? inp.checked : inp.value;
-      m.updatedAt = new Date().toISOString();
-      save(true, `会議メモ更新：${m.name||m.id}`);
+      inp._dirty = false;
+      MT3.setAtt(editor.dataset.mid, inp.dataset.aid, inp.dataset.attf, inp.type === 'checkbox' ? inp.checked : inp.value);
     };
+    if(inp.type !== 'checkbox'){
+      let t = null;
+      inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(commit, 700); });
+      inp.addEventListener('change', () => clearTimeout(t));
+    }
     inp.addEventListener('change', commit);
   });
   const attAdd = list.querySelector('[data-att-add]');
   if(attAdd) attAdd.addEventListener('click', () => {
     const editor = list.querySelector('.meeting-editor[data-mid]'); if(!editor) return;
-    const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m || m.locked) return;
-    if(!Array.isArray(m.attendees)) m.attendees = [];
-    m.attendees.push({ aid:_newAttId(), name:'', role:'', web:false });
-    m.updatedAt = new Date().toISOString();
-    save(true, `会議メモ：参加者追加（${m.name||m.id}）`);
-    renderMeetings();
+    MT3.addAtt(editor.dataset.mid);
   });
   const attFill = list.querySelector('[data-att-fill]');
   if(attFill) attFill.addEventListener('click', () => {
     const editor = list.querySelector('.meeting-editor[data-mid]'); if(!editor) return;
     const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m || m.locked) return;
-    if(!Array.isArray(m.attendees)) m.attendees = [];
-    const have = new Set(m.attendees.map(a => (a.name||'').trim()).filter(Boolean));
-    (activeMembers()||[]).forEach(mem => {
-      if(have.has(mem.name)) return;
-      m.attendees.push({ aid:_newAttId(), name:mem.name, role:'', web:false });
-    });
-    m.updatedAt = new Date().toISOString();
-    save(true, `会議メモ：参加者を一括追加（${m.name||m.id}）`);
-    renderMeetings();
+    const have = new Set(_meetingAttendees(m).map(a => (a.name||'').trim()).filter(Boolean));
+    const names = (activeMembers()||[]).map(mem => mem.name).filter(n => n && !have.has(n));
+    if(names.length) MT3.addAtts(m.id, names);
   });
   list.querySelectorAll('[data-att-del]').forEach(btn => {
     btn.addEventListener('click', () => {
       const editor = btn.closest('.meeting-editor'); if(!editor) return;
-      const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m || m.locked) return;
-      m.attendees = _meetingAttendees(m).filter(a => a.aid !== btn.dataset.attDel);
-      m.updatedAt = new Date().toISOString();
-      save(true, `会議メモ：参加者削除（${m.name||m.id}）`);
-      renderMeetings();
+      MT3.delAtt(editor.dataset.mid, btn.dataset.attDel);
     });
   });
 
@@ -3530,13 +3550,11 @@ function renderMeetings(){
         `記録すると内容を編集できなくなります（削除もできません）。\n` +
         `本当に記録しますか？`
       )) return;
-      m.locked = true;
-      m.lockedAt = new Date().toISOString();
-      m.lockedBy = (_currentUser && _currentUser.name) || '';
-      m.updatedAt = m.lockedAt;
-      save(true, `会議メモを記録：${m.name||m.id}`);
-      renderMeetings();
-      toast('会議メモを記録しました（編集できません）');
+      MT3.lock(m.id).then(ok => {
+        if(!ok) return;
+        logHistory('edit', `会議メモを記録：${m.name||m.id}`);
+        toast('会議メモを記録しました（編集できません）');
+      });
     });
   });
   // ===== PDF印刷 =====
@@ -3551,25 +3569,13 @@ function renderMeetings(){
   const addRowBtn = list.querySelector('[data-row-add]');
   if(addRowBtn) addRowBtn.addEventListener('click', () => {
     const editor = list.querySelector('.meeting-editor[data-mid]'); if(!editor) return;
-    const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m) return;
-    _ensureMeetingRows(m);
-    m.rows.push({ rid: _newRowId(), who:'', topic:'', minutes:'', decisions:'' });
-    m.updatedAt = new Date().toISOString();
-    save(true, `会議メモ：行追加（${m.name||m.id}）`);
-    renderMeetings();
+    MT3.addRow(editor.dataset.mid, null);
   });
   // 行と行の間に挿入（この行の下に空行を追加）
   list.querySelectorAll('[data-row-insert]').forEach(btn => {
     btn.addEventListener('click', () => {
       const editor = btn.closest('.meeting-editor'); if(!editor) return;
-      const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m) return;
-      _ensureMeetingRows(m);
-      const idx = m.rows.findIndex(r => r.rid === btn.dataset.rowInsert);
-      const at = idx < 0 ? m.rows.length : idx + 1;
-      m.rows.splice(at, 0, { rid:_newRowId(), who:'', topic:'', minutes:'', decisions:'' });
-      m.updatedAt = new Date().toISOString();
-      save(true, `会議メモ：行挿入（${m.name||m.id}）`);
-      renderMeetings();
+      MT3.addRow(editor.dataset.mid, btn.dataset.rowInsert);
     });
   });
   // 議題テキストエリアの高さを内容に合わせて自動調整
@@ -3592,16 +3598,9 @@ function renderMeetings(){
   list.querySelectorAll('[data-row-del]').forEach(btn => {
     btn.addEventListener('click', () => {
       const editor = btn.closest('.meeting-editor'); if(!editor) return;
-      const m = (S.meetings||[]).find(x => x.id === editor.dataset.mid); if(!m) return;
-      _ensureMeetingRows(m);
-      const row = m.rows.find(r => r.rid === btn.dataset.rowDel); if(!row) return;
-      const hasContent = (row.who||row.topic||String(row.minutes||'').replace(/<[^>]*>/g,'').trim());
-      if(hasContent && !confirm('この行（担当・議題・議事録）を削除しますか？')) return;
-      m.rows = m.rows.filter(r => r.rid !== btn.dataset.rowDel);
-      if(m.rows.length === 0) m.rows.push({ rid:_newRowId(), who:'', topic:'', minutes:'', decisions:'' });
-      m.updatedAt = new Date().toISOString();
-      save(true, `会議メモ：行削除（${m.name||m.id}）`);
-      renderMeetings();
+      const mid = editor.dataset.mid, rid = btn.dataset.rowDel;
+      if(!MT3.isEmptyRow(mid, rid) && !confirm('この行（担当・議題・議事録）を削除しますか？')) return;
+      MT3.delRow(mid, rid);
     });
   });
   // リッチエディタのツールバー（最後にフォーカスした議事録エディタに作用）
@@ -3612,7 +3611,7 @@ function renderMeetings(){
         const ed = _targetEditor(); if(!ed) return;
         ed.focus();
         document.execCommand(btn.dataset.rt, false, null);
-        // blur イベントで保存される
+        if(ed._commit) ed._commit();
       });
     });
     toolbar.querySelectorAll('button[data-rt-color]').forEach(cb => {
@@ -3623,7 +3622,7 @@ function renderMeetings(){
         try{ document.execCommand('styleWithCSS', false, true); }catch(e){}
         document.execCommand('foreColor', false, cb.dataset.rtColor);
         try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
-        // blur イベントで保存される
+        if(ed._commit) ed._commit();
       });
     });
     // 選択範囲をリンク化
@@ -3645,6 +3644,7 @@ function renderMeetings(){
         const ed = _targetEditor(); if(!ed) return;
         ed.focus();
         document.execCommand('fontSize', false, sizeSel.value);
+        if(ed._commit) ed._commit();
       });
     }
     // アジェンダプリセット挿入：プリセットの行（担当・議題・議事録）を会議メモの行として追加
@@ -3660,22 +3660,19 @@ function renderMeetings(){
         if(!m){ presetSel.value = ''; return; }
         const srcRows = _presetRowsOf(preset);
         if(srcRows.length === 0){ presetSel.value = ''; toast('このプリセットには行がありません'); return; }
-        _ensureMeetingRows(m);
         const newRows = srcRows.map(r => ({
-          rid: _newRowId(),
           who: r.who || '',
           topic: r.topic || '',
           minutes: _agendaPresetToHtml(r.minutes || ''),
         }));
         // メモが「空の1行だけ」ならその行を置き換え、それ以外は末尾に追加
-        const onlyEmpty = m.rows.length === 1 && !m.rows[0].who && !m.rows[0].topic
-          && !String(m.rows[0].minutes||'').replace(/<[^>]*>/g,'').trim();
-        m.rows = onlyEmpty ? newRows : m.rows.concat(newRows);
-        m.updatedAt = new Date().toISOString();
-        save(true, `会議メモにプリセット挿入：${preset.name}`);
-        toast(`プリセット「${preset.name}」の${newRows.length}行を追加しました`);
+        const rows0 = _meetingDisplayRows(m);
+        const onlyEmpty = rows0.length === 1 && MT3.isEmptyRow(m.id, rows0[0].rid);
         presetSel.value = '';
-        renderMeetings();
+        if(MT3.addRows(m.id, newRows, onlyEmpty)){
+          logHistory('edit', `会議メモにプリセット挿入：${preset.name}`);
+          toast(`プリセット「${preset.name}」の${newRows.length}行を追加しました`);
+        }
       });
     }
   });
@@ -3689,21 +3686,20 @@ function renderMeetings(){
       const mid = btn.dataset.meetingDel;
       const m = (S.meetings||[]).find(x => x.id === mid);
       if(!m) return;
-      if(!confirm(`会議メモ「${m.name||'(無題)'}」を削除しますか？\n（この操作は取り消せません）`)) return;
-      S.meetings = S.meetings.filter(x => x.id !== mid);
-      _addTombstone('meetings', mid); // 明示削除(記録の無い削除はクラウドへ送らない)
-      _addTombstone('meetings', mid);
-      // 削除後の選択を次の会議へ
-      const remaining = S.meetings.slice().sort((a,b) =>
-        (b.date||'').localeCompare(a.date||'') ||
-        (b.createdAt||'').localeCompare(a.createdAt||'')
-      );
-      if(!S.ui) S.ui = {};
-      S.ui.selectedMeetingId = remaining.length > 0 ? remaining[0].id : null;
-      save(true, `会議メモ削除：${m.name||mid}`);
-      flushPendingSync();
-      renderMeetings();
-      toast(`${mid} を削除しました`);
+      if(!confirm(`会議メモ「${m.name||'(無題)'}」を削除しますか？`)) return;
+      MT3.remove(mid).then(ok => {
+        if(!ok) return;
+        // 削除後の選択を次の会議へ
+        const remaining = (S.meetings||[]).filter(x => x.id !== mid).sort((a,b) =>
+          (b.date||'').localeCompare(a.date||'') ||
+          (b.createdAt||'').localeCompare(a.createdAt||'')
+        );
+        if(!S.ui) S.ui = {};
+        S.ui.selectedMeetingId = remaining.length > 0 ? remaining[0].id : null;
+        save(true, `会議メモ削除：${m.name||mid}`);
+        renderMeetings();
+        toast(`${mid} を削除しました`);
+      });
     });
   });
 }
@@ -3715,27 +3711,13 @@ let _meetingCtxEditorDiv = null;
 let _meetingColorPendingTask = null; // {ref:{mid,rid,mf}, coloredHtml} … タスク保存時に着色を適用
 let _meetingColorGoalRevert = null;  // {ref:{mid,rid,mf}, prevHtml, goalId} … プロジェクト削除時に着色を取消
 
-// エディタ参照（会議ID＋行ID or 旧フィールド）で HTML を書き戻す共通処理
-function _writeMeetingHtmlByRef(ref, html){
-  if(!ref || !ref.mid) return false;
-  const m = (S.meetings||[]).find(x => x && x.id === ref.mid);
-  if(!m) return false;
-  if(ref.rid){
-    _ensureMeetingRows(m);
-    const row = m.rows.find(r => r.rid === ref.rid);
-    if(!row || row.minutes === html) return false;
-    row.minutes = html;
-  } else if(ref.mf){
-    if(m[ref.mf] === html) return false;
-    m[ref.mf] = html;
-  } else return false;
-  m.updatedAt = new Date().toISOString();
-  return true;
-}
+// エディタ参照（会議ID＋文字単位の文書のキー）と、その時点の内容
 function _editorRefOf(div){
   const editor = div && div.closest ? div.closest('.meeting-editor') : null;
-  if(!editor) return null;
-  return { mid: editor.dataset.mid, rid: div.dataset.rid || null, mf: div.dataset.mf || null };
+  if(!editor || !div.dataset.rowf || !div.dataset.rid) return null;
+  if(div._yb) div._yb.push(); // 画面の入力を先に反映
+  const key = MT3.tkey(div.dataset.rowf, div.dataset.rid);
+  return { mid: editor.dataset.mid, key, before: MT3.textOf(editor.dataset.mid, key) };
 }
 
 // 選択範囲に色を付けた「着色後HTML」を計算して返す（表示は元に戻す＝まだ着色しない）。
@@ -3762,22 +3744,17 @@ function _computeMeetingColoredHtml(color){
 // タスク確定（保存）時：保留していた着色を会議メモへ適用。
 function _applyPendingMeetingTaskColor(){
   if(!_meetingColorPendingTask) return;
-  const {ref, coloredHtml} = _meetingColorPendingTask;
+  const {token} = _meetingColorPendingTask;
   _meetingColorPendingTask = null;
-  if(_writeMeetingHtmlByRef(ref, coloredHtml)){
-    save(true, `会議メモ：タスク化テキストを着色`);
-    try{ renderMeetings(); }catch(e){}
-  }
+  // 準備した後に他の人がその部分を変えていたら着色しない(相手の入力を消さない)
+  MT3.applyToken(token);
 }
 // プロジェクト削除時：そのプロジェクト生成時に付けた着色を元に戻す。
 function _revertMeetingGoalColor(goalId){
   if(!_meetingColorGoalRevert || _meetingColorGoalRevert.goalId !== goalId) return;
-  const {ref, prevHtml} = _meetingColorGoalRevert;
+  const {token} = _meetingColorGoalRevert;
   _meetingColorGoalRevert = null;
-  if(_writeMeetingHtmlByRef(ref, prevHtml)){
-    save(true, `会議メモ：プロジェクト化の着色を取消`);
-    try{ renderMeetings(); }catch(e){}
-  }
+  MT3.applyToken(token);
 }
 function _applyColorToSavedMeetingRange(color, label){
   if(!_meetingCtxSavedRange || !_meetingCtxEditorDiv) return;
@@ -3795,16 +3772,8 @@ function _applyColorToSavedMeetingRange(color, label){
     try{ document.execCommand('styleWithCSS', false, true); }catch(e){}
     document.execCommand('foreColor', false, color);
     try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
-    // 編集内容を保存（行構造・旧形式の両対応）
-    const editor = _meetingCtxEditorDiv.closest('.meeting-editor');
-    if(editor){
-      const mid = editor.dataset.mid;
-      const m = (S.meetings||[]).find(x => x.id === mid);
-      if(m && _writeMeetingEditorHtml(m, _meetingCtxEditorDiv, _meetingCtxEditorDiv.innerHTML)){
-        m.updatedAt = new Date().toISOString();
-        save(true, `会議メモ${label||'更新'}：${m.name||m.id}`);
-      }
-    }
+    // 編集内容を反映(文字単位の同期で保存される)
+    if(_meetingCtxEditorDiv._yb) _meetingCtxEditorDiv._yb.push();
   }catch(e){
     console.warn('color apply failed:', e);
   }finally{
@@ -3840,10 +3809,11 @@ function showMeetingCtxMenu(x, y, text){
     e.stopPropagation();
     // プロジェクトは即時生成されるため着色も即時。生成したプロジェクトが削除されたら着色を取消す。
     const ref = _editorRefOf(_meetingCtxEditorDiv);
-    const prevHtml = _meetingCtxEditorDiv ? _meetingCtxEditorDiv.innerHTML : null;
     _applyColorToSavedMeetingRange('#1976D2', 'プロジェクト化');
     const newId = createProjectFromMeetingText(text);
-    _meetingColorGoalRevert = (ref && prevHtml != null && newId) ? {ref, prevHtml, goalId:newId} : null;
+    // 取り消し用: 着色した後の内容 → 着色する前の内容
+    const token = (ref && ref.before != null && newId) ? MT3.prepare(ref.mid, ref.key, MT3.textOf(ref.mid, ref.key), ref.before) : null;
+    _meetingColorGoalRevert = token ? {token, goalId:newId} : null;
     menu.remove();
   };
   menu.querySelector('[data-action="task"]').onclick = (e) => {
@@ -3854,7 +3824,9 @@ function showMeetingCtxMenu(x, y, text){
     const coloredHtml = _computeMeetingColoredHtml('#2E7D32');
     _meetingCtxSavedRange = null; _meetingCtxEditorDiv = null;
     createTaskFromMeetingText(text);
-    _meetingColorPendingTask = (ref && coloredHtml != null) ? {ref, coloredHtml} : null;
+    // 着色は保存したときに適用(準備した時点の位置を覚えておき、その部分が変わっていなければ適用)
+    const token = (ref && ref.before != null && coloredHtml != null) ? MT3.prepare(ref.mid, ref.key, ref.before, _addLinkTargets(coloredHtml)) : null;
+    _meetingColorPendingTask = token ? {token} : null;
     menu.remove();
   };
   // 外部クリックで閉じる（未選択の場合は range もクリア）
@@ -3963,7 +3935,27 @@ function toggleMeetingsSection(){
   renderMeetings();
 }
 
-function addMeeting(){
+async function addMeeting(){
+  // 新しい置き場所(欄ごと・文字単位の同時編集)に作る。同時に作っても会議IDは重ならない
+  if(!MT3.available()){ toast('⚠ ログインしてクラウドに接続してから作成してください'); return; }
+  let newMid;
+  try{
+    newMid = await MT3.create({ fields: { date: new Date().toISOString().slice(0,10) }, rows: [{}], atts: [] });
+  }catch(e){ console.warn('[meetings] create failed', e); toast('⚠ 会議メモを作成できませんでした（' + ((e && e.message) || e) + '）'); return; }
+  _meetingsExpandedSession = true;
+  if(!S.ui) S.ui = {};
+  S.ui.selectedMeetingId = newMid;
+  save(true, `会議メモ追加：${newMid}`);
+  renderMeetings();
+  // 議事録の読み込みが済んで画面が整ってから会議名の欄へ
+  await MT3.waitReady(newMid, 5000);
+  setTimeout(()=>{
+    const inp = document.querySelector(`.meeting-editor[data-mid="${newMid}"] input[data-mf="name"]`);
+    if(inp){ inp.focus(); inp.select(); }
+  }, 150);
+  toast(`会議メモ ${newMid} を作成しました`);
+}
+function _addMeetingLegacyUnused(){
   if(!Array.isArray(S.meetings)) S.meetings = [];
   if(!S.seq) S.seq = {};
   S.seq.meeting = (S.seq.meeting||0)+1;
@@ -4008,7 +4000,27 @@ function addMeeting(){
   toast(`会議メモ ${mid} を作成しました`);
 }
 // 会議メモを複製（行構造・旧agenda とも深いコピー。行IDは振り直し）
-function duplicateMeeting(srcId){
+async function duplicateMeeting(srcId){
+  if(!MT3.available()){ toast('⚠ ログインしてクラウドに接続してから複製してください'); return; }
+  if(!(await MT3.waitReady(srcId))){ toast('⚠ 会議メモを読み込めませんでした。少し待ってからもう一度操作してください'); return; }
+  const src = MT3.projectOf(srcId);
+  if(!src) return;
+  let newId;
+  try{
+    newId = await MT3.create({
+      fields: { name: (src.name || '(無題)') + '（複製）', date: src.date, place: src.place, startTime: src.startTime, endTime: src.endTime },
+      rows: src.rows.map(r => ({ who: r.who, topic: r.topic, minutes: r.minutes, decisions: r.decisions })),
+      atts: src.attendees.map(a => ({ name: a.name, role: a.role, web: a.web })),
+    });
+  }catch(e){ console.warn('[meetings] duplicate failed', e); toast('⚠ 会議メモを複製できませんでした'); return; }
+  _meetingsExpandedSession = true;
+  if(!S.ui) S.ui = {};
+  S.ui.selectedMeetingId = newId;
+  save(true, `会議メモ複製：${srcId} → ${newId}`);
+  renderMeetings();
+  toast(`${srcId} を ${newId} として複製しました`);
+}
+function _duplicateMeetingLegacyUnused(srcId){
   const src = (S.meetings||[]).find(m => m && m.id === srcId);
   if(!src) return;
   if(!S.seq) S.seq = {};
@@ -8228,6 +8240,15 @@ function initFirebase(){
   try{
     if(!firebase.apps.length){
       firebase.initializeApp(_firebaseConfig);
+      // 開発用: 手元(localhost)で検証用のエミュレーターを使う(localStorage hittatsu_emulator=1 のときだけ)
+      try{
+        if(/^(localhost|127\.0\.0\.1|[a-z0-9-]+\.localhost)$/.test(location.hostname) && localStorage.getItem('hittatsu_emulator') === '1'){
+          firebase.firestore().useEmulator('127.0.0.1', 8080);
+          firebase.auth().useEmulator('http://127.0.0.1:9099');
+          if(firebase.storage) firebase.storage().useEmulator('127.0.0.1', 9199);
+          console.warn('[firebase] エミュレーターに接続しています(開発用)');
+        }
+      }catch(e){ console.warn('[firebase] emulator setup failed', e); }
     }
     // ★ オフライン永続化を有効化：未送信の write が IndexedDB に保存され、
     //   ページ再読込後も自動的に再送される。「削除直後にリフレッシュ → 復活」を構造的に防ぐ。
@@ -9382,7 +9403,527 @@ function _mtMerge(base, local, remote){
 function _mtBaseOf(id){ try{ const j = _lastSyncedMeetings.get(id); return j ? JSON.parse(j) : null; }catch(e){ return null; } }
 function _mtClean(m){ const c = Object.assign({}, m); Object.keys(_MT_SKIP).forEach(k => delete c[k]); return c; }
 
+// ============ 会議メモ v3: 欄ごとの保存 + 文字単位の同時編集 ============
+// 保存場所: workspaces/{ws}/shared/v3/meetings/{会議ID}
+//   ・会議名・日付・場所・時間・担当・参加者 … 変えた欄だけを update で書く(別の欄を同時に変えても消えない)
+//   ・行(rows)・参加者(att)は {ID: {o:並び順, ...}} の形。削除は「削除済み(del)」の印だけで、消さない
+//   ・会議の削除も「削除済み(deleted)」の印だけ
+//   ・議題・議事録・決定事項 … 文字単位で合流(Yjs)。同じ欄を同時に入力しても両方の文字が残る
+//       {base}/ystate(まとめ) + {base}/yupd(変更分の追記) … window.HittatsuCollab が担当
+//   ・cache … 検索・一覧用に、議題・議事録・決定事項の文字だけを控える(本体は Yjs)
+//   ・presence … 誰がどの欄を入力中か
+// 旧置き場所 workspaces/{ws}/meetings は読むだけ(初回に新しい置き場所へ移す)。
+// 旧版の画面はこの置き場所を知らないので、古い内容で上書きされることが無い。
+const MT3 = (() => {
+  const LS_PENDING = 'hittatsu_mt3_pending';
+  const CACHE_MAX = 2000;
+  let wsId = null;
+  let unsubMeta = null;
+  let firstServer = true;
+  let migrating = false;
+  const metas = new Map();        // mid -> 本体ドキュメント
+  const chans = new Map();        // mid -> { ch, ready, pres, others, binds, last, waiters }
+  const oldIds = new Set();       // 旧置き場所の会議ID(新規作成で同じIDを使わないため)
+  const cacheTimers = new Map();
+  const H = () => window.HittatsuCollab;
+  const db = () => firebase.firestore();
+  const FP = (...p) => new firebase.firestore.FieldPath(...p);
+  const me = () => { try{ return (firebase.auth().currentUser && firebase.auth().currentUser.email) || ''; }catch(e){ return ''; } };
+  const myName = () => (_currentUser && _currentUser.name) || me();
+  const colPath = () => `workspaces/${wsId}/shared/v3/meetings`;
+  const base = (mid) => `${colPath()}/${mid}`;
+  const available = () => !!(H() && wsId && _firebaseReady && me());
+  const tkey = (f, rid) => (f === 'topic' ? 't:' : f === 'minutes' ? 'm:' : 'd:') + rid;
+  const byOrder = (a, b) => ((Number(a[1].o) || 0) - (Number(b[1].o) || 0)) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  const liveRows = (d) => Object.entries((d && d.rows) || {}).filter(([, r]) => r && !r.del).sort(byOrder);
+  const liveAtts = (d) => Object.entries((d && d.att) || {}).filter(([, a]) => a && !a.del).sort(byOrder);
+  const isoOf = (v) => typeof v === 'number' ? new Date(v).toISOString() : (v || '');
+  const trunc = (s) => { s = String(s || ''); return s.length > CACHE_MAX ? s.slice(0, CACHE_MAX) : s; };
+  const plain = (h) => (H() ? H().htmlToPlain(h) : String(h || '').replace(/<[^>]*>/g, ' '));
+  const cacheOf = (t, m, d) => ({ t: trunc(t), m: trunc(plain(m)), d: trunc(plain(d)) });
+  const plainToHtml = (s) => escapeHtml(s || '').replace(/\n/g, '<br>');
+  // 取り込む HTML をこのブラウザの形に整える(以後の差分が最小になるように)。template の中は画像を読み込まない
+  function normHtml(h){
+    if(!h) return '';
+    const t = document.createElement('template');
+    t.innerHTML = String(h);
+    return _addLinkTargets(t.innerHTML);
+  }
+  const normText = (s) => String(s || '').replace(/\r\n?/g, '\n');
+
+  // ===== 画面用の形(従来の S.meetings と同じ形)に組み立てる =====
+  function project(mid){
+    const d = metas.get(mid);
+    if(!d || d.deleted) return null;
+    const c = chans.get(mid);
+    const ready = !!(c && c.ready);
+    const cache = d.cache || {};
+    const yt = (k) => c.ch.getText(k).toString();
+    return {
+      id: mid, _v3: true,
+      name: d.name || '', date: d.date || '', place: d.place || '', startTime: d.startTime || '', endTime: d.endTime || '',
+      createdAt: isoOf(d.createdAt), createdBy: d.createdBy || '', updatedAt: isoOf(d.updatedAt),
+      locked: !!d.locked, lockedAt: d.lockedAt || '', lockedBy: d.lockedBy || '',
+      attendees: liveAtts(d).map(([aid, a]) => ({ aid, name: a.name || '', role: a.role || '', web: !!a.web })),
+      rows: liveRows(d).map(([rid, r]) => {
+        const ca = cache[rid] || {};
+        return {
+          rid, who: r.who || '',
+          topic: ready ? yt('t:' + rid) : (ca.t || ''),
+          minutes: ready ? yt('m:' + rid) : plainToHtml(ca.m),
+          decisions: ready ? yt('d:' + rid) : plainToHtml(ca.d),
+        };
+      }),
+    };
+  }
+  function rebuild(){
+    const list = [];
+    metas.forEach((d, mid) => { const p = project(mid); if(p) list.push(p); });
+    S.meetings = list;
+  }
+  let rebuildTimer = null;
+  function rebuildSoon(){ clearTimeout(rebuildTimer); rebuildTimer = setTimeout(rebuild, 300); }
+  let renderTimer = null;
+  function renderSoon(){
+    clearTimeout(renderTimer);
+    renderTimer = setTimeout(() => { try{ withFocusPreserved(() => renderMeetings()); }catch(e){ console.warn('[mt3] render', e); } }, 30);
+  }
+
+  // ===== 購読 =====
+  function stop(){
+    if(unsubMeta){ try{ unsubMeta(); }catch(e){} unsubMeta = null; }
+    [...chans.keys()].forEach(closeChan);
+    metas.clear();
+    oldIds.clear();
+  }
+  function subscribe(nextWs){
+    stop();
+    wsId = nextWs || null;
+    firstServer = true;
+    if(!available()){ logSync('mt3.unavailable', {ws: wsId, collab: !!H()}); return; }
+    _subcollectionInitialLoaded.meetings = false;
+    let firstSnap = true;
+    unsubMeta = db().collection(colPath()).onSnapshot({ includeMetadataChanges: true }, qs => {
+      // 最初の受信は空でも組み立て直す(端末に残っていた古い一覧を表示し続けない)
+      let changed = firstSnap;
+      firstSnap = false;
+      qs.docChanges().forEach(c => {
+        changed = true;
+        if(c.type === 'removed') metas.delete(c.doc.id);
+        else metas.set(c.doc.id, c.doc.data() || {});
+      });
+      if(!qs.metadata.fromCache) _subcollectionInitialLoaded.meetings = true;
+      if(changed){
+        rebuild();
+        try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+        renderSoon();
+      }
+      if(firstServer && !qs.metadata.fromCache){
+        firstServer = false;
+        ensureParent();
+        migrate();
+      }
+    }, err => {
+      logSync('subscribe.error', {kind: 'meetings3', code: err && err.code});
+      console.error('[mt3] subscribe error:', err);
+    });
+  }
+  // 親の文書(shared/v3)が無いと夜間バックアップがこの下をたどれないため作っておく
+  function ensureParent(){
+    const ref = db().doc(`workspaces/${wsId}/shared/v3`);
+    ref.get().then(s => { if(!s.exists) return ref.set({ _schema: 3, kind: 'collab-v3', createdAt: Date.now() }); }).catch(() => {});
+  }
+
+  // ===== 旧置き場所からの移行(1回だけ。同時に複数の端末が行っても、トランザクションで1回になる) =====
+  function fromOld(m){
+    const rows = (Array.isArray(m.rows) && m.rows.length) ? m.rows : [{ rid: 'r0', who: '', topic: '', minutes: m.agenda || '' }];
+    return {
+      fields: { name: m.name, date: m.date, place: m.place, startTime: m.startTime, endTime: m.endTime,
+                createdAt: m.createdAt, createdBy: m.createdBy, locked: m.locked, lockedAt: m.lockedAt, lockedBy: m.lockedBy },
+      rows: rows.map(r => ({ rid: r && r.rid, who: (r && r.who) || '', topic: (r && r.topic) || '', minutes: (r && r.minutes) || '', decisions: (r && r.decisions) || '' })),
+      atts: (Array.isArray(m.attendees) ? m.attendees : []).map(a => ({ aid: a && a.aid, name: (a && a.name) || '', role: (a && a.role) || '', web: !!(a && a.web) })),
+    };
+  }
+  async function migrate(){
+    if(migrating || !available()) return;
+    migrating = true;
+    const ws = wsId;
+    try{
+      const snap = await db().collection(`workspaces/${ws}/meetings`).get();
+      for(const doc of snap.docs){
+        if(ws !== wsId) return;
+        oldIds.add(doc.id);
+        if(metas.has(doc.id)) continue;
+        try{
+          const made = await createDoc(doc.id, fromOld(doc.data() || {}), { migratedFrom: `meetings/${doc.id}`, migratedAt: Date.now() });
+          if(made) logSync('mt3.migrated', {id: doc.id});
+        }catch(e){ console.warn('[mt3] migrate failed', doc.id, e); }
+      }
+    }catch(e){ console.warn('[mt3] migrate list failed', e); }
+    finally{ migrating = false; }
+  }
+
+  // ===== 作成(新規・複製・移行) =====
+  function buildDoc(mid, spec, extra){
+    const Y = H().Y;
+    const ydoc = new Y.Doc();
+    const rows = {}, cache = {};
+    (spec.rows && spec.rows.length ? spec.rows : [{}]).forEach((r, i) => {
+      let rid = (r && r.rid) || _newRowId();
+      if(rows[rid]) rid = _newRowId();
+      rows[rid] = { o: (i + 1) * 1024, who: (r && r.who) || '' };
+      const t = normText(r && r.topic), m = normHtml(r && r.minutes), d = normHtml(r && r.decisions);
+      if(t) ydoc.getText('t:' + rid).insert(0, t);
+      if(m) ydoc.getText('m:' + rid).insert(0, m);
+      if(d) ydoc.getText('d:' + rid).insert(0, d);
+      cache[rid] = cacheOf(t, m, d);
+    });
+    const att = {};
+    (spec.atts || []).forEach((a, i) => {
+      let aid = (a && a.aid) || _newAttId();
+      if(att[aid]) aid = _newAttId();
+      att[aid] = { o: (i + 1) * 1024, name: (a && a.name) || '', role: (a && a.role) || '', web: !!(a && a.web) };
+    });
+    const f = spec.fields || {};
+    const meta = Object.assign({
+      _schema: 3, id: mid,
+      name: f.name || '', date: f.date || '', place: f.place || '', startTime: f.startTime || '', endTime: f.endTime || '',
+      createdAt: f.createdAt || new Date().toISOString(), createdBy: f.createdBy || myName(),
+      locked: !!f.locked, lockedAt: f.lockedAt || '', lockedBy: f.lockedBy || '',
+      deleted: false, rows, att, cache,
+      updatedAt: Date.now(), updatedBy: me(),
+    }, extra || {});
+    const bytes = Y.encodeStateAsUpdate(ydoc);
+    ydoc.destroy();
+    return { meta, bytes };
+  }
+  async function createDoc(mid, spec, extra){
+    const { meta, bytes } = buildDoc(mid, spec, extra);
+    const ref = db().doc(base(mid));
+    return db().runTransaction(async tx => {
+      const s = await tx.get(ref);
+      if(s.exists) return false;
+      tx.set(ref, meta);
+      H().compatWriteInitialState(tx, db(), firebase.firestore.Blob, base(mid), me(), bytes);
+      return true;
+    });
+  }
+  function nextNo(){
+    let max = Number(S.seq && S.seq.meeting) || 0;
+    const take = (id) => { const m = /^M-(\d+)$/.exec(id || ''); if(m) max = Math.max(max, Number(m[1])); };
+    metas.forEach((d, id) => take(id));
+    oldIds.forEach(take);
+    return max + 1;
+  }
+  async function create(spec){
+    if(!available()) throw new Error('クラウドに接続していません');
+    let n = nextNo();
+    for(let i = 0; i < 40; i++, n++){
+      const mid = 'M-' + String(n).padStart(3, '0');
+      if(metas.has(mid) || oldIds.has(mid)) continue;
+      if(await createDoc(mid, spec)){
+        if(!S.seq) S.seq = {};
+        S.seq.meeting = Math.max(Number(S.seq.meeting) || 0, n);
+        // 作った会議が一覧に届くまで待つ(届く前に選ぶと、無い会議として別の会議が選ばれてしまう)
+        await waitMeta(mid);
+        rebuild();
+        return mid;
+      }
+    }
+    throw new Error('会議IDを決められませんでした');
+  }
+
+  function waitMeta(mid, ms){
+    return new Promise(res => {
+      const t0 = Date.now();
+      const tick = () => { if(metas.has(mid)) return res(true); if(Date.now() - t0 > (ms || 6000)) return res(false); setTimeout(tick, 60); };
+      tick();
+    });
+  }
+
+  // ===== 欄ごとの保存 =====
+  function upd(mid, pairs, opts){
+    opts = opts || {};
+    if(!available()){ toast('⚠ クラウドに接続していないため保存できません'); return Promise.resolve(false); }
+    const d = metas.get(mid);
+    if(!d){ toast('⚠ 会議メモを読み込み中です。少し待ってからもう一度操作してください'); return Promise.resolve(false); }
+    if(d.locked && !opts.allowLocked){ toast('記録済みの会議メモは編集できません'); return Promise.resolve(false); }
+    if(!pairs.length) return Promise.resolve(true);
+    const args = [];
+    pairs.forEach(([p, v]) => { args.push(FP(...p), v); });
+    args.push(FP('updatedAt'), Date.now(), FP('updatedBy'), me());
+    return db().doc(base(mid)).update(...args).then(() => true).catch(e => {
+      console.warn('[mt3] update failed', e);
+      if(!opts.quiet) toast('⚠ 会議メモを保存できませんでした（' + ((e && e.code) || e) + '）');
+      return false;
+    });
+  }
+  function setField(mid, f, v){
+    const d = metas.get(mid);
+    if(d && (d[f] || '') === (v || '')) return Promise.resolve(true); // 変わっていなければ書かない
+    return upd(mid, [[[f], v]]);
+  }
+  function setRowField(mid, rid, f, v){
+    const r = ((metas.get(mid) || {}).rows || {})[rid];
+    if(r && (r[f] || '') === (v || '')) return Promise.resolve(true);
+    return upd(mid, [[['rows', rid, f], v]]);
+  }
+  function setAtt(mid, aid, f, v){
+    const a = ((metas.get(mid) || {}).att || {})[aid];
+    if(a && (f === 'web' ? !!a.web === !!v : (a[f] || '') === (v || ''))) return Promise.resolve(true);
+    return upd(mid, [[['att', aid, f], v]]);
+  }
+  // 並び順: 指定の行の直後(無ければ末尾)。同時に同じ場所へ入れても、両方の行が残る
+  function orderAfter(list, afterId){
+    if(!list.length) return 1024;
+    const i = afterId ? list.findIndex(([id]) => id === afterId) : -1;
+    if(i < 0 || i === list.length - 1) return (Number(list[list.length - 1][1].o) || 0) + 1024;
+    const a = Number(list[i][1].o) || 0, b = Number(list[i + 1][1].o) || 0;
+    return a + (b - a) / 2;
+  }
+  function addRow(mid, afterRid){
+    const rid = _newRowId();
+    const o = orderAfter(liveRows(metas.get(mid)), afterRid);
+    upd(mid, [[['rows', rid], { o, who: '' }]]);
+    return rid;
+  }
+  function delRow(mid, rid){
+    const pairs = [[['rows', rid, 'del'], true]];
+    const rest = liveRows(metas.get(mid)).filter(([id]) => id !== rid);
+    if(!rest.length) pairs.push([['rows', _newRowId()], { o: 1024 * 1024, who: '' }]); // 最低1行は残す
+    return upd(mid, pairs);
+  }
+  // プリセットなど、中身のある行をまとめて追加(議題・議事録は文字単位の文書へ入れる)
+  function addRows(mid, rows, replaceOnlyEmpty){
+    const c = chans.get(mid);
+    if(!c || !c.ready){ toast('⚠ 会議メモを読み込み中です。少し待ってからもう一度操作してください'); return false; }
+    const live = liveRows(metas.get(mid));
+    const pairs = [];
+    let o = live.length ? (Number(live[live.length - 1][1].o) || 0) : 0;
+    if(replaceOnlyEmpty && live.length === 1) pairs.push([['rows', live[0][0], 'del'], true]);
+    c.ch.doc.transact(() => {
+      rows.forEach(r => {
+        const rid = _newRowId();
+        o += 1024;
+        pairs.push([['rows', rid], { o, who: r.who || '' }]);
+        if(r.topic) c.ch.getText('t:' + rid).insert(0, normText(r.topic));
+        if(r.minutes) c.ch.getText('m:' + rid).insert(0, normHtml(r.minutes));
+        if(r.decisions) c.ch.getText('d:' + rid).insert(0, normHtml(r.decisions));
+      });
+    }, c.ch.local);
+    upd(mid, pairs);
+    return true;
+  }
+  function isEmptyRow(mid, rid){
+    const d = metas.get(mid); const r = ((d || {}).rows || {})[rid];
+    if(!r) return true;
+    const c = chans.get(mid);
+    const txt = (k) => (c && c.ready) ? c.ch.getText(k + rid).toString() : '';
+    return !r.who && !txt('t:').trim() && !plain(txt('m:')).trim() && !plain(txt('d:')).trim();
+  }
+  function addAtt(mid, name){
+    const aid = _newAttId();
+    upd(mid, [[['att', aid], { o: orderAfter(liveAtts(metas.get(mid)), null), name: name || '', role: '', web: false }]]);
+    return aid;
+  }
+  function addAtts(mid, names){
+    let o = orderAfter(liveAtts(metas.get(mid)), null);
+    const pairs = names.map(n => { const p = [['att', _newAttId()], { o, name: n, role: '', web: false }]; o += 1024; return p; });
+    return upd(mid, pairs);
+  }
+  function delAtt(mid, aid){ return upd(mid, [[['att', aid, 'del'], true]]); }
+  function lock(mid){
+    flushCache(mid);
+    return upd(mid, [[['locked'], true], [['lockedAt'], new Date().toISOString()], [['lockedBy'], myName()]]);
+  }
+  function remove(mid){
+    return upd(mid, [[['deleted'], true], [['deletedAt'], new Date().toISOString()], [['deletedBy'], me()]]);
+  }
+
+  // ===== 文字単位の文書(会議ごと。開いている会議だけ読み込む) =====
+  function open(mid){
+    if(!available() || !mid || !metas.has(mid)) return null;
+    let c = chans.get(mid);
+    if(c){ c.last = Date.now(); return c; }
+    c = { mid, ready: false, binds: [], others: [], last: Date.now(), waiters: [] };
+    c.ch = new (H().YChannel)(H().compatYStore(db(), firebase.firestore.Blob, base(mid), me()), {
+      pendingKey: `${LS_PENDING}::${wsId}::${mid}`,
+      flushMs: 700,
+      onReady: () => { c.ready = true; c.waiters.splice(0).forEach(f => { try{ f(); }catch(e){} }); rebuild(); renderSoon(); },
+      onRemote: () => rebuildSoon(),
+      onLocal: () => { rebuildSoon(); scheduleCache(mid); },
+      onError: (e) => logSync('mt3.error', {mid, err: String((e && e.code) || e)}),
+    });
+    c.pres = H().compatPresence(db(), base(mid), me(), myName(), (list) => { c.others = list; paintPresence(); });
+    chans.set(mid, c);
+    // 同時に開いておくのは直近の2件まで
+    [...chans.values()].filter(x => x.mid !== mid).sort((a, b) => b.last - a.last).slice(1).forEach(x => closeChan(x.mid));
+    return c;
+  }
+  function closeChan(mid){
+    const c = chans.get(mid);
+    if(!c) return;
+    unbind(c);
+    flushCache(mid);
+    try{ c.pres.close(); }catch(e){}
+    try{ c.ch.close(); }catch(e){}
+    chans.delete(mid);
+  }
+  function ensure(mid){ const c = open(mid); return !!(c && c.ready); }
+  function isReady(mid){ const c = chans.get(mid); return !!(c && c.ready); }
+  function waitReady(mid, ms){
+    const c = open(mid);
+    if(!c) return Promise.resolve(false);
+    if(c.ready) return Promise.resolve(true);
+    return new Promise(res => { const t = setTimeout(() => res(false), ms || 8000); c.waiters.push(() => { clearTimeout(t); res(true); }); });
+  }
+  function textOf(mid, key){ const c = chans.get(mid); return (c && c.ready) ? c.ch.getText(key).toString() : null; }
+
+  // ===== 入力欄との接続 =====
+  function bindEditors(list, mid){
+    unbindAll();
+    const c = chans.get(mid);
+    if(!c || !c.ready) return;
+    list.querySelectorAll('.meeting-editor .rt-editor[data-rowf][data-rid], .meeting-editor textarea[data-rowf="topic"][data-rid]').forEach(el => {
+      const rich = el.classList.contains('rt-editor');
+      const b = H().bindText(el, c.ch.getText(tkey(el.dataset.rowf, el.dataset.rid)), c.ch, {
+        rich,
+        normalize: rich ? _addLinkTargets : undefined,
+        readOnly: () => !!(metas.get(mid) || {}).locked,
+        onRemoteChange: () => { if(!rich){ el.style.height = 'auto'; el.style.height = Math.max(38, el.scrollHeight) + 'px'; } },
+      });
+      el._yb = b;
+      c.binds.push(b);
+    });
+  }
+  function unbind(c){ c.binds.forEach(b => { try{ b.destroy(); }catch(e){} try{ b.el._yb = null; }catch(e){} }); c.binds = []; }
+  function unbindAll(){ chans.forEach(unbind); }
+
+  // ===== 後から確定する置き換え(タスク化・プロジェクト化の着色) =====
+  function prepare(mid, key, fromHtml, toHtml){
+    const c = chans.get(mid);
+    if(!c || !c.ready || fromHtml == null || toHtml == null) return null;
+    const p = H().prepareReplace(c.ch.getText(key), fromHtml, toHtml);
+    return p ? { mid, key, p } : null;
+  }
+  function applyToken(tok){
+    if(!tok) return false;
+    const c = chans.get(tok.mid);
+    if(!c || !c.ready) return false;
+    const yt = c.ch.getText(tok.key);
+    const ok = H().applyPrepared(yt, c.ch, tok.p);
+    if(ok){ c.binds.forEach(b => { if(b.ytext === yt) b.render(); }); rebuildSoon(); }
+    return ok;
+  }
+
+  // ===== 検索・一覧用の控え(入力が止まってから書く) =====
+  function scheduleCache(mid){
+    clearTimeout(cacheTimers.get(mid));
+    cacheTimers.set(mid, setTimeout(() => flushCache(mid), 8000));
+  }
+  function flushCache(mid){
+    clearTimeout(cacheTimers.get(mid));
+    cacheTimers.delete(mid);
+    const c = chans.get(mid), d = metas.get(mid);
+    if(!c || !c.ready || !d || d.locked) return;
+    const pairs = [];
+    liveRows(d).forEach(([rid]) => {
+      const cur = (d.cache || {})[rid] || {};
+      const nx = cacheOf(c.ch.getText('t:' + rid).toString(), c.ch.getText('m:' + rid).toString(), c.ch.getText('d:' + rid).toString());
+      ['t', 'm', 'd'].forEach(k => { if((cur[k] || '') !== nx[k]) pairs.push([['cache', rid, k], nx[k]]); });
+    });
+    if(pairs.length) upd(mid, pairs, { quiet: true });
+  }
+
+  // ===== 入力中の表示 =====
+  function currentMid(){
+    const list = document.getElementById('meetingsList');
+    const ed = list && list.querySelector('.meeting-editor[data-mid]');
+    return ed ? ed.dataset.mid : null;
+  }
+  function paintPresence(){
+    const list = document.getElementById('meetingsList');
+    if(!list) return;
+    list.querySelectorAll('[data-cell].mt3-busy').forEach(el => { el.classList.remove('mt3-busy'); el.removeAttribute('data-busy'); });
+    const mid = currentMid();
+    const c = mid && chans.get(mid);
+    if(!c) return;
+    const byCell = new Map();
+    c.others.forEach(p => { if(!p.cell) return; const a = byCell.get(p.cell) || []; a.push(p.name || p.key); byCell.set(p.cell, a); });
+    byCell.forEach((names, cell) => {
+      const el = list.querySelector(`.meeting-editor [data-cell="${CSS.escape(cell)}"]`);
+      if(el){ el.classList.add('mt3-busy'); el.setAttribute('data-busy', names.join('、') + ' 入力中'); }
+    });
+  }
+  function attachFocus(list){
+    if(list._mt3Focus) return;
+    list._mt3Focus = true;
+    const upd = () => setTimeout(() => {
+      const mid = currentMid();
+      const c = mid && chans.get(mid);
+      if(!c) return;
+      const ae = document.activeElement;
+      const cell = ae && list.contains(ae) && ae.closest ? ae.closest('[data-cell]') : null;
+      c.pres.set(cell ? cell.getAttribute('data-cell') : null);
+    }, 0);
+    list.addEventListener('focusin', upd);
+    list.addEventListener('focusout', upd);
+  }
+
+  // ===== 画像はクラウドのファイル置き場へ(会議メモの容量を圧迫しない) =====
+  function resizeToBlob(file, max, q){
+    return new Promise((res, rej) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        try{
+          let w = img.width, h = img.height;
+          if(w > max || h > max){ const s = max / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+          const cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          const g = cv.getContext('2d');
+          g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
+          g.drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(url);
+          cv.toBlob(b => b ? res(b) : rej(new Error('toBlob')), 'image/jpeg', q);
+        }catch(e){ URL.revokeObjectURL(url); rej(e); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('image')); };
+      img.src = url;
+    });
+  }
+  async function uploadImage(file, mid){
+    if(!firebase.storage || !available()) throw new Error('storage unavailable');
+    const blob = await resizeToBlob(file, 1600, 0.82);
+    const path = `attachments/meetings/${wsId}/${mid}/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.jpg`;
+    const ref = firebase.storage().ref(path);
+    await ref.put(blob, { contentType: 'image/jpeg' });
+    return ref.getDownloadURL();
+  }
+
+  // ページを離れる前に、未送信の変更と控えを送る
+  window.addEventListener('pagehide', () => { chans.forEach((c, mid) => { try{ c.ch.flush(); flushCache(mid); }catch(e){} }); });
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'hidden') chans.forEach((c, mid) => { try{ c.ch.flush(); flushCache(mid); }catch(e){} });
+  });
+
+  return {
+    available, subscribe, stop, ensure, isReady, waitReady, textOf, tkey,
+    create, setField, setRowField, setAtt, addRow, delRow, addRows, isEmptyRow, addAtt, addAtts, delAtt, lock, remove,
+    bindEditors, unbindAll, attachFocus, paintPresence, prepare, applyToken, uploadImage,
+    projectOf: project,
+    // 検証用
+    _debug: () => ({ wsId, metas: metas.size, chans: [...chans.keys()], ready: [...chans.values()].map(c => [c.mid, c.ready, c.ch.unsent]) }),
+  };
+})();
+window.MT3 = MT3;
+
 function subscribeMeetings(wsId){
+  // ★ 会議メモは新しい置き場所(欄ごと・文字単位の同時編集)で同期する。旧置き場所は初回に移行して読むだけ
+  if(_wsMeetingsUnsubscribe){ _wsMeetingsUnsubscribe(); _wsMeetingsUnsubscribe = null; }
+  MT3.subscribe(wsId);
+}
+function _subscribeMeetingsLegacyUnused(wsId){
   if(_wsMeetingsUnsubscribe){ _wsMeetingsUnsubscribe(); _wsMeetingsUnsubscribe = null; }
   if(!wsId || !_firebaseReady || !firebase.auth().currentUser) return;
   const db = firebase.firestore();
@@ -9434,6 +9975,8 @@ function subscribeMeetings(wsId){
 }
 
 async function syncMeetingsToSubcoll(wsId){
+  // ★ 会議メモは MT3 が欄ごと・文字単位で保存する。旧置き場所へは書かない(旧版の画面との上書き合戦を起こさない)
+  return 0;
   // 送信ゲート(初回受信前は _lastSynced が空で、古い端末が全件上書きしてしまうため)
   if(!_subcollectionInitialLoaded.meetings){ logSync('write.skip.notReady', {kind:'meetings'}); return 0; }
   if(!wsId || !_firebaseReady) return 0;
@@ -12507,7 +13050,7 @@ function setupUIProxy(){
   if(S.ui && S.ui.__isProxy) return;
   const targetUI = S.ui || {};
   // 共有状態に残っている過去の weekStart は破棄（同期対象から外す）
-  try{ delete targetUI.weekStart; }catch(e){}
+  try{ delete targetUI.weekStart; delete targetUI.selectedMeetingId; delete targetUI.meetingInfoCollapsed; }catch(e){}
   const proxy = new Proxy(targetUI, {
     get(target, prop){
       if(prop === '__isProxy') return true;
@@ -12515,6 +13058,7 @@ function setupUIProxy(){
         if(!_localWeekStart) _localWeekStart = weekStartOf(todayStr());
         return _localWeekStart;
       }
+      if(typeof prop === 'string' && LOCAL_UI_FIELDS.has(prop)) return _localUiGet(prop);
       if(typeof prop === 'string' && PER_USER_UI_FIELDS.has(prop)){
         if(!S.userPrefs) S.userPrefs = {};
         const email = getUserEmail();
@@ -12526,6 +13070,7 @@ function setupUIProxy(){
     },
     set(target, prop, value){
       if(prop === 'weekStart'){ _localWeekStart = value; return true; } // 端末ローカル（同期しない）
+      if(typeof prop === 'string' && LOCAL_UI_FIELDS.has(prop)){ _localUiSet(prop, value); return true; } // 端末ローカル（同期しない）
       if(typeof prop === 'string' && PER_USER_UI_FIELDS.has(prop)){
         if(!S.userPrefs) S.userPrefs = {};
         const email = getUserEmail();

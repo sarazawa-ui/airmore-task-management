@@ -49,8 +49,37 @@ service cloud.firestore {
       match /goals/{doc=**}          { allow read, write: if _domainOk(); }
       match /weeklyReports/{doc=**}  { allow read, write: if _domainOk(); }
       match /history/{doc=**}        { allow read, write: if _domainOk(); }
-      match /meetings/{doc=**}       { allow read, write: if _domainOk(); }
-      match /shared/{doc=**}         { allow read, write: if _domainOk(); }
+      // 会議メモの旧置き場所: 新しい置き場所(shared/v3/meetings)へ移行済み。読むだけ(旧版の画面の書き込みは拒否)
+      //   削除はワークスペースの削除(オーナー)のために残す
+      match /meetings/{doc=**}       { allow read, delete: if _domainOk(); allow create, update: if false; }
+      match /shared/{doc}            { allow read, write: if _domainOk(); }   // board / kpt / v3(下の親)
+
+      // === 会議メモ v3(欄ごとの保存 + 文字単位の同時編集) ===
+      //   ・本体は欄ごとの update だけ。丸ごと上書き(項目が消える書き込み)・行や参加者を消す書き込み・削除は拒否
+      //   ・記録済み(locked)は変更できない(記録の解除もできない)
+      //   ・議事録などの変更分(yupd)は追記だけ(書き換え不可)。まとめ(ystate)に含めた分は消してよい
+      match /shared/v3/meetings/{mid} {
+        allow read: if _domainOk();
+        allow create: if _domainOk() && request.resource.data._schema == 3;
+        allow update: if _domainOk()
+          && request.resource.data._schema == 3
+          && resource.data.get('locked', false) != true
+          && request.resource.data.diff(resource.data).removedKeys().size() == 0
+          && request.resource.data.get('rows', {}).keys().hasAll(resource.data.get('rows', {}).keys())
+          && request.resource.data.get('att', {}).keys().hasAll(resource.data.get('att', {}).keys());
+        allow delete: if false;
+
+        function _mtLocked() {
+          return get(/databases/$(database)/documents/workspaces/$(wsId)/shared/v3/meetings/$(mid)).data.get('locked', false) == true;
+        }
+        match /yupd/{u} {
+          allow read, delete: if _domainOk();
+          allow create: if _domainOk() && !_mtLocked();
+          allow update: if false;
+        }
+        match /ystate/{p} { allow read, write: if _domainOk(); }
+        match /presence/{p} { allow read, write: if _domainOk(); }
+      }
       match /pushTokens/{doc=**}     { allow read, write: if _domainOk(); }
 
       // === Budget subcollection（旧パス互換） ===
