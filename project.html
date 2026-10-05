@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1791199881332";</script>
+<script>window.__HITTATSU_BUILD__ = "1791203000420";</script>
 <script>
 // プロジェクト管理を単体で開いたとき(以前の招待メール・タスク通知のリンク、ブックマークなど)は、
 // 現行の Hittatsu の画面(左メニュー付き)のプロジェクト管理へ移す。現行の画面の中(iframe)では何もしない
@@ -44,7 +44,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-messaging-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js"></script>
 <!-- 文字単位の同時編集の共通の仕組み(src/collab → npm run build:collab) -->
-<script src="vendor/hittatsu-collab.js?v=1791199881332"></script>
+<script src="vendor/hittatsu-collab.js?v=1791203000420"></script>
 <style>
 :root{
   --primary:#1c5cab;
@@ -14016,8 +14016,16 @@ setInterval(()=>{ if(document.getElementById('view-calendar').classList.contains
 (function(){
   var cur = String(window.__HITTATSU_BUILD__ || "");
   if(!cur || cur.indexOf("%") >= 0) return; // 未刻印(開発時)は無効
-  // 統合アプリの中(iframe)では、アプリ側が同じお知らせを出して全体を更新するので、ここでは出さない
-  try{ if(window.top !== window.self) return; }catch(e){ return; }
+  // 統合アプリの中(iframe)では、アプリ側が同じお知らせを出して全体を更新するので、ここでは出さない。
+  // ここでの操作はアプリ側へ伝える(操作がない時間が続いたときだけ自動で更新するため)
+  try{
+    if(window.top !== window.self){
+      ["pointerdown","keydown","wheel","touchstart"].forEach(function(t){
+        window.addEventListener(t, function(){ try{ window.parent.__hittatsuActivity && window.parent.__hittatsuActivity(); }catch(e){} }, {capture:true, passive:true});
+      });
+      return;
+    }
+  }catch(e){ return; }
   var GUARD = "hittatsu_update_reload";
   var pendingV = null, banner = null;
   function guardOk(v){
