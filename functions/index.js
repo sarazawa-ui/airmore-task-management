@@ -472,7 +472,11 @@ exports.watchLeadReplies = onSchedule(
     }
     const db = admin.firestore();
     // 会社（ワークスペース）ごとに検知用メールボックスを読む
-    const wsSnap = await db.collection("salesWs").get();
+    // ★ 商談管理は sales3(欄ごとの保存)へ移行済み。案件・商談記録・リード・得意先はそちらを読み書きする
+    //   (1件=1ドキュメント、削除は _deleted の印。書き込みには _schema:3 が必要)
+    const wsSnap = await db.collection("sales3").get();
+    const live = (snap) => snap.docs.map(d => ({ ...d.data(), id: d.id })).filter(x => x && !x._deleted);
+    const stamp = () => ({ _schema: 3, _at: Date.now(), _by: "watchLeadReplies" });
     let totalConverted = 0;
 
     for (const wsDoc of wsSnap.docs) {
@@ -483,7 +487,7 @@ exports.watchLeadReplies = onSchedule(
       //    クライアント(salesSync)が親ドキュメントに leadWatch インデックスを保守して
       //    いるので、通常は上の wsSnap の読み取りだけで済む。leads/members の全件読みは
       //    「実際に返信が見つかった会社」だけに遅延させる(読み取り削減の本体)。
-      const lw = (wsDoc.data() || {}).leadWatch;
+      const lw = ((wsDoc.data() || {}).m || {}).leadWatch;
       let leadEmails, mailboxes;
       let openLeads = null; // 遅延読込(インデックスがある間は null のまま)
       let members = null;
@@ -492,13 +496,12 @@ exports.watchLeadReplies = onSchedule(
         mailboxes = [...new Set((lw.mailboxes || []).map(norm).filter(Boolean))];
       } else {
         // 旧形式(インデックス未整備)の互換: 従来どおり全件読んで組み立てる
-        const leadsSnap = await db.collection(`salesWs/${wsId}/leads`).get();
-        openLeads = leadsSnap.docs
-          .map(d => d.data())
+        const leadsSnap = await db.collection(`sales3/${wsId}/leads`).get();
+        openLeads = live(leadsSnap)
           .filter(l => l && l.status !== "dealt" && l.email);
         leadEmails = [...new Set(openLeads.map(l => norm(l.email)))];
-        const membersSnap = await db.collection(`salesWs/${wsId}/members`).get();
-        members = membersSnap.docs.map(d => d.data());
+        const membersSnap = await db.collection(`sales3/${wsId}/members`).get();
+        members = live(membersSnap);
         mailboxes = [...new Set(members.map(m => norm(m && m.email)).filter(Boolean))];
       }
       if (!leadEmails.length || !mailboxes.length) continue;
@@ -535,14 +538,13 @@ exports.watchLeadReplies = onSchedule(
 
       // 3) 返信があった時だけ leads / members を読む(通常の巡回では届かない)
       if (!openLeads) {
-        const leadsSnap = await db.collection(`salesWs/${wsId}/leads`).get();
-        openLeads = leadsSnap.docs
-          .map(d => d.data())
+        const leadsSnap = await db.collection(`sales3/${wsId}/leads`).get();
+        openLeads = live(leadsSnap)
           .filter(l => l && l.status !== "dealt" && l.email);
       }
       if (!members) {
-        const membersSnap = await db.collection(`salesWs/${wsId}/members`).get();
-        members = membersSnap.docs.map(d => d.data());
+        const membersSnap = await db.collection(`sales3/${wsId}/members`).get();
+        members = live(membersSnap);
       }
       // メールボックス(メールアドレス) → 持ち主のメンバーID。担当が名前で
       // 特定できないときのフォールバックに使う(返信を受け取った本人＝送信した担当)。
@@ -568,14 +570,10 @@ exports.watchLeadReplies = onSchedule(
         return mailboxOwner[senders.get(norm(lead.email))] || "";
       };
 
-      // 得意先マスタ（会社共有の単一ドキュメント。wsId と同じキー）
-      const mastersRef = db.doc(`salesMasters/${wsId}`);
-      const mastersSnap = await mastersRef.get();
-      const masters = mastersSnap.exists ? (mastersSnap.data() || {}) : {};
-      const customers = Array.isArray(masters.customers) ? masters.customers : [];
+      // 得意先マスタ（sales3/{会社}/customers、1件=1ドキュメント）
+      const customers = live(await db.collection(`sales3/${wsId}/customers`).get());
 
       const batch = db.batch();
-      let customersChanged = false;
       const today = jstToday();
 
       for (const lead of targets) {
@@ -588,11 +586,12 @@ exports.watchLeadReplies = onSchedule(
             address: lead.address || "", tel: lead.tel || "", memberId: memberId || null,
           };
           customers.push(customer);
-          customersChanged = true;
+          batch.set(db.doc(`sales3/${wsId}/customers/${customer.id}`), { ...customer, ...stamp() });
         }
         const dealId = newId("deal");
         // 案件を作成
-        batch.set(db.doc(`salesWs/${wsId}/deals/${dealId}`), {
+        batch.set(db.doc(`sales3/${wsId}/deals/${dealId}`), {
+          ...stamp(),
           id: dealId,
           title: [lead.group, lead.company].filter(Boolean).join("・") || (lead.company || "展示会リード"),
           customerId: customer.id,
@@ -605,20 +604,18 @@ exports.watchLeadReplies = onSchedule(
         });
         // 商談記録（展示会）
         const actId = newId("act");
-        batch.set(db.doc(`salesWs/${wsId}/activities/${actId}`), {
+        batch.set(db.doc(`sales3/${wsId}/activities/${actId}`), {
+          ...stamp(),
           id: actId, dealId, memberId,
           date: lead.exchangeDate || today,
           type: "expo",
           summary: lead.memo || "展示会リードの返信を受信（自動案件化）",
         });
         // リードを案件化済みに
-        batch.set(db.doc(`salesWs/${wsId}/leads/${lead.id}`), { ...lead, status: "dealt", dealId }, { merge: true });
+        batch.update(db.doc(`sales3/${wsId}/leads/${lead.id}`), { status: "dealt", dealId, ...stamp() });
         totalConverted++;
       }
 
-      if (customersChanged) {
-        batch.set(mastersRef, { ...masters, customers, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
-      }
       await batch.commit();
       console.log(`[leadReply] ws=${wsId} converted ${targets.length} lead(s) from ${mailboxes.length} mailbox(es)`);
     }

@@ -122,7 +122,28 @@ service cloud.firestore {
     //   プロジェクト管理（workspaces/*）と同じく、許可ドメインのユーザーのみ読み書き可。
     match /salesWs/{wsId} {
       allow read, write: if _domainOk();
+      // ※ 会社ごとの商談管理の一覧は sales3 へ移行する。旧版の画面がすべて更新されたら、
+      //   ここを「商談の一覧(deals 等)は読むだけ」に変える(次のルール公開で)
       match /{sub=**} { allow read, write: if _domainOk(); }
+    }
+
+    // === 商談管理 v3(欄ごとの保存 = スプレッドシート方式) ===
+    //   sales3/{会社}              親(設定類 m、移行の印)
+    //   sales3/{会社}/{一覧}/{ID}   1件=1ドキュメント
+    //   ・欄ごとの update だけを受け付ける(欄を消す=丸ごと上書きの書き込み、文書の削除は拒否。削除は _deleted の印)
+    match /sales3/{ws} {
+      allow read: if _domainOk();
+      allow create: if _domainOk();
+      allow update: if _domainOk() && request.resource.data.diff(resource.data).removedKeys().size() == 0;
+      allow delete: if false;
+      match /{list}/{id} {
+        allow read: if _domainOk();
+        allow create: if _domainOk() && request.resource.data._schema == 3;
+        allow update: if _domainOk()
+          && request.resource.data._schema == 3
+          && request.resource.data.diff(resource.data).removedKeys().size() == 0;
+        allow delete: if false;
+      }
     }
 
     // === 商談管理：会社共有マスタ（得意先・商品・業種） ===
