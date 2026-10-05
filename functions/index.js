@@ -732,3 +732,92 @@ exports.readSheet = onCall(
     }
   }
 );
+
+// ============================================================
+// マスタ・売上明細の自動取込(画面を開いていなくても最新にする)
+//   得意先・商品・在庫マスタ(会社ごとの参照シート)と、予算管理の売上(会社ごとの売上明細シート)を、
+//   サービスアカウントで読んで取り込む。取込の中身は画面と共通(airmore-sales の server/masterSync.ts を
+//   esbuild でまとめた masterSync.bundle.js。作り直しは airmore-sales で npm run build:functions)。
+//   ・平日 7:00〜20:30(日本時間)に30分ごと。朝8時以降の最初の回で必ず1回取り込み、
+//     それ以外はシートが更新されていたときだけ取り込む
+//   ・画面の「今すぐ更新」は syncMasterSheetsNow を呼ぶ(スマホでもGoogleの認証画面を出さずに更新できる)
+//   ※ 事前設定: 参照する各スプレッドシートを、サービスアカウント(GMAIL_SA_KEY の client_email)に「閲覧者」で共有
+// ============================================================
+const masterSync = require("./masterSync.bundle.js");
+
+function _sheetId(url) {
+  const m = String(url || "").match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  if (!m) throw new Error("スプレッドシートのURLが不正です");
+  const g = String(url).match(/[#?&]gid=(\d+)/);
+  return { id: m[1], gid: g ? Number(g[1]) : null };
+}
+function _saSheetReader() {
+  const { jwt } = sheetsAuth();
+  const sheets = google.sheets({ version: "v4", auth: jwt });
+  const drive = google.drive({ version: "v3", auth: jwt });
+  const quote = (t) => "'" + String(t).replace(/'/g, "''") + "'";
+  const tabsOf = async (id) => {
+    const meta = await sheets.spreadsheets.get({ spreadsheetId: id, fields: "sheets(properties(sheetId,title))" });
+    return (meta.data.sheets || []).map((s) => s.properties || {});
+  };
+  return {
+    values: async (url) => {
+      const { id, gid } = _sheetId(url);
+      const tabs = await tabsOf(id);
+      const target = (gid != null && tabs.find((t) => t.sheetId === gid)) || tabs[0];
+      if (!target) throw new Error("シート(タブ)が見つかりませんでした");
+      const r = await sheets.spreadsheets.values.get({ spreadsheetId: id, range: quote(target.title), majorDimension: "ROWS", valueRenderOption: "FORMATTED_VALUE" });
+      return { values: r.data.values || [], sheetTitle: target.title };
+    },
+    tabs: async (url, match) => {
+      const { id } = _sheetId(url);
+      const titles = (await tabsOf(id)).map((t) => t.title).filter((t) => t && (!match || String(t).includes(String(match))));
+      if (!titles.length) return [];
+      const r = await sheets.spreadsheets.values.batchGet({ spreadsheetId: id, ranges: titles.map(quote), majorDimension: "ROWS", valueRenderOption: "FORMATTED_VALUE" });
+      return (r.data.valueRanges || []).map((vr, i) => ({ title: titles[i], values: vr.values || [] }));
+    },
+    modified: async (url) => {
+      const { id } = _sheetId(url);
+      const r = await drive.files.get({ fileId: id, fields: "modifiedTime,lastModifyingUser(displayName)", supportsAllDrives: true });
+      return { modifiedTime: r.data.modifiedTime || null, by: (r.data.lastModifyingUser && r.data.lastModifyingUser.displayName) || "" };
+    },
+  };
+}
+// 読めなかったとき(共有されていない等)の案内を付ける
+function _explain(results) {
+  const { email } = sheetsAuth();
+  return results.map((x) =>
+    x.status === "error" && /403|404|permission|not found|caller does not have/i.test(x.msg)
+      ? { ...x, msg: `サーバー用アカウントがシートを読めません。スプレッドシートを ${email} に「閲覧者」で共有してください。(${x.msg})` }
+      : x
+  );
+}
+
+exports.syncMasterSheets = onSchedule(
+  { schedule: "0,30 7-20 * * 1-5", timeZone: "Asia/Tokyo", secrets: [GMAIL_SA_KEY], memory: "1GiB", timeoutSeconds: 540 },
+  async () => {
+    const out = _explain(
+      await masterSync.runMasterSync({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, sheets: _saSheetReader(), log: console.log })
+    );
+    const done = out.filter((x) => x.status !== "skip");
+    if (done.length) console.log("[syncMasterSheets]", JSON.stringify(done));
+  }
+);
+
+exports.syncMasterSheetsNow = onCall(
+  { secrets: [GMAIL_SA_KEY], memory: "1GiB", timeoutSeconds: 300 },
+  async (req) => {
+    if (!req.auth) throw new HttpsError("unauthenticated", "ログインが必要です");
+    if (!(await isAllowedEmail(req.auth.token.email))) throw new HttpsError("permission-denied", "許可されていないアカウントです");
+    const { ws, which, cid } = req.data || {};
+    if (!which || !["customers", "products", "stocks", "sales"].includes(which)) throw new HttpsError("invalid-argument", "取り込む項目が不正です");
+    if (which !== "sales" && !ws) throw new HttpsError("invalid-argument", "会社が指定されていません");
+    const out = await masterSync.runMasterSync({
+      db: admin.firestore(),
+      FieldPath: admin.firestore.FieldPath,
+      sheets: _saSheetReader(),
+      force: { ws: which === "sales" ? undefined : String(ws), which, cid: cid ? String(cid) : undefined },
+    });
+    return { results: _explain(out) };
+  }
+);
