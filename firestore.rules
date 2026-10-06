@@ -45,8 +45,9 @@ service cloud.firestore {
       // ワークスペースの削除は最上位権限(オーナー)のみ
       allow delete: if _domainOk() && _isOwner(request.auth.token.email);
 
-      match /tasks/{doc=**}          { allow read, write: if _domainOk(); }
-      match /goals/{doc=**}          { allow read, write: if _domainOk(); }
+      // タスク・プロジェクトの旧置き場所: 新しい置き場所(sync3/pm-{ws})へ移行済み。読むだけ(旧版の画面の書き込みは拒否)
+      match /tasks/{doc=**}          { allow read: if _domainOk(); allow write: if false; }
+      match /goals/{doc=**}          { allow read: if _domainOk(); allow write: if false; }
       match /weeklyReports/{doc=**}  { allow read, write: if _domainOk(); }
       match /history/{doc=**}        { allow read, write: if _domainOk(); }
       // 会議メモの旧置き場所: 新しい置き場所(shared/v3/meetings)へ移行済み。読むだけ(旧版の画面の書き込みは拒否)
@@ -101,9 +102,10 @@ service cloud.firestore {
       allow read: if _domainOk();
       allow write: if _domainOk();
     }
+    // 予算管理の旧置き場所: 新しい置き場所(sync3/budget)へ移行済み。読むだけ(旧版の画面の書き込みは拒否)
     match /globalBudget/data {
       allow read: if _domainOk();
-      allow write: if _domainOk();
+      allow write: if false;
     }
     // Hittatsuの権限(owner/admin/editor)。読取は全員、変更はオーナーのみ
     match /globalBudget/userRoles {

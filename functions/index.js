@@ -801,6 +801,19 @@ exports.syncMasterSheets = onSchedule(
     );
     const done = out.filter((x) => x.status !== "skip");
     if (done.length) console.log("[syncMasterSheets]", JSON.stringify(done));
+    // 削除済みの印の文書を本当に消す(日本時間で1日1回、その日の最初の回)
+    try {
+      const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+      const ref = admin.firestore().doc("syncLog/purge");
+      const last = (await ref.get()).data();
+      if (!last || last.date !== today) {
+        const purged = await masterSync.purgeDeleted({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, sheets: _saSheetReader() });
+        await ref.set({ date: today, at: new Date().toISOString(), purged });
+        if (Object.keys(purged).length) console.log("[purgeDeleted]", JSON.stringify(purged));
+      }
+    } catch (e) {
+      console.error("[purgeDeleted] failed:", e && e.message);
+    }
   }
 );
 
@@ -810,6 +823,12 @@ exports.syncMasterSheetsNow = onCall(
     if (!req.auth) throw new HttpsError("unauthenticated", "ログインが必要です");
     if (!(await isAllowedEmail(req.auth.token.email))) throw new HttpsError("permission-denied", "許可されていないアカウントです");
     const { ws, which, cid } = req.data || {};
+    // 削除済みの印の文書を今すぐ消す(オーナーの操作)
+    if (which === "purge") {
+      const purged = await masterSync.purgeDeleted({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, sheets: _saSheetReader() });
+      await admin.firestore().doc("syncLog/purge").set({ date: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10), at: new Date().toISOString(), purged, by: req.auth.token.email });
+      return { results: [{ ws: "*", which: "purge", status: "done", msg: Object.entries(purged).map(([k, v]) => k + " " + v + "件").join("、") || "消すものはありませんでした" }] };
+    }
     if (!which || !["customers", "products", "stocks", "sales"].includes(which)) throw new HttpsError("invalid-argument", "取り込む項目が不正です");
     if (which !== "sales" && !ws) throw new HttpsError("invalid-argument", "会社が指定されていません");
     const out = await masterSync.runMasterSync({

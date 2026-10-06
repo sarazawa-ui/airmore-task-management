@@ -22,6 +22,7 @@ var masterSync_exports = {};
 __export(masterSync_exports, {
   dedupeCompany: () => dedupeCompany,
   lastScheduledJst: () => lastScheduledJst,
+  purgeDeleted: () => purgeDeleted,
   runMasterSync: () => runMasterSync
 });
 module.exports = __toCommonJS(masterSync_exports);
@@ -919,6 +920,26 @@ async function syncBudgetSales(ctx, out) {
     }
   }
 }
+async function purgeDeleted(ctx, now = /* @__PURE__ */ new Date()) {
+  const { db } = ctx;
+  const out = {};
+  const roots = (await db.collection("sales3").listDocuments()).map((r) => r.id);
+  const lists = [["customers", 2], ["products", 2], ["deals", 30], ["activities", 30], ["quotes", 30], ["trips", 30], ["rideAlongs", 30], ["repairs", 30], ["expos", 30], ["leads", 30], ["members", 30]];
+  for (const ws of roots) {
+    for (const [name, days] of lists) {
+      const cutoff = new Date(now.getTime() - days * 864e5).toISOString();
+      const qs = await db.collection(`sales3/${ws}/${name}`).where("_deleted", "==", true).get();
+      const refs = qs.docs.filter((d) => String(d.data()._delAt || "") < cutoff).map((d) => d.ref);
+      for (let i = 0; i < refs.length; i += 400) {
+        const b = db.batch();
+        refs.slice(i, i + 400).forEach((r) => b.delete(r));
+        await b.commit();
+      }
+      if (refs.length) out[`${ws}/${name}`] = refs.length;
+    }
+  }
+  return out;
+}
 async function runMasterSync(ctx) {
   const out = [];
   const wss = ctx.force?.ws ? [ctx.force.ws] : (await ctx.db.collection("sales3").listDocuments()).map((r) => r.id);
@@ -935,5 +956,6 @@ async function runMasterSync(ctx) {
 0 && (module.exports = {
   dedupeCompany,
   lastScheduledJst,
+  purgeDeleted,
   runMasterSync
 });
