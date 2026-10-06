@@ -155,6 +155,13 @@ service cloud.firestore {
     //   sales3/{会社}              親(設定類 m、移行の印)
     //   sales3/{会社}/{一覧}/{ID}   1件=1ドキュメント
     //   ・欄ごとの update だけを受け付ける(欄を消す=丸ごと上書きの書き込み、文書の削除は拒否。削除は _deleted の印)
+    //   ・1つの置き場所(sales3/shared)にまとめた後は、会社ごとの写し(sales3/{会社}/{一覧})には書けない
+    //     (shared が出来る前は従来どおり書ける。設定類の親文書 sales3/{会社} は会社ごとのまま書ける)
+    function _salesListWritable(ws) {
+      return ws == 'shared'
+        || !exists(/databases/$(database)/documents/sales3/shared)
+        || get(/databases/$(database)/documents/sales3/shared).data.migratedAt == null;
+    }
     match /sales3/{ws} {
       allow read: if _domainOk();
       allow create: if _domainOk();
@@ -162,10 +169,11 @@ service cloud.firestore {
       allow delete: if false;
       match /{list}/{id} {
         allow read: if _domainOk();
-        allow create: if _domainOk() && request.resource.data._schema == 3;
+        allow create: if _domainOk() && request.resource.data._schema == 3 && _salesListWritable(ws);
         allow update: if _domainOk()
           && request.resource.data._schema == 3
-          && request.resource.data.diff(resource.data).removedKeys().size() == 0;
+          && request.resource.data.diff(resource.data).removedKeys().size() == 0
+          && _salesListWritable(ws);
         allow delete: if false;
       }
     }
