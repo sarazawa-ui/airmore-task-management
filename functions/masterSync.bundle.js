@@ -20,10 +20,13 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // server/masterSync.ts
 var masterSync_exports = {};
 __export(masterSync_exports, {
+  SHARED_WS: () => SHARED_WS,
+  consolidateSalesData: () => consolidateSalesData,
   dedupeCompany: () => dedupeCompany,
   lastScheduledJst: () => lastScheduledJst,
   purgeDeleted: () => purgeDeleted,
-  runMasterSync: () => runMasterSync
+  runMasterSync: () => runMasterSync,
+  salesRoots: () => salesRoots
 });
 module.exports = __toCommonJS(masterSync_exports);
 
@@ -526,6 +529,160 @@ function applyMasterDedupe(d, p) {
   return next;
 }
 
+// src/salesConsolidate.ts
+var META = /* @__PURE__ */ new Set(["_schema", "_at", "_by", "_deleted", "_delAt", "_delBy", "_mig", "_fv", "_backfill"]);
+var SHARED_LISTS = ["customers", "products", "members", "deals", "activities", "quotes", "trips", "rideAlongs", "repairs", "expos", "leads"];
+function fieldTimes(doc) {
+  const m = /* @__PURE__ */ new Map();
+  const fv = doc._fv || {};
+  for (const [k, v] of Object.entries(fv)) {
+    const top = String(k).split("|")[0];
+    const at = Number(v && v.at) || 0;
+    if (at > (m.get(top) || 0)) m.set(top, at);
+  }
+  return m;
+}
+function mergeCopies(srcs, now) {
+  const live = srcs.filter((s) => !s.doc._deleted);
+  if (!live.length) return null;
+  const sorted = [...live].sort((a, b) => a.order - b.order);
+  const times = new Map(sorted.map((s) => [s, fieldTimes(s.doc)]));
+  const keys = /* @__PURE__ */ new Set();
+  sorted.forEach((s) => Object.keys(s.doc).forEach((k) => !META.has(k) && keys.add(k)));
+  const out = { id: sorted[0].doc.id };
+  const src = {};
+  for (const k of keys) {
+    if (k === "id") continue;
+    let best = null;
+    let bestAt = -1;
+    for (const s of sorted) {
+      if (!(k in s.doc)) continue;
+      const at = times.get(s).get(k) ?? (Number(s.doc._at) || 0);
+      if (at > bestAt) {
+        bestAt = at;
+        best = s;
+      }
+    }
+    if (best) {
+      out[k] = best.doc[k];
+      src[k] = best.ws;
+    }
+  }
+  const fv = {};
+  for (const s of sorted) for (const [k, v] of Object.entries(s.doc._fv || {})) if (v && (!fv[k] || (Number(v.at) || 0) > (Number(fv[k].at) || 0))) fv[k] = v;
+  if (Object.keys(fv).length) out._fv = fv;
+  const newest = sorted.reduce((a, b) => (Number(b.doc._at) || 0) > (Number(a.doc._at) || 0) ? b : a);
+  out._at = Number(newest.doc._at) || now;
+  if (newest.doc._by) out._by = newest.doc._by;
+  out._schema = 3;
+  out._mig = now;
+  return { doc: out, src };
+}
+var custKey = (c) => {
+  const code = String(c.code || "").trim();
+  if (code) return "c:" + code;
+  return c.name ? "n:" + String(c.name).trim() + "|" + String(c.site || "").trim() : "";
+};
+var prodKey = (p) => {
+  const k = codeKey(p.code);
+  return k ? "c:" + k : "";
+};
+function consolidateSales(copies, order, now = Date.now()) {
+  const wss = [...order.filter((w) => w in copies), ...Object.keys(copies).filter((w) => !order.includes(w))];
+  const ord = (ws) => wss.indexOf(ws);
+  const lists = {};
+  const idMap = {};
+  wss.forEach((ws) => idMap[ws] = { customers: {}, products: {} });
+  const report = { lists: {} };
+  const rep = (name) => report.lists[name] ||= { out: 0, from: {}, remapped: 0, unresolved: 0 };
+  const byCode = { customers: /* @__PURE__ */ new Map(), products: /* @__PURE__ */ new Map() };
+  for (const name of ["customers", "products"]) {
+    const keyOf = name === "customers" ? custKey : prodKey;
+    const groups = /* @__PURE__ */ new Map();
+    for (const ws of wss) {
+      const rows = copies[ws]?.[name] || [];
+      rep(name).from[ws] = rows.filter((r) => !r._deleted).length;
+      for (const doc of rows) {
+        if (!doc || !doc.id) continue;
+        const k = keyOf(doc) || "id:" + doc.id;
+        (groups.get(k) || groups.set(k, []).get(k)).push({ ws, doc, order: ord(ws) });
+      }
+    }
+    const out = [];
+    for (const [k, srcs] of groups) {
+      const m = mergeCopies(srcs, now);
+      if (!m) continue;
+      out.push(m.doc);
+      srcs.forEach((s) => idMap[s.ws][name][s.doc.id] = m.doc.id);
+      if (k.startsWith("c:")) byCode[name].set(k.slice(2), m.doc);
+    }
+    lists[name] = out;
+    rep(name).out = out.length;
+  }
+  const custByCode = (code) => code ? byCode.customers.get(String(code).trim()) : void 0;
+  const prodByCode = (code) => code ? byCode.products.get(codeKey(code)) : void 0;
+  const remap = (name, kind, ws, id, code) => {
+    if (typeof id !== "string" || !id) return void 0;
+    const mapped = ws ? idMap[ws]?.[kind]?.[id] : void 0;
+    if (mapped) {
+      if (mapped !== id) rep(name).remapped++;
+      return mapped;
+    }
+    const byC = kind === "customers" ? custByCode(code) : prodByCode(code);
+    if (byC) {
+      rep(name).remapped++;
+      return byC.id;
+    }
+    for (const w of wss) {
+      const m2 = idMap[w][kind][id];
+      if (m2) {
+        if (m2 !== id) rep(name).remapped++;
+        return m2;
+      }
+    }
+    rep(name).unresolved++;
+    return void 0;
+  };
+  const remapRows = (name, kind, ws, rows) => {
+    if (!rows || typeof rows !== "object" || !rows.__arr || !rows.e) return rows;
+    const e = { ...rows.e };
+    for (const [rid, row] of Object.entries(e)) {
+      if (!row || typeof row !== "object" || !row.productId) continue;
+      const to = remap(name, kind, ws, row.productId, row.code);
+      if (to && to !== row.productId) e[rid] = { ...row, productId: to };
+    }
+    return { ...rows, e };
+  };
+  for (const name of SHARED_LISTS) {
+    if (name === "customers" || name === "products") continue;
+    const groups = /* @__PURE__ */ new Map();
+    for (const ws of wss) {
+      const rows = copies[ws]?.[name] || [];
+      rep(name).from[ws] = rows.filter((r) => !r._deleted).length;
+      for (const doc of rows) if (doc && doc.id) (groups.get(doc.id) || groups.set(doc.id, []).get(doc.id)).push({ ws, doc, order: ord(ws) });
+    }
+    const out = [];
+    for (const srcs of groups.values()) {
+      const m = mergeCopies(srcs, now);
+      if (!m) continue;
+      const d = m.doc;
+      if (name === "deals" || name === "activities" || name === "repairs") {
+        const to = remap(name, "customers", m.src.customerId, d.customerId, d.customerCode);
+        if (to) {
+          d.customerId = to;
+          const c = lists.customers.find((x) => x.id === to);
+          if (c && c.code) d.customerCode = c.code;
+        }
+      }
+      if (name === "deals" || name === "quotes" || name === "rideAlongs" || name === "repairs") d.items = remapRows(name, "products", m.src.items, d.items);
+      out.push(d);
+    }
+    lists[name] = out;
+    rep(name).out = out.length;
+  }
+  return { lists, idMap, report };
+}
+
 // src/budget/salesImport.js
 var num = (v) => {
   const n = parseFloat(String(v ?? "").replace(/[,¥\s"']/g, ""));
@@ -649,6 +806,61 @@ function planSalesSheetImport(values, { sales, repMap, startMonth }, cid, now = 
 }
 
 // server/masterSync.ts
+var SHARED_WS = "shared";
+async function salesRoots(db) {
+  const docs = await db.collection("sales3").listDocuments();
+  const ids = docs.map((r) => r.id);
+  if (ids.includes(SHARED_WS)) {
+    const s = await db.doc(`sales3/${SHARED_WS}`).get();
+    if (s.exists && s.data()?.migratedAt) return [SHARED_WS];
+  }
+  const out = [];
+  for (const id of ids) {
+    if (id === SHARED_WS) continue;
+    const d = await db.doc(`sales3/${id}`).get();
+    if (!d.data()?.sharedAt) out.push(id);
+  }
+  return out;
+}
+async function consolidateSalesData(ctx, order, dryRun) {
+  const { db } = ctx;
+  const sharedDoc = await db.doc(`sales3/${SHARED_WS}`).get();
+  if (sharedDoc.exists && sharedDoc.data()?.migratedAt) return { already: true };
+  const ids = (await db.collection("sales3").listDocuments()).map((r) => r.id).filter((x) => x !== SHARED_WS);
+  const copies = {};
+  for (const ws of ids) {
+    copies[ws] = {};
+    for (const name of SHARED_LISTS) {
+      const qs = await db.collection(`sales3/${ws}/${name}`).get();
+      copies[ws][name] = qs.docs.map((d) => ({ ...d.data(), id: d.id }));
+    }
+  }
+  const now = Date.now();
+  const res = consolidateSales(copies, order, now);
+  if (dryRun) return { report: res.report };
+  const written = {};
+  for (const [name, rows] of Object.entries(res.lists)) {
+    for (let i = 0; i < rows.length; i += 400) {
+      const b = db.batch();
+      rows.slice(i, i + 400).forEach((r) => {
+        const { id, ...data } = r;
+        b.set(db.doc(`sales3/${SHARED_WS}/${name}/${id}`), { ...data, id });
+      });
+      await b.commit();
+    }
+    written[name] = rows.length;
+  }
+  const first = order.find((w) => ids.includes(w)) || ids[0];
+  if (first) {
+    const mf = await db.collection(`salesWs/${first}/mFields`).get();
+    const b = db.batch();
+    mf.docs.forEach((d) => b.set(db.doc(`salesWs/${SHARED_WS}/mFields/${d.id}`), d.data()));
+    await b.commit();
+  }
+  await db.doc(`sales3/${SHARED_WS}`).set({ _schema: 3, migratedAt: now, consolidatedAt: now, from: ids, m: {} }, { merge: true });
+  for (const ws of ids) await db.doc(`sales3/${ws}`).set({ sharedAt: now }, { merge: true });
+  return { report: res.report, written };
+}
 var BY = "\u81EA\u52D5\u66F4\u65B0(\u30B5\u30FC\u30D0\u30FC)";
 var WHICH = ["stocks", "customers", "products"];
 function lastScheduledJst(now = /* @__PURE__ */ new Date()) {
@@ -923,7 +1135,7 @@ async function syncBudgetSales(ctx, out) {
 async function purgeDeleted(ctx, now = /* @__PURE__ */ new Date()) {
   const { db } = ctx;
   const out = {};
-  const roots = (await db.collection("sales3").listDocuments()).map((r) => r.id);
+  const roots = await salesRoots(db);
   const lists = [["customers", 2], ["products", 2], ["deals", 30], ["activities", 30], ["quotes", 30], ["trips", 30], ["rideAlongs", 30], ["repairs", 30], ["expos", 30], ["leads", 30], ["members", 30]];
   for (const ws of roots) {
     for (const [name, days] of lists) {
@@ -942,7 +1154,8 @@ async function purgeDeleted(ctx, now = /* @__PURE__ */ new Date()) {
 }
 async function runMasterSync(ctx) {
   const out = [];
-  const wss = ctx.force?.ws ? [ctx.force.ws] : (await ctx.db.collection("sales3").listDocuments()).map((r) => r.id);
+  const roots = await salesRoots(ctx.db);
+  const wss = ctx.force?.ws ? [roots.includes(SHARED_WS) ? SHARED_WS : ctx.force.ws] : roots;
   if (!ctx.force || ctx.force.which !== "sales") for (const ws of wss) await syncCompany(ctx, ws, out);
   if (!ctx.force || ctx.force.which === "sales") await syncBudgetSales(ctx, out);
   try {
@@ -954,8 +1167,11 @@ async function runMasterSync(ctx) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  SHARED_WS,
+  consolidateSalesData,
   dedupeCompany,
   lastScheduledJst,
   purgeDeleted,
-  runMasterSync
+  runMasterSync,
+  salesRoots
 });

@@ -481,6 +481,9 @@ exports.watchLeadReplies = onSchedule(
 
     for (const wsDoc of wsSnap.docs) {
       const wsId = wsDoc.id;
+      // 1つにまとまった後: 一覧(リード・メンバー・得意先・案件・商談記録)は sales3/shared、監視用の設定(leadWatch)は会社の文書
+      const listWs = (wsDoc.data() || {}).sharedAt ? "shared" : wsId;
+      if (wsId === "shared") continue; // 共有の置き場所そのものには監視用の設定が無い
       const norm = (s) => String(s || "").trim().toLowerCase();
 
       // 1) 監視対象(未案件化リードのメール・メンバーのメールボックス)を決める。
@@ -496,11 +499,11 @@ exports.watchLeadReplies = onSchedule(
         mailboxes = [...new Set((lw.mailboxes || []).map(norm).filter(Boolean))];
       } else {
         // 旧形式(インデックス未整備)の互換: 従来どおり全件読んで組み立てる
-        const leadsSnap = await db.collection(`sales3/${wsId}/leads`).get();
+        const leadsSnap = await db.collection(`sales3/${listWs}/leads`).get();
         openLeads = live(leadsSnap)
           .filter(l => l && l.status !== "dealt" && l.email);
         leadEmails = [...new Set(openLeads.map(l => norm(l.email)))];
-        const membersSnap = await db.collection(`sales3/${wsId}/members`).get();
+        const membersSnap = await db.collection(`sales3/${listWs}/members`).get();
         members = live(membersSnap);
         mailboxes = [...new Set(members.map(m => norm(m && m.email)).filter(Boolean))];
       }
@@ -538,12 +541,12 @@ exports.watchLeadReplies = onSchedule(
 
       // 3) 返信があった時だけ leads / members を読む(通常の巡回では届かない)
       if (!openLeads) {
-        const leadsSnap = await db.collection(`sales3/${wsId}/leads`).get();
+        const leadsSnap = await db.collection(`sales3/${listWs}/leads`).get();
         openLeads = live(leadsSnap)
           .filter(l => l && l.status !== "dealt" && l.email);
       }
       if (!members) {
-        const membersSnap = await db.collection(`sales3/${wsId}/members`).get();
+        const membersSnap = await db.collection(`sales3/${listWs}/members`).get();
         members = live(membersSnap);
       }
       // メールボックス(メールアドレス) → 持ち主のメンバーID。担当が名前で
@@ -571,7 +574,7 @@ exports.watchLeadReplies = onSchedule(
       };
 
       // 得意先マスタ（sales3/{会社}/customers、1件=1ドキュメント）
-      const customers = live(await db.collection(`sales3/${wsId}/customers`).get());
+      const customers = live(await db.collection(`sales3/${listWs}/customers`).get());
 
       const batch = db.batch();
       const today = jstToday();
@@ -586,11 +589,11 @@ exports.watchLeadReplies = onSchedule(
             address: lead.address || "", tel: lead.tel || "", memberId: memberId || null,
           };
           customers.push(customer);
-          batch.set(db.doc(`sales3/${wsId}/customers/${customer.id}`), { ...customer, ...stamp() });
+          batch.set(db.doc(`sales3/${listWs}/customers/${customer.id}`), { ...customer, ...stamp() });
         }
         const dealId = newId("deal");
         // 案件を作成
-        batch.set(db.doc(`sales3/${wsId}/deals/${dealId}`), {
+        batch.set(db.doc(`sales3/${listWs}/deals/${dealId}`), {
           ...stamp(),
           id: dealId,
           title: [lead.group, lead.company].filter(Boolean).join("・") || (lead.company || "展示会リード"),
@@ -604,7 +607,7 @@ exports.watchLeadReplies = onSchedule(
         });
         // 商談記録（展示会）
         const actId = newId("act");
-        batch.set(db.doc(`sales3/${wsId}/activities/${actId}`), {
+        batch.set(db.doc(`sales3/${listWs}/activities/${actId}`), {
           ...stamp(),
           id: actId, dealId, memberId,
           date: lead.exchangeDate || today,
@@ -612,7 +615,7 @@ exports.watchLeadReplies = onSchedule(
           summary: lead.memo || "展示会リードの返信を受信（自動案件化）",
         });
         // リードを案件化済みに
-        batch.update(db.doc(`sales3/${wsId}/leads/${lead.id}`), { status: "dealt", dealId, ...stamp() });
+        batch.update(db.doc(`sales3/${listWs}/leads/${lead.id}`), { status: "dealt", dealId, ...stamp() });
         totalConverted++;
       }
 
@@ -814,6 +817,23 @@ exports.syncMasterSheets = onSchedule(
     } catch (e) {
       console.error("[purgeDeleted] failed:", e && e.message);
     }
+  }
+);
+
+// 商談管理のデータを1つにまとめる(オーナーのみ)。dryRun=true は件数の報告だけ
+exports.consolidateSales = onCall(
+  { secrets: [GMAIL_SA_KEY], memory: "1GiB", timeoutSeconds: 540 },
+  async (req) => {
+    if (!req.auth) throw new HttpsError("unauthenticated", "ログインが必要です");
+    const email = String(req.auth.token.email || "").toLowerCase();
+    const roles = (await admin.firestore().doc("globalBudget/userRoles").get()).data() || {};
+    const owner = email === "sarazawa@n-airmore.com" || (roles.map || {})[email] === "owner";
+    if (!owner) throw new HttpsError("permission-denied", "オーナーだけが実行できます");
+    const dryRun = !!(req.data && req.data.dryRun);
+    const order = ["エアモア", "MOBILY", "ニモマケズHD"];
+    const res = await masterSync.consolidateSalesData({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, sheets: _saSheetReader() }, order, dryRun);
+    if (!dryRun) console.log("[consolidateSales]", email, JSON.stringify(res.written || {}));
+    return res;
   }
 );
 
