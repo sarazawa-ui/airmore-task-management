@@ -587,6 +587,15 @@ var prodKey = (p) => {
   const k = codeKey(p.code);
   return k ? "c:" + k : "";
 };
+function stripUndefined(v) {
+  if (Array.isArray(v)) return v.map((x) => x === void 0 ? null : stripUndefined(x));
+  if (v && typeof v === "object") {
+    const o = {};
+    for (const [k, x] of Object.entries(v)) if (x !== void 0) o[k] = stripUndefined(x);
+    return o;
+  }
+  return v;
+}
 function consolidateSales(copies, order, now = Date.now()) {
   const wss = [...order.filter((w) => w in copies), ...Object.keys(copies).filter((w) => !order.includes(w))];
   const ord = (ws) => wss.indexOf(ws);
@@ -612,7 +621,7 @@ function consolidateSales(copies, order, now = Date.now()) {
     for (const [k, srcs] of groups) {
       const m = mergeCopies(srcs, now);
       if (!m) continue;
-      out.push(m.doc);
+      out.push(stripUndefined(m.doc));
       srcs.forEach((s) => idMap[s.ws][name][s.doc.id] = m.doc.id);
       if (k.startsWith("c:")) byCode[name].set(k.slice(2), m.doc);
     }
@@ -674,8 +683,8 @@ function consolidateSales(copies, order, now = Date.now()) {
           if (c && c.code) d.customerCode = c.code;
         }
       }
-      if (name === "deals" || name === "quotes" || name === "rideAlongs" || name === "repairs") d.items = remapRows(name, "products", m.src.items, d.items);
-      out.push(d);
+      for (const f of ["items", "lines"]) if (d[f] !== void 0) d[f] = remapRows(name, "products", m.src[f], d[f]);
+      out.push(stripUndefined(d));
     }
     lists[name] = out;
     rep(name).out = out.length;
