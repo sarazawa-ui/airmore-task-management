@@ -1,0 +1,39 @@
+name: 反映前バックアップ
+
+# 本番に反映する(main にマージする)前に、全データを Google ドライブへバックアップする。
+# 万一、反映した版でデータが消えたり壊れたりしても「Hittatsu 復元」でこの時点に戻せる。
+# 保存先・ファイル名の形式は毎晩のバックアップと同じ(復元の一覧にそのまま出る)。
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# 同じ PR に続けて変更が入ったときは、古いほうを止めて最新の内容でだけ取る
+concurrency:
+  group: predeploy-backup-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  backup:
+    # 下書きの PR と、外部から送られた PR(秘密の鍵を使えない)では動かさない
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 依存パッケージをインストール
+        working-directory: backup
+        run: npm install --no-audit --no-fund
+
+      - name: バックアップを実行
+        working-directory: backup
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          KEEP_DAYS: "90"
+        run: node backup.js

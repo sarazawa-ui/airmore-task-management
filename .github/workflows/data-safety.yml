@@ -1,0 +1,24 @@
+name: データ保全の確認
+
+# データを消したり上書きしたりする恐れのある変更が含まれていないかを調べる。
+# 見つかったら不合格にして、自動では本番に反映しない。
+# 内容を確認して問題なければ、PR にラベル「データ変更OK」を付けると合格になる。
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 削除・上書きにつながる変更を探す
+        env:
+          APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'データ変更OK') && '1' || '0' }}
+        run: node .github/scripts/check-data-safety.mjs "${{ github.event.pull_request.base.sha }}"
