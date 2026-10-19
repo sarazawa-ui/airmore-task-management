@@ -1,0 +1,33 @@
+name: 画面の自動確認とデータ保全テスト
+
+# 本番に反映する(main にマージする)前に、PR の版で次の2つを確かめる。
+# ・全画面を開いて、エラーや真っ白な画面がないか
+# ・今の本番の版で保存したデータを PR の版で開いても、記録が1件も消えないか
+# どちらも localhost で開くためクラウドにはつながらず、本番のデータには触れない。
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 準備(ブラウザを入れる)
+        working-directory: .github/e2e
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: 画面の自動確認(全画面を開いてエラーや真っ白がないか)
+        run: node .github/e2e/smoke.mjs .
+      - name: データ保全テスト(今の本番の版で保存したデータが PR の版で消えないか)
+        run: |
+          git worktree add "$RUNNER_TEMP/base" "${{ github.event.pull_request.base.sha }}"
+          node .github/e2e/data-keep.mjs save "$RUNNER_TEMP/base" "$RUNNER_TEMP/keep.json"
+          node .github/e2e/data-keep.mjs verify . "$RUNNER_TEMP/keep.json"

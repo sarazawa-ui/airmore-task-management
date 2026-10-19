@@ -1,0 +1,104 @@
+name: 反映後の確認
+
+# main にマージされて本番に反映されたあと、公開中の Hittatsu を実際に開いて確かめる。
+# 問題があれば、その反映を自動で取り消して(1つ前の版に戻して)、Hittatsuお知らせスペースへ知らせる。
+# 取り消しの記録は main に「Revert ...」として残るので、直してからもう一度反映すればよい。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 続けて反映されたときは、順番に1つずつ確かめる(取り消しが重ならないように)
+concurrency:
+  group: post-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GOOGLE_CHAT_WEBHOOK: ${{ secrets.GOOGLE_CHAT_WEBHOOK }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 準備(ブラウザを入れる)
+        working-directory: .github/e2e
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: 反映したファイルで全画面を確認
+        id: files
+        continue-on-error: true
+        run: node .github/e2e/smoke.mjs .
+
+      - name: 公開中のサイトが新しい版に切り替わるのを待つ
+        id: wait
+        run: |
+          SITE=$(gh api "repos/${{ github.repository }}/pages" --jq .html_url 2>/dev/null || true)
+          [ -n "$SITE" ] || SITE="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          echo "site=$SITE" >> "$GITHUB_OUTPUT"
+          WANT=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("version.json","utf8")).v)')
+          for i in $(seq 1 40); do
+            GOT=$(curl -fsS "${SITE%/}/version.json?t=$(date +%s)" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).v)}catch{console.log("")}})')
+            if [ "$GOT" = "$WANT" ]; then echo "公開中の版が $WANT に切り替わりました"; echo "ready=1" >> "$GITHUB_OUTPUT"; exit 0; fi
+            sleep 15
+          done
+          echo "10分待っても公開中の版が切り替わりませんでした(公開中: ${GOT:-不明} / 期待: $WANT)"
+          echo "ready=0" >> "$GITHUB_OUTPUT"
+
+      - name: 公開中のサイトを開いて確認
+        id: live
+        if: steps.wait.outputs.ready == '1'
+        continue-on-error: true
+        run: node .github/e2e/live-check.mjs "${{ steps.wait.outputs.site }}"
+
+      - name: 問題がなければ記録して終わる
+        if: steps.files.outcome == 'success' && (steps.wait.outputs.ready != '1' || steps.live.outcome == 'success')
+        run: |
+          if [ "${{ steps.wait.outputs.ready }}" != "1" ]; then
+            node .github/e2e/notify.mjs "⚠ Hittatsu の反映後の確認: 公開サイトが新しい版に切り替わるのを確認できませんでした。反映したファイル自体の確認は合格しています。
+          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            echo "反映後の確認はすべて合格しました。"
+          fi
+
+      - name: 問題があれば反映を取り消す
+        if: steps.files.outcome == 'failure' || steps.live.outcome == 'failure'
+        run: |
+          MSG=$(git log -1 --format=%s "$GITHUB_SHA")
+          RUN="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          # 取り消し自体が問題を起こしている場合に取り消しを繰り返さないよう、取り消しの反映は取り消さない
+          if [[ "$MSG" == Revert* ]]; then
+            node .github/e2e/notify.mjs "❌ Hittatsu の反映後の確認で問題が見つかりました。直前の反映が取り消しのため、自動では戻していません。至急確認してください。
+          $RUN"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch -q origin main && git checkout -q -B main origin/main
+          PARENTS=$(git rev-list --parents -n 1 "$GITHUB_SHA" | wc -w)
+          if [ "$PARENTS" -gt 2 ]; then OPT="-m 1"; else OPT=""; fi
+          if git revert --no-edit $OPT "$GITHUB_SHA" && git push origin main; then
+            # 取り消しを公開サイトにすぐ反映させる
+            gh api -X POST "repos/${{ github.repository }}/pages/builds" >/dev/null 2>&1 || true
+            node .github/e2e/notify.mjs "↩ Hittatsu の反映後の確認で問題が見つかったため、反映を自動で取り消しました(1つ前の版に戻しました)。
+          取り消した反映: $MSG
+          詳細: $RUN"
+          else
+            git revert --abort 2>/dev/null || true
+            node .github/e2e/notify.mjs "❌ Hittatsu の反映後の確認で問題が見つかりましたが、自動での取り消しができませんでした。至急確認してください。
+          問題の反映: $MSG
+          詳細: $RUN"
+          fi
+          exit 1

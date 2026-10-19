@@ -1,0 +1,9 @@
+{
+  "name": "hittatsu-e2e",
+  "private": true,
+  "type": "module",
+  "description": "本番に反映する前後の画面の自動確認とデータ保全テスト",
+  "dependencies": {
+    "playwright": "1.56.1"
+  }
+}

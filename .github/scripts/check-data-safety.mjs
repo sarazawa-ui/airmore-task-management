@@ -27,6 +27,8 @@ const WATCH_FILES = [
 const CODE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 // ビルド済み(1行に圧縮された)ファイルは中身を読んでも判断できないので、書き方の検査はしない
 const BUILT = /^(assets|vendor)\/|\.bundle\.js$|\.min\.js$/;
+// 確認用のテストや CI の仕組みは本番では動かないので、書き方の検査はしない
+const NOT_APP = /^(tests|\.github)\//;
 const PATTERNS = [
   { re: /\bdeleteDoc\s*\(/, why: "データの削除(deleteDoc)" },
   { re: /\bdeleteField\s*\(/, why: "項目の削除(deleteField)" },
@@ -46,7 +48,7 @@ const hits = [];
 for (const f of files) {
   const w = WATCH_FILES.find((x) => x.re.test(f));
   if (w) hits.push({ where: f, why: w.why });
-  if (!CODE.test(f) || BUILT.test(f) || !existsSync(f)) continue;
+  if (!CODE.test(f) || BUILT.test(f) || NOT_APP.test(f) || !existsSync(f)) continue;
   const lines = readFileSync(f, "utf8").split("\n");
   // 追加された行の行番号を差分から読む
   const diff = git("diff", "-U0", `${base}...HEAD`, "--", f);
