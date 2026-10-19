@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1792390783445";</script>
+<script>window.__HITTATSU_BUILD__ = "1792391494964";</script>
 <script>
 // プロジェクト管理を単体で開いたとき(以前の招待メール・タスク通知のリンク、ブックマークなど)は、
 // 現行の Hittatsu の画面(左メニュー付き)のプロジェクト管理へ移す。現行の画面の中(iframe)では何もしない
@@ -44,7 +44,7 @@
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-messaging-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-storage-compat.js"></script>
 <!-- 文字単位の同時編集の共通の仕組み(src/collab → npm run build:collab) -->
-<script src="vendor/hittatsu-collab.js?v=1792390783445"></script>
+<script src="vendor/hittatsu-collab.js?v=1792391494964"></script>
 <style>
 :root{
   --primary:#1c5cab;
@@ -103,7 +103,7 @@ nav button.active{color:var(--primary);border-bottom-color:var(--primary);font-w
   #personalContent table{font-size:11.5px;min-width:480px}
   #personalContent th,#personalContent td{padding:5px 6px !important}
 }
-main{padding:20px 24px;max-width:1480px;margin:0 auto}
+main{padding:20px 24px;max-width:1480px;margin:0 auto;--mainPadT:20px}
 .view{display:none}
 .view.active{display:block}
 h2{font-size:20px;color:var(--navy-900);font-weight:700;margin:0 0 4px;letter-spacing:-.01em}
@@ -370,12 +370,22 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .rt-editor:focus{outline:none;border-color:var(--primary-light)}
 /* 会議メモ：ページスクロール方式。装飾ツールバーはヘッダー直下に固定表示。
    （内部スクロール(max-height)方式は、更新時のスクロール位置ジャンプと
-     テキストボックス外でホイールが効かない問題を生むため廃止） */
-.meeting-editor .rt-toolbar{position:sticky;top:calc(var(--hdrH, 58px) + 2px);z-index:5;box-shadow:0 2px 4px rgba(44,62,80,.08);border-radius:5px;border-bottom:1px solid var(--border)}
+     テキストボックス外でホイールが効かない問題を生むため廃止）
+   スクロールするのは main(ヘッダーの下の領域)なので、位置は main の上端が基準。
+   以前はヘッダーの高さ(--hdrH)を足していたが、その値がログイン前の0のままだったり、
+   サイドパネルの切り替え(=画面幅の変化)で実際の高さに変わったりして、位置がずれていた。
+   main の上余白(--mainPadT)だけ戻して、上端にぴったり付ける */
+.meeting-editor .rt-toolbar{position:sticky;top:calc(-1 * var(--mainPadT, 20px));z-index:5;box-shadow:0 2px 4px rgba(12,35,64,.08);border-radius:5px;border-bottom:1px solid var(--border)}
 /* 会議メモ 表形式（担当・議題・議事録） */
-.meeting-rows-wrap{overflow-x:auto;margin-top:6px}
-.meeting-rows{display:grid;grid-template-columns:110px 220px minmax(0,1.4fr) minmax(0,1fr) 40px;min-width:860px;border:1px solid var(--border);border-radius:6px;overflow:hidden;background:#fff}
-.meeting-rows .mr-head{background:var(--primary-light);color:var(--primary-dark);font-size:11px;font-weight:700;padding:7px 9px;border-bottom:1px solid var(--border)}
+.meeting-rows-wrap{margin-top:6px;container-type:inline-size}
+/* 表が入りきらない幅のときだけ横スクロールにする。横スクロールの枠があると、
+   列名の固定表示(縦スクロールへの追従)が効かないため、入りきる幅では枠を作らない */
+.meeting-rows-scroll{overflow-x:auto}
+@container (min-width: 860px){ .meeting-rows-scroll{overflow:visible} }
+/* overflow:clip は角丸の外を隠すだけで、スクロールの枠にはならない(列名の固定が効く) */
+.meeting-rows{display:grid;grid-template-columns:110px 220px minmax(0,1.4fr) minmax(0,1fr) 40px;min-width:860px;border:1px solid var(--border);border-radius:6px;overflow:hidden;overflow:clip;background:#fff}
+/* 列名はスクロールしてもツールバーのすぐ下に残す(--mtbH = ツールバーの高さ。描画時に測る) */
+.meeting-rows .mr-head{background:var(--primary-light);color:var(--primary-dark);font-size:11px;font-weight:700;padding:7px 9px;border-bottom:1px solid var(--border);position:sticky;top:calc(var(--mtbH, 39px) - var(--mainPadT, 20px));z-index:4}
 .meeting-rows .mr-cell{border-bottom:1px solid var(--border-soft);border-right:1px solid var(--border-soft);min-width:0}
 .meeting-rows .mr-cell:nth-child(5n){border-right:none}
 .meeting-rows input.mr-inp{width:100%;border:none;padding:8px;font:inherit;font-size:12.5px;box-sizing:border-box;background:transparent}
@@ -423,7 +433,7 @@ tr.row-overdue.goal-tree-row > td{background:#FDEDEC !important}
 .meeting-editor.locked input:disabled,.meeting-editor.locked textarea:disabled{background:#fafafa;color:#333;-webkit-text-fill-color:#333}
 /* 印刷（PDF保存）: 別ウィンドウを開かず、印刷のときだけ専用の内容を見せる */
 #meetingPrintArea{display:none}
-.mp-doc{font-size:11px;color:#000}
+.mp-doc{font-size:11px;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .mp-title{font-size:17px;margin:0 0 10px;border-bottom:2px solid #333;padding-bottom:6px}
 .mp-info{width:100%;border-collapse:collapse;margin-bottom:10px}
 .mp-info th,.mp-info td{border:1px solid #999;padding:4px 7px;text-align:left;font-size:11px}
@@ -980,7 +990,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
   nav button{padding:10px 12px;font-size:12px;white-space:nowrap;flex:0 0 auto}
 
   /* Main padding compact + safe area bottom (iOS下部に隠れない様に) */
-  main{padding:12px 10px;padding-bottom:calc(24px + env(safe-area-inset-bottom,0px))}
+  main{padding:12px 10px;padding-bottom:calc(24px + env(safe-area-inset-bottom,0px));--mainPadT:12px}
 
   /* Headings */
   h2{font-size:15px}
@@ -1092,7 +1102,7 @@ header.app-header{padding:10px 22px;display:flex;align-items:center;gap:14px}
   .app-header .hdr-clock{display:none}
   .app-header h1{font-size:11px}
   nav button{padding:9px 10px;font-size:11px}
-  main{padding:10px 8px}
+  main{padding:10px 8px;--mainPadT:10px}
   .kpi .val{font-size:20px;padding:12px 4px}
   .kpi-mini{flex-direction:column;gap:6px;align-items:flex-start}
   .kpi-mini > div{width:100%}
@@ -3332,7 +3342,7 @@ function renderMeetings(){
               </select>
             ` : ''}
           </div>
-          <div class="meeting-rows-wrap">
+          <div class="meeting-rows-wrap"><div class="meeting-rows-scroll">
             <div class="meeting-rows">
               <div class="mr-head">担当</div><div class="mr-head">議題</div><div class="mr-head">議事録</div><div class="mr-head">決定事項</div><div class="mr-head"></div>
               ${_meetingDisplayRows(selected).map(r => `
@@ -3343,7 +3353,7 @@ function renderMeetings(){
                 <div class="mr-cell mr-del-cell">${locked?'':`<button class="mr-ins" data-row-insert="${escapeHtml(r.rid)}" title="この行の下に行を挿入">＋</button><button class="mr-del" data-row-del="${escapeHtml(r.rid)}" title="この行を削除">✕</button>`}</div>
               `).join('')}
             </div>
-          </div>
+          </div></div>
           <button class="btn sm ghost" data-row-add style="margin-top:6px">＋ 行を追加</button>
         </div>
       </div>
@@ -3486,6 +3496,7 @@ function renderMeetings(){
   //   - focus 時点の内容を記録し、ユーザーが実際に変更した時だけ保存（リモート反映の巻き戻し防止）
   //   - 入力中も自動保存（デバウンス）→ 他端末へ早く反映＆未保存テキスト消失の窓を縮小
   //   - blur 時に確定保存し、編集中に保留していた他端末の更新を反映（flush）
+  _watchMeetingToolbarH(list);
   // ツールバー操作の対象：最後にフォーカスした議事録エディタ（無ければ先頭）
   let _activeMinutesDiv = null;
   const _targetEditor = () => (_activeMinutesDiv && _activeMinutesDiv.isConnected)
@@ -3723,6 +3734,35 @@ function renderMeetings(){
   });
 }
 
+// 会議メモの装飾ツールバーの高さを --mtbH に反映(列名をツールバーのすぐ下に固定するため)
+let _meetingTbObserver = null;
+function _watchMeetingToolbarH(list){
+  const tb = list.querySelector('.meeting-editor .rt-toolbar');
+  const ed = tb && tb.closest('.meeting-editor');
+  if(_meetingTbObserver){ _meetingTbObserver.disconnect(); _meetingTbObserver = null; }
+  if(!tb || !ed) return;
+  const apply = () => { if(tb.offsetHeight) ed.style.setProperty('--mtbH', tb.offsetHeight + 'px'); };
+  apply();
+  if(typeof ResizeObserver === 'function'){
+    _meetingTbObserver = new ResizeObserver(apply);
+    _meetingTbObserver.observe(tb);
+  }
+}
+
+// プロジェクト化・タスク化した部分の色(淡い背景×濃い文字。文字色だけだと目立たないため背景も付ける)
+//   プロジェクト = ネイビー(--navy-100 / --navy-700)、タスク = グリーン(受注バッジと同じ #e3f2e3 / --good-ink)
+const MEETING_MARK = {
+  project: { bg: '#dbe7f5', fg: '#14406e' },
+  task:    { bg: '#e3f2e3', fg: '#067806' },
+};
+// いまの選択範囲に印(背景色＋文字色)を付ける
+function _markMeetingSelection(mark){
+  try{ document.execCommand('styleWithCSS', false, true); }catch(e){}
+  document.execCommand('hiliteColor', false, mark.bg);
+  document.execCommand('foreColor', false, mark.fg);
+  try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
+}
+
 // 会議メモ右クリックの選択範囲保持 + 色付け
 let _meetingCtxSavedRange = null;
 let _meetingCtxEditorDiv = null;
@@ -3740,7 +3780,7 @@ function _editorRefOf(div){
 }
 
 // 選択範囲に色を付けた「着色後HTML」を計算して返す（表示は元に戻す＝まだ着色しない）。
-function _computeMeetingColoredHtml(color){
+function _computeMeetingColoredHtml(mark){
   if(!_meetingCtxSavedRange || !_meetingCtxEditorDiv) return null;
   const div = _meetingCtxEditorDiv;
   if(!div.isConnected) return null;
@@ -3752,9 +3792,7 @@ function _computeMeetingColoredHtml(color){
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(_meetingCtxSavedRange);
-    try{ document.execCommand('styleWithCSS', false, true); }catch(e){}
-    document.execCommand('foreColor', false, color);
-    try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
+    _markMeetingSelection(mark);
     const colored = div.innerHTML;
     div.innerHTML = prev; // 確定まで着色しない（表示を戻す）
     return colored;
@@ -3775,7 +3813,7 @@ function _revertMeetingGoalColor(goalId){
   _meetingColorGoalRevert = null;
   MT3.applyToken(token);
 }
-function _applyColorToSavedMeetingRange(color, label){
+function _applyColorToSavedMeetingRange(mark, label){
   if(!_meetingCtxSavedRange || !_meetingCtxEditorDiv) return;
   try{
     // エディタや選択範囲が再描画等で切り離されていたら着色できない → 中止（誤動作防止）
@@ -3787,10 +3825,8 @@ function _applyColorToSavedMeetingRange(color, label){
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(_meetingCtxSavedRange);
-    // CSS の color で確実に着色（font 要素のゆれを回避）
-    try{ document.execCommand('styleWithCSS', false, true); }catch(e){}
-    document.execCommand('foreColor', false, color);
-    try{ document.execCommand('styleWithCSS', false, false); }catch(e){}
+    // CSS の color / background-color で確実に着色（font 要素のゆれを回避）
+    _markMeetingSelection(mark);
     // 編集内容を反映(文字単位の同期で保存される)
     if(_meetingCtxEditorDiv._yb) _meetingCtxEditorDiv._yb.push();
   }catch(e){
@@ -3828,7 +3864,7 @@ function showMeetingCtxMenu(x, y, text){
     e.stopPropagation();
     // プロジェクトは即時生成されるため着色も即時。生成したプロジェクトが削除されたら着色を取消す。
     const ref = _editorRefOf(_meetingCtxEditorDiv);
-    _applyColorToSavedMeetingRange('#1976D2', 'プロジェクト化');
+    _applyColorToSavedMeetingRange(MEETING_MARK.project, 'プロジェクト化');
     const newId = createProjectFromMeetingText(text);
     // 取り消し用: 着色した後の内容 → 着色する前の内容
     const token = (ref && ref.before != null && newId) ? MT3.prepare(ref.mid, ref.key, MT3.textOf(ref.mid, ref.key), ref.before) : null;
@@ -3840,7 +3876,7 @@ function showMeetingCtxMenu(x, y, text){
     // ★ タスクは編集モーダルで確定（保存）するまで着色しない。
     //   着色後のHTMLだけ用意し、保存時に適用／キャンセル・削除時は破棄。
     const ref = _editorRefOf(_meetingCtxEditorDiv);
-    const coloredHtml = _computeMeetingColoredHtml('#2E7D32');
+    const coloredHtml = _computeMeetingColoredHtml(MEETING_MARK.task);
     _meetingCtxSavedRange = null; _meetingCtxEditorDiv = null;
     createTaskFromMeetingText(text);
     // 着色は保存したときに適用(準備した時点の位置を覚えておき、その部分が変わっていなければ適用)
@@ -7542,15 +7578,6 @@ function updateHeaderClock(){
 updateHeaderClock();
 setInterval(updateHeaderClock, 1000);
 
-// ヘッダー実高を CSS 変数 --hdrH に反映（sticky ツールバー等の位置基準に使用）
-function _updateHdrH(){
-  try{
-    const h = document.querySelector('header');
-    if(h) document.documentElement.style.setProperty('--hdrH', h.offsetHeight + 'px');
-  }catch(e){}
-}
-window.addEventListener('resize', _updateHdrH);
-_updateHdrH();
 
 function maybeNotifyOnComplete(t){
   if(!S.ui.notifyOnComplete) return;
