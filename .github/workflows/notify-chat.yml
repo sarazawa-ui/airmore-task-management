@@ -1,0 +1,44 @@
+name: 更新のお知らせ
+
+# 本番に反映して「反映後の確認」が合格したら、Hittatsuお知らせスペースへ「アプリを更新しました」と知らせる。
+# 確認が終わってから送るので、知らせが届いた時点で公開中のサイトはすでに新しい版になっている。
+# 確認で問題が見つかって自動で取り消した場合は、こちらは送らず、取り消しの知らせだけが届く。
+# 送り先の URL は GitHub の秘密の設定 GOOGLE_CHAT_WEBHOOK に入れる(このリポジトリは公開のため、ファイルには書かない)。
+on:
+  workflow_run:
+    workflows: ["反映後の確認"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  notify:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: スペースへ知らせる
+        env:
+          GOOGLE_CHAT_WEBHOOK: ${{ secrets.GOOGLE_CHAT_WEBHOOK }}
+          SUBJECT: ${{ github.event.workflow_run.head_commit.message }}
+        run: |
+          # 変更の題名(1行目)から末尾の「(#12)」のような PR 番号を外す
+          TITLE=$(printf '%s\n' "$SUBJECT" | head -n 1 | sed -E 's/ *\(#[0-9]+\)$//')
+          WHEN=$(TZ=Asia/Tokyo date '+%-m/%-d %H:%M')
+          # 自動確認などの仕組み(.github)だけの変更は、アプリの画面が変わらないことを添える
+          if git diff --name-only HEAD~1 HEAD | grep -qv '^\.github/'; then
+            TEXT="【☑Hittatsu】アプリを更新しました($WHEN)
+          $TITLE
+          画面を開き直すと新しい版になります。"
+          else
+            TEXT="【☑Hittatsu】自動確認の仕組みを更新しました($WHEN)
+          $TITLE
+          アプリの画面は変わりません。"
+          fi
+          node .github/e2e/notify.mjs "$TEXT"
