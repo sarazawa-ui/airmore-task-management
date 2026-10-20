@@ -50,11 +50,18 @@ try {
   const files = await listBackups(drive);
   const limit = Date.now() - KEEP_DAYS * 24 * 60 * 60 * 1000;
   const old = files.slice(1).filter((f) => new Date(f.createdTime).getTime() < limit);
+  // 古い分を消せなくても、今回のバックアップは保存済みなので失敗にしない(消せなかったものは次回また試す)
+  let removed = 0;
   for (const f of old) {
-    await deleteFile(drive, f.id);
-    console.log(`  保持期間(${KEEP_DAYS}日)を過ぎたため削除: ${f.name}`);
+    try {
+      await deleteFile(drive, f.id);
+      removed++;
+      console.log(`  保持期間(${KEEP_DAYS}日)を過ぎたため削除: ${f.name}`);
+    } catch (e) {
+      console.warn(`  ⚠ 古いバックアップを削除できませんでした(${f.name}): ${e?.message || e}`);
+    }
   }
-  console.log(`完了。バックアップ ${files.length - old.length} 件を保持しています。（合計 ${secs()}秒）`);
+  console.log(`完了。バックアップ ${files.length - removed} 件を保持しています。（合計 ${secs()}秒）`);
 } catch (e) {
   // 原因が一目で分かるようにメッセージを目立たせて出す
   console.error("\n====== バックアップに失敗しました ======");
