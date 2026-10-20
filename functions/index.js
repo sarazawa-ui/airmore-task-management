@@ -16,7 +16,7 @@
 
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onDocumentWritten } = require("firebase-functions/v2/firestore");
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { setGlobalOptions } = require("firebase-functions/v2");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
@@ -930,3 +930,145 @@ exports.syncMasterSheetsNow = onCall(
     return { results: _explain(out) };
   }
 );
+
+// ============================================================
+// Hittatsuボット(Googleチャット): 「Hittatsuお知らせ」スペースで @Hittatsu Bot 宛てに送られたバグ報告を受け付ける
+//   受け付けた報告は非公開リポジトリ sarazawa-ui/Hittatsu に課題(issue、題名の先頭が【チャット報告】)として登録する。
+//   Claude が定期的に確認して修正を用意し、本番への反映は Yuta さんの OK のあと。
+//   GitHub の鍵は secrets の GITHUB_ISSUE_TOKEN(Hittatsu リポジトリの Issues 読み書きだけを許可したもの)。
+//   Google からの呼び出しかどうかは Authorization ヘッダーの署名付きトークンで確かめる
+//   (Chat API の構成画面の「認証対象」が HTTP エンドポイント URL・プロジェクト番号のどちらでも受け付ける)。
+//   同じ投稿が再送されても課題を二重に作らないよう、受付の記録を chatBot/reports/items/{投稿ID} に残す。
+// ============================================================
+const GITHUB_ISSUE_TOKEN = defineSecret("GITHUB_ISSUE_TOKEN");
+const BOT_URL = "https://asia-northeast1-airmore-task-management-app.cloudfunctions.net/hittatsuChatBot";
+const BUG_REPO = "sarazawa-ui/Hittatsu";
+const CHAT_ISSUER = "chat@system.gserviceaccount.com";
+const ADDON_SA = /^service-\d+@gcp-sa-gsuiteaddons\.iam\.gserviceaccount\.com$/;
+const _authClient = new google.auth.OAuth2();
+let _projectNumber;
+async function _numericProjectId() {
+  if (_projectNumber) return _projectNumber;
+  const r = await fetch("http://metadata.google.internal/computeMetadata/v1/project/numeric-project-id", { headers: { "Metadata-Flavor": "Google" } });
+  _projectNumber = (await r.text()).trim();
+  return _projectNumber;
+}
+async function verifyChatRequest(authHeader) {
+  const m = /^Bearer\s+(\S+)$/.exec(authHeader || "");
+  if (!m) return false;
+  const token = m[1];
+  try {
+    const claims = JSON.parse(Buffer.from(token.split(".")[1] || "", "base64url").toString());
+    if (claims.iss === CHAT_ISSUER) {
+      // 認証対象 = プロジェクト番号: Chat 専用の鍵で署名されたトークン
+      const certs = await (await fetch("https://www.googleapis.com/service_accounts/v1/metadata/x509/" + CHAT_ISSUER)).json();
+      await _authClient.verifySignedJwtWithCertsAsync(token, certs, await _numericProjectId(), [CHAT_ISSUER]);
+      return true;
+    }
+    // 認証対象 = HTTP エンドポイント URL: Google が署名した ID トークン
+    const t = (await _authClient.verifyIdToken({ idToken: token, audience: BOT_URL })).getPayload();
+    return !!t.email_verified && (t.email === CHAT_ISSUER || ADDON_SA.test(t.email || ""));
+  } catch (e) {
+    console.warn("[hittatsuChatBot] token rejected:", e && e.message);
+    return false;
+  }
+}
+
+// 従来の Chat アプリ形式と、Workspace アドオン形式のどちらの呼び出しも同じ形にそろえる
+function parseChatEvent(body) {
+  if (body && body.chat) {
+    const c = body.chat;
+    const p = c.messagePayload || c.addedToSpacePayload || {};
+    const kind = c.messagePayload ? "MESSAGE" : c.addedToSpacePayload ? "ADDED_TO_SPACE" : "OTHER";
+    return { addon: true, kind, message: p.message || null, space: p.space || (p.message && p.message.space) || null, user: c.user || null };
+  }
+  return { addon: false, kind: (body && body.type) || "OTHER", message: (body && body.message) || null, space: (body && body.space) || null, user: (body && body.user) || null };
+}
+function chatReply(ev, text) {
+  if (ev.addon) return { hostAppDataAction: { chatDataAction: { createMessageAction: { message: { text } } } } };
+  return { text };
+}
+
+const BOT_HELP =
+  "Hittatsu Bot です。Hittatsu の不具合は、このスペースで「@Hittatsu Bot」を付けて次のように送ってください。\n" +
+  "【バグ報告】\n・画面:\n・日時:\n・行った操作:\n・起きたこと:\n・本来の動き:\n・再現するか:\n・使用端末:\n・緊急度:\n" +
+  "スクリーンショットも添付してください。受け付けると受付番号をお返しします。";
+const isBugReport = (t) => /バグ|不具合|エラー|おかしい|動かない/.test(t);
+
+function chatThreadUrl(message) {
+  const m = /^spaces\/([^/]+)\/threads\/([^/]+)$/.exec((message && message.thread && message.thread.name) || "");
+  return m ? `https://chat.google.com/room/${m[1]}/${m[2]}` : "";
+}
+function bugIssue(ev, text) {
+  const msg = ev.message || {};
+  const who = (msg.sender && msg.sender.displayName) || (ev.user && ev.user.displayName) || "不明";
+  const at = msg.createTime ? new Date(msg.createTime) : new Date();
+  const jst = new Date(at.getTime() + 9 * 3600e3).toISOString().slice(0, 16).replace("T", " ");
+  const lines = text.split("\n").map((s) => s.replace(/^【バグ報告】|^[・\s]+/g, "").trim()).filter((s) => s);
+  // 題名は「起きたこと」の行を優先し、なければ最初の行
+  const what = lines.find((s) => /^起きたこと\s*[:：]\s*\S/.test(s));
+  const first = (what ? what.replace(/^起きたこと\s*[:：]\s*/, "") : lines[0]) || "(本文なし)";
+  const files = (msg.attachment || []).map((a) => a.contentName || a.name).filter(Boolean);
+  const url = chatThreadUrl(msg);
+  return {
+    title: "【チャット報告】" + first.slice(0, 60),
+    body: [
+      `報告者: ${who}`,
+      `日時: ${jst}(日本時間)`,
+      ...(url ? [`スレッド: ${url}`] : []),
+      files.length ? `添付: ${files.join("、")}(画像はスレッドで確認)` : "添付: なし",
+      "",
+      "### 報告内容",
+      "```",
+      text.replace(/```/g, "ʼʼʼ"),
+      "```",
+      "",
+      "---",
+      "Googleチャット「Hittatsuお知らせ」スペースの Hittatsu Bot が自動で登録しました。本番への反映は Yuta さんの OK のあとです。",
+    ].join("\n"),
+  };
+}
+async function createBugIssue(issue) {
+  const r = await fetch(`https://api.github.com/repos/${BUG_REPO}/issues`, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + String(GITHUB_ISSUE_TOKEN.value() || "").trim(),
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "hittatsu-chat-bot",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(issue),
+  });
+  if (!r.ok) throw new Error(`GitHubへの登録に失敗しました(${r.status}) ${(await r.text()).slice(0, 200)}`);
+  return (await r.json()).number;
+}
+
+async function handleChatEvent(ev, deps) {
+  if (ev.kind === "ADDED_TO_SPACE") return chatReply(ev, BOT_HELP);
+  if (ev.kind !== "MESSAGE" || !ev.message) return {};
+  const text = String(ev.message.argumentText || ev.message.text || "").replace(/@Hittatsu ?Bot/gi, "").trim();
+  if (!isBugReport(text) || text.replace(/【バグ報告】/, "").trim().length < 8) return chatReply(ev, BOT_HELP);
+  const key = String(ev.message.name || "").replace(/\//g, "_");
+  const ref = key ? deps.db.doc("chatBot/reports/items/" + key) : null;
+  const seen = ref ? (await ref.get()).data() : null;
+  if (seen && seen.issue) return chatReply(ev, `受け付けました(受付番号 ${seen.issue})。`);
+  try {
+    const issue = bugIssue(ev, text);
+    const n = await deps.createIssue(issue);
+    if (ref) await ref.set({ issue: n, at: new Date().toISOString(), title: issue.title });
+    return chatReply(ev, `受け付けました(受付番号 ${n})。内容を確認して修正を用意し、管理者の確認のあと反映します。反映したらこのスペースでお知らせします。`);
+  } catch (e) {
+    console.error("[hittatsuChatBot] report failed:", e && e.message);
+    return chatReply(ev, "申し訳ありません。受付に失敗しました。お手数ですが、管理者に直接お知らせください。");
+  }
+}
+
+exports.hittatsuChatBot = onRequest({ secrets: [GITHUB_ISSUE_TOKEN], timeoutSeconds: 30 }, async (req, res) => {
+  if (req.method !== "POST" || !(await verifyChatRequest(req.get("authorization")))) {
+    res.status(401).send("unauthorized");
+    return;
+  }
+  const ev = parseChatEvent(req.body);
+  res.json(await handleChatEvent(ev, { db: admin.firestore(), createIssue: createBugIssue }));
+});
