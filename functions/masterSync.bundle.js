@@ -21,12 +21,19 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var masterSync_exports = {};
 __export(masterSync_exports, {
   SHARED_WS: () => SHARED_WS,
+  buildSnapshots: () => buildSnapshots,
   consolidateSalesData: () => consolidateSalesData,
   dedupeCompany: () => dedupeCompany,
+  isMorningRun: () => isMorningRun,
+  jstDay: () => jstDay,
   lastScheduledJst: () => lastScheduledJst,
+  morningFollowUps: () => morningFollowUps,
+  morningItems: () => morningItems,
+  morningText: () => morningText,
   purgeDeleted: () => purgeDeleted,
   runMasterSync: () => runMasterSync,
-  salesRoots: () => salesRoots
+  salesRoots: () => salesRoots,
+  snapshotList: () => snapshotList
 });
 module.exports = __toCommonJS(masterSync_exports);
 
@@ -336,7 +343,7 @@ function buildStockData(tabs) {
 }
 
 // src/collab/fields.ts
-var META_KEYS = /* @__PURE__ */ new Set(["_schema", "_at", "_by", "_deleted", "_delAt", "_delBy", "_mig", "_fv", "_backfill"]);
+var META_KEYS = /* @__PURE__ */ new Set(["_schema", "_at", "_by", "_deleted", "_delAt", "_delBy", "_mig", "_fv", "_backfill", "_wt", "_cv"]);
 var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 var isIdArray = (a) => a.length > 0 && a.every((x) => isObj(x) && typeof x.id === "string" && x.id) && new Set(a.map((x) => x.id)).size === a.length;
 function enc(v) {
@@ -815,6 +822,7 @@ function planSalesSheetImport(values, { sales, repMap, startMonth }, cid, now = 
 }
 
 // server/masterSync.ts
+var import_zlib = require("zlib");
 var SHARED_WS = "shared";
 async function salesRoots(db) {
   const docs = await db.collection("sales3").listDocuments();
@@ -853,7 +861,7 @@ async function consolidateSalesData(ctx, order, dryRun) {
       const b = db.batch();
       rows.slice(i, i + 400).forEach((r) => {
         const { id, ...data } = r;
-        b.set(db.doc(`sales3/${SHARED_WS}/${name}/${id}`), { ...data, id });
+        b.set(db.doc(`sales3/${SHARED_WS}/${name}/${id}`), { ...data, id, _wt: wt(ctx) });
       });
       await b.commit();
     }
@@ -866,11 +874,13 @@ async function consolidateSalesData(ctx, order, dryRun) {
     mf.docs.forEach((d) => b.set(db.doc(`salesWs/${SHARED_WS}/mFields/${d.id}`), d.data()));
     await b.commit();
   }
-  await db.doc(`sales3/${SHARED_WS}`).set({ _schema: 3, migratedAt: now, consolidatedAt: now, from: ids, m: {} }, { merge: true });
-  for (const ws of ids) await db.doc(`sales3/${ws}`).set({ sharedAt: now }, { merge: true });
+  await db.doc(`sales3/${SHARED_WS}`).set({ _schema: 3, migratedAt: now, consolidatedAt: now, from: ids, m: {}, _wt: wt(ctx) }, { merge: true });
+  for (const ws of ids) await db.doc(`sales3/${ws}`).set({ sharedAt: now, _wt: wt(ctx) }, { merge: true });
   return { report: res.report, written };
 }
+var sheetOf = (m) => m ? { at: m.modifiedTime || null, by: m.by || "" } : void 0;
 var BY = "\u81EA\u52D5\u66F4\u65B0(\u30B5\u30FC\u30D0\u30FC)";
+var wt = (ctx) => ctx.serverTs ? ctx.serverTs() : /* @__PURE__ */ new Date();
 var WHICH = ["stocks", "customers", "products"];
 function lastScheduledJst(now = /* @__PURE__ */ new Date()) {
   const J = 9 * 60 * 60 * 1e3;
@@ -943,7 +953,7 @@ async function writeList(ctx, ws, name, before, after) {
     const o = old.get(x.id);
     if (o === x) continue;
     if (!o) {
-      const data = { ...enc(x), _schema: 3, _at: now, _by: BY };
+      const data = { ...enc(x), _schema: 3, _at: now, _by: BY, _wt: wt(ctx) };
       ops.push((b) => b.set(ref, data));
       continue;
     }
@@ -951,6 +961,7 @@ async function writeList(ctx, ws, name, before, after) {
     if (!pairs.length) continue;
     const args = [];
     for (const [p, v] of [...pairs, [["_at"], now], [["_by"], BY]]) args.push(new FieldPath(...p), v === void 0 ? null : v);
+    args.push(new FieldPath("_wt"), wt(ctx));
     ops.push((b) => b.update(ref, ...args));
   }
   for (let i = 0; i < ops.length; i += 400) {
@@ -966,7 +977,7 @@ async function markDeletedDocs(ctx, ws, name, ids) {
   for (let i = 0; i < ids.length; i += 400) {
     const b = db.batch();
     ids.slice(i, i + 400).forEach(
-      (id) => b.update(db.doc(`sales3/${ws}/${name}/${id}`), new FieldPath("_deleted"), true, new FieldPath("_delAt"), at, new FieldPath("_at"), Date.now(), new FieldPath("_by"), BY)
+      (id) => b.update(db.doc(`sales3/${ws}/${name}/${id}`), new FieldPath("_deleted"), true, new FieldPath("_delAt"), at, new FieldPath("_at"), Date.now(), new FieldPath("_by"), BY, new FieldPath("_wt"), wt(ctx))
     );
     await b.commit();
   }
@@ -998,6 +1009,7 @@ async function dedupeCompany(ctx, ws, dryRun = false) {
     if (!pairs.length) continue;
     const args = [];
     for (const [p, v] of [...pairs, [["_at"], Date.now()], [["_by"], BY]]) args.push(new ctx.FieldPath(...p), v === void 0 ? null : v);
+    args.push(new ctx.FieldPath("_wt"), wt(ctx));
     await db.doc(`sync3/repair/repairs/${x.id}`).update(...args);
   }
   for (const kind of ["customers", "products"]) {
@@ -1022,14 +1034,15 @@ async function syncCompany(ctx, ws, out) {
     if (!url) continue;
     const forced = ctx.force && (!ctx.force.ws || ctx.force.ws === ws) && (!ctx.force.which || ctx.force.which === which);
     if (ctx.force && !forced) continue;
+    let m = null;
     try {
       const prev = mods[which] || null;
-      const m = await ctx.sheets.modified(url).catch(() => null);
+      m = await ctx.sheets.modified(url).catch(() => null);
       const synced = prev?.syncedAt ? Date.parse(prev.syncedAt) : 0;
       const changed = !!(m?.modifiedTime && m.modifiedTime !== prev?.modifiedTime);
       const daily = synced < lastScheduledJst(now) && now.getTime() >= lastScheduledJst(now);
       if (!forced && !changed && !daily) {
-        out.push({ ws, which, status: "skip", msg: "\u5909\u66F4\u306A\u3057" });
+        out.push({ ws, which, status: "skip", msg: "\u5909\u66F4\u306A\u3057", sheet: sheetOf(m) });
         continue;
       }
       let msg = "";
@@ -1070,9 +1083,9 @@ async function syncCompany(ctx, ws, out) {
       }
       mods[which] = { modifiedTime: m?.modifiedTime || null, by: m?.by || void 0, syncedAt: now.toISOString(), auto: true };
       modsChanged = true;
-      out.push({ ws, which, status: "done", msg });
+      out.push({ ws, which, status: "done", msg, sheet: sheetOf(m) });
     } catch (e) {
-      out.push({ ws, which, status: "error", msg: e?.message || String(e) });
+      out.push({ ws, which, status: "error", msg: e?.message || String(e), sheet: sheetOf(m) });
     }
   }
   if (modsChanged) await writeField(db, ws, "sheetModified", JSON.parse(JSON.stringify(mods)));
@@ -1089,15 +1102,17 @@ async function syncBudgetSales(ctx, out) {
     if (!url) continue;
     const forced = ctx.force && ctx.force.which === "sales" && (!ctx.force.cid || ctx.force.cid === cid);
     if (ctx.force && !forced) continue;
-    const tag = { ws: "budget:" + cid, which: "sales" };
+    const org = (meta.orgs || []).find((o) => o && o.id === cid);
+    const tag = { ws: "budget:" + cid, which: "sales", label: `\u58F2\u4E0A(${org && org.name || cid})` };
+    let m = null;
     try {
       const prevSheet = meta.lastImport?.salesSheet?.[cid] || null;
       const prevAt = meta.lastImport?.sales?.[cid] ? Date.parse(meta.lastImport.sales[cid]) : 0;
-      const m = await ctx.sheets.modified(url).catch(() => null);
+      m = await ctx.sheets.modified(url).catch(() => null);
       const changed = !!(m?.modifiedTime && m.modifiedTime !== prevSheet?.at);
       const daily = prevAt < lastScheduledJst(now) && now.getTime() >= lastScheduledJst(now);
       if (!forced && !changed && !daily) {
-        out.push({ ...tag, status: "skip", msg: "\u5909\u66F4\u306A\u3057" });
+        out.push({ ...tag, status: "skip", msg: "\u5909\u66F4\u306A\u3057", sheet: sheetOf(m) });
         continue;
       }
       const { values } = await ctx.sheets.values(url);
@@ -1115,8 +1130,8 @@ async function syncBudgetSales(ctx, out) {
       for (const ym of months) {
         const ref = db.doc(`sync3/budget/sales/${ym}`);
         const rec = enc(plan.byMonth[ym]);
-        if (salesNow[ym]) await ref.update(new FieldPath(cid), rec, new FieldPath("_at"), t, new FieldPath("_by"), BY);
-        else await ref.set({ _schema: 3, id: ym, [cid]: rec, _at: t, _by: BY }, { merge: true });
+        if (salesNow[ym]) await ref.update(new FieldPath(cid), rec, new FieldPath("_at"), t, new FieldPath("_by"), BY, new FieldPath("_wt"), wt(ctx));
+        else await ref.set({ _schema: 3, id: ym, [cid]: rec, _at: t, _by: BY, _wt: wt(ctx) }, { merge: true });
       }
       const stamp = now.toISOString();
       const mp = [
@@ -1125,7 +1140,9 @@ async function syncBudgetSales(ctx, out) {
         new FieldPath("m", "lastImport", "salesSheet", cid),
         m ? { at: m.modifiedTime, by: m.by || "" } : null,
         new FieldPath("_at"),
-        t
+        t,
+        new FieldPath("_wt"),
+        wt(ctx)
       ];
       (plan.parsed.reps || []).forEach((r) => {
         if (!(r in (meta.repMap || {}))) mp.push(new FieldPath("m", "repMap", r), "");
@@ -1134,10 +1151,11 @@ async function syncBudgetSales(ctx, out) {
       out.push({
         ...tag,
         status: "done",
+        sheet: sheetOf(m),
         msg: `${months.length}\u304B\u6708\u3092\u66F4\u65B0` + (shrunk.size ? `\uFF0F\u5927\u304D\u304F\u6E1B\u308B\u305F\u3081\u53D6\u308A\u8FBC\u307E\u306A\u304B\u3063\u305F\u6708: ${[...shrunk].join("\u3001")}(\u753B\u9762\u306E\u300C\u58F2\u4E0A\u30C7\u30FC\u30BF\u306E\u53D6\u8FBC\u300D\u3067\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044)` : "")
       });
     } catch (e) {
-      out.push({ ...tag, status: "error", msg: e?.message || String(e) });
+      out.push({ ...tag, status: "error", msg: e?.message || String(e), sheet: sheetOf(m) });
     }
   }
 }
@@ -1174,13 +1192,175 @@ async function runMasterSync(ctx) {
   }
   return out;
 }
+var SNAP_MIN_DOCS = 300;
+var SNAP_RAW_CHARS = 25e5;
+var SNAP_MAX_BYTES = 9e5;
+function plainTs(v) {
+  if (v == null) return v;
+  if (Array.isArray(v)) return v.map(plainTs);
+  if (typeof v === "object") {
+    if (typeof v.toMillis === "function") return v.toMillis();
+    if (v instanceof Date) return v.getTime();
+    const o = {};
+    for (const k of Object.keys(v)) o[k] = plainTs(v[k]);
+    return o;
+  }
+  return v;
+}
+function packRows(rows) {
+  const out = [];
+  const pack = (part) => {
+    const gz = (0, import_zlib.gzipSync)(Buffer.from(JSON.stringify(part), "utf8"), { level: 9 });
+    if (gz.length <= SNAP_MAX_BYTES || part.length <= 1) out.push(gz);
+    else {
+      const h = Math.ceil(part.length / 2);
+      pack(part.slice(0, h));
+      pack(part.slice(h));
+    }
+  };
+  let cur = [];
+  let len = 0;
+  for (const r of rows) {
+    const n = JSON.stringify(r).length;
+    if (cur.length && len + n > SNAP_RAW_CHARS) {
+      pack(cur);
+      cur = [];
+      len = 0;
+    }
+    cur.push(r);
+    len += n;
+  }
+  if (cur.length) pack(cur);
+  return out;
+}
+async function snapshotList(ctx, root, ws, name) {
+  const { db } = ctx;
+  const qs = await db.collection(`${root}/${ws}/${name}`).get();
+  const at = qs.readTime;
+  const rows = qs.docs.map((d) => ({ id: d.id, data: plainTs(d.data()) }));
+  const parts = packRows(rows);
+  const rev = String(Date.now());
+  const snap = db.collection(`${root}/${ws}/_snap`);
+  for (let k = 0; k < parts.length; k++) await snap.doc(`${name}#${k}`).set({ rev, part: k, gz: parts[k] });
+  await snap.doc(name).set({ rev, chunks: parts.length, at, count: rows.length, builtAt: /* @__PURE__ */ new Date() });
+  const old = await snap.where("rev", "!=", rev).get();
+  const stale = old.docs.filter((d) => d.id.startsWith(name + "#"));
+  for (let i = 0; i < stale.length; i += 400) {
+    const b = db.batch();
+    stale.slice(i, i + 400).forEach((d) => b.delete(d.ref));
+    await b.commit();
+  }
+  return rows.length;
+}
+async function buildSnapshots(ctx, only) {
+  const { db } = ctx;
+  const out = {};
+  const targets = [];
+  if (only) targets.push(only);
+  else {
+    for (const root of ["sales3", "sync3"]) {
+      const refs = await db.collection(root).listDocuments();
+      const ids = refs.map((r) => r.id);
+      const use = root === "sales3" && ids.includes(SHARED_WS) ? [SHARED_WS] : ids;
+      for (const id of use) targets.push({ root, ws: id });
+    }
+  }
+  for (const t of targets) {
+    const cols = await db.doc(`${t.root}/${t.ws}`).listCollections();
+    for (const c of cols) {
+      if (c.id === "_snap") continue;
+      const n = (await c.count().get()).data().count;
+      const key = `${t.root}/${t.ws}/${c.id}`;
+      if (n < SNAP_MIN_DOCS) {
+        const m = await db.doc(`${t.root}/${t.ws}/_snap/${c.id}`).get();
+        if (m.exists) await m.ref.delete();
+        continue;
+      }
+      try {
+        out[key] = await snapshotList(ctx, t.root, t.ws, c.id);
+      } catch (e) {
+        console.error("[snapshot] failed", key, e?.message || e);
+      }
+    }
+  }
+  return out;
+}
+var J_MS = 9 * 60 * 60 * 1e3;
+var KIND_ORDER = ["sales", "customers", "products", "stocks"];
+var KIND_LABEL = { customers: "\u5F97\u610F\u5148\u30DE\u30B9\u30BF", products: "\u5546\u54C1\u30DE\u30B9\u30BF", stocks: "\u5728\u5EAB\u30DE\u30B9\u30BF" };
+var WEEK = "\u65E5\u6708\u706B\u6C34\u6728\u91D1\u571F";
+var pad = (n) => String(n).padStart(2, "0");
+var jstOf = (ms) => new Date(ms + J_MS);
+var jstDay = (ms) => jstOf(ms).toISOString().slice(0, 10);
+var hm = (ms) => {
+  const d = jstOf(ms);
+  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+};
+var mdhm = (ms) => {
+  const d = jstOf(ms);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()} ${hm(ms)}`;
+};
+function isMorningRun(now = /* @__PURE__ */ new Date()) {
+  const d = jstOf(now.getTime());
+  const wd = d.getUTCDay();
+  return wd >= 1 && wd <= 5 && d.getUTCHours() === 8 && d.getUTCMinutes() < 30;
+}
+var itemKey = (o) => `${o.ws}|${o.which}`;
+var itemLabel = (o) => o.label || (KIND_LABEL[o.which] || o.which) + (o.ws && o.ws !== SHARED_WS ? `(${o.ws})` : "");
+var updatedToday = (o, now) => {
+  const t = o.sheet?.at ? Date.parse(o.sheet.at) : NaN;
+  return Number.isFinite(t) && jstDay(t) === jstDay(now.getTime());
+};
+function morningItems(out, now = /* @__PURE__ */ new Date()) {
+  const last = /* @__PURE__ */ new Map();
+  for (const o of out) if (KIND_ORDER.includes(o.which)) last.set(itemKey(o), o);
+  const items = [...last.values()].map((o) => {
+    const label = itemLabel(o);
+    const t = o.sheet?.at ? Date.parse(o.sheet.at) : NaN;
+    if (o.status === "error") return { key: itemKey(o), label, state: "error", line: `\u274C ${label}: \u53D6\u8FBC\u30A8\u30E9\u30FC(${o.msg.slice(0, 120)})` };
+    if (updatedToday(o, now)) {
+      return { key: itemKey(o), label, state: "ok", line: `\u2705 ${label}: \u5F53\u65E5\u66F4\u65B0\u6E08\u307F(\u30B7\u30FC\u30C8\u6700\u7D42\u66F4\u65B0 ${mdhm(t)}${o.sheet?.by ? "\u3001" + o.sheet.by : ""})` };
+    }
+    const when = Number.isFinite(t) ? `\u6700\u7D42\u66F4\u65B0 ${mdhm(t)}` : "\u6700\u7D42\u66F4\u65B0\u65E5\u6642\u3092\u8AAD\u3081\u307E\u305B\u3093\u3067\u3057\u305F";
+    return { key: itemKey(o), label, state: "stale", line: `\u26A0 ${label}: \u30B7\u30FC\u30C8\u304C\u66F4\u65B0\u3055\u308C\u3066\u3044\u307E\u305B\u3093(${when})` };
+  });
+  const rank = (k) => KIND_ORDER.indexOf(k.split("|")[1]);
+  return items.sort((a, b) => rank(a.key) - rank(b.key) || a.label.localeCompare(b.label, "ja"));
+}
+function morningText(items, now = /* @__PURE__ */ new Date(), appUrl = "") {
+  const d = jstOf(now.getTime());
+  const head = `\u3010\u2611Hittatsu\u3011\u671D\u306E\u66F4\u65B0\u78BA\u8A8D ${d.getUTCMonth() + 1}/${d.getUTCDate()}(${WEEK[d.getUTCDay()]}) ${hm(now.getTime())}`;
+  const body = items.length ? items.map((x) => x.line) : ["\u53D6\u308A\u8FBC\u3080\u8A2D\u5B9A\u306E\u30B7\u30FC\u30C8\u304C\u3042\u308A\u307E\u305B\u3093(\u30DE\u30B9\u30BF\u30FB\u8A2D\u5B9A\u3067\u30B7\u30FC\u30C8\u3092\u6307\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044)"];
+  return [head, ...body, ...appUrl ? [`Hittatsu\u3092\u958B\u304F: ${appUrl}`] : []].join("\n");
+}
+function morningFollowUps(out, pending, now = /* @__PURE__ */ new Date()) {
+  const remaining = { ...pending };
+  const texts = [];
+  for (const o of out) {
+    const key = itemKey(o);
+    if (!(key in remaining) || o.status !== "done" || !updatedToday(o, now)) continue;
+    const label = remaining[key] || itemLabel(o);
+    delete remaining[key];
+    texts.push(`\u3010\u2611Hittatsu\u3011\u2705 ${label}\u3092\u53D6\u308A\u8FBC\u307F\u307E\u3057\u305F ${hm(now.getTime())}
+\u30B7\u30FC\u30C8\u6700\u7D42\u66F4\u65B0 ${hm(Date.parse(o.sheet.at))}${o.sheet?.by ? "(" + o.sheet.by + ")" : ""}\u3002`);
+  }
+  if (texts.length && !Object.keys(remaining).length) texts[texts.length - 1] += "\u3053\u308C\u3067\u5168\u9805\u76EE\u304C\u5F53\u65E5\u306E\u60C5\u5831\u306B\u306A\u308A\u307E\u3057\u305F\u3002";
+  return { texts, remaining };
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   SHARED_WS,
+  buildSnapshots,
   consolidateSalesData,
   dedupeCompany,
+  isMorningRun,
+  jstDay,
   lastScheduledJst,
+  morningFollowUps,
+  morningItems,
+  morningText,
   purgeDeleted,
   runMasterSync,
-  salesRoots
+  salesRoots,
+  snapshotList
 });

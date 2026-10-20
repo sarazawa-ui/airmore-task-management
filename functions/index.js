@@ -476,7 +476,7 @@ exports.watchLeadReplies = onSchedule(
     //   (1件=1ドキュメント、削除は _deleted の印。書き込みには _schema:3 が必要)
     const wsSnap = await db.collection("sales3").get();
     const live = (snap) => snap.docs.map(d => ({ ...d.data(), id: d.id })).filter(x => x && !x._deleted);
-    const stamp = () => ({ _schema: 3, _at: Date.now(), _by: "watchLeadReplies" });
+    const stamp = () => ({ _schema: 3, _at: Date.now(), _by: "watchLeadReplies", _wt: admin.firestore.FieldValue.serverTimestamp() });
     let totalConverted = 0;
 
     for (const wsDoc of wsSnap.docs) {
@@ -796,27 +796,91 @@ function _explain(results) {
   );
 }
 
+// ============================================================
+// 朝の更新確認: Hittatsuお知らせスペース(Googleチャット)へ知らせる
+//   送り先の URL は secrets の CHAT_WEBHOOK(firebase functions:secrets:set CHAT_WEBHOOK)。社員の画面からは読めない。
+//   平日8:00の取込のあとに1通。朝に未更新・エラーだった項目は、その日のうちに取り込めたら同じスレッドで追いかける。
+//   その日の記録は syncLog/morningCheck({date, pending: {項目: 名前}})。
+// ============================================================
+const CHAT_WEBHOOK = defineSecret("CHAT_WEBHOOK");
+async function postChat(text, threadKey) {
+  const url = String(CHAT_WEBHOOK.value() || "").trim();
+  if (!url) return;
+  const u = url + (url.includes("?") ? "&" : "?") + "threadKey=" + encodeURIComponent(threadKey) + "&messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD";
+  const r = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json; charset=UTF-8" }, body: JSON.stringify({ text }) });
+  if (!r.ok) throw new Error(`Googleチャットへの送信に失敗しました(${r.status}) ${(await r.text()).slice(0, 200)}`);
+}
+async function chatMorningCheck(out) {
+  const now = new Date();
+  const today = masterSync.jstDay(now.getTime());
+  const ref = admin.firestore().doc("syncLog/morningCheck");
+  const last = (await ref.get()).data() || {};
+  const thread = "hittatsu-morning-" + today;
+  if (masterSync.isMorningRun(now) && last.date !== today) {
+    const items = masterSync.morningItems(out, now);
+    const pending = Object.fromEntries(items.filter((x) => x.state !== "ok").map((x) => [x.key, x.label]));
+    // 送信に失敗しても同じ朝に二重に送らないよう、先に記録する
+    await ref.set({ date: today, at: now.toISOString(), pending, items: items.map((x) => x.line) });
+    await postChat(masterSync.morningText(items, now, APP_BASE_URL), thread);
+    return;
+  }
+  if (last.date === today && Object.keys(last.pending || {}).length) {
+    const f = masterSync.morningFollowUps(out, last.pending, now);
+    if (!f.texts.length) return;
+    await ref.update({ pending: f.remaining });
+    for (const t of f.texts) await postChat(t, thread);
+  }
+}
+
 exports.syncMasterSheets = onSchedule(
-  { schedule: "0,30 7-20 * * 1-5", timeZone: "Asia/Tokyo", secrets: [GMAIL_SA_KEY], memory: "1GiB", timeoutSeconds: 540 },
+  { schedule: "0,30 7-20 * * 1-5", timeZone: "Asia/Tokyo", secrets: [GMAIL_SA_KEY, CHAT_WEBHOOK], memory: "1GiB", timeoutSeconds: 540 },
   async () => {
     const out = _explain(
-      await masterSync.runMasterSync({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, sheets: _saSheetReader(), log: console.log })
+      await masterSync.runMasterSync({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, serverTs: () => admin.firestore.FieldValue.serverTimestamp(), sheets: _saSheetReader(), log: console.log })
     );
     const done = out.filter((x) => x.status !== "skip");
     if (done.length) console.log("[syncMasterSheets]", JSON.stringify(done));
+    try {
+      await chatMorningCheck(out);
+    } catch (e) {
+      console.error("[chatMorningCheck] failed:", e && e.message);
+    }
     // 削除済みの印の文書を本当に消す(日本時間で1日1回、その日の最初の回)
     try {
       const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
       const ref = admin.firestore().doc("syncLog/purge");
       const last = (await ref.get()).data();
       if (!last || last.date !== today) {
-        const purged = await masterSync.purgeDeleted({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, sheets: _saSheetReader() });
+        const purged = await masterSync.purgeDeleted({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, serverTs: () => admin.firestore.FieldValue.serverTimestamp(), sheets: _saSheetReader() });
         await ref.set({ date: today, at: new Date().toISOString(), purged });
         if (Object.keys(purged).length) console.log("[purgeDeleted]", JSON.stringify(purged));
       }
     } catch (e) {
       console.error("[purgeDeleted] failed:", e && e.message);
     }
+    // 得意先・商品の取込で数千件が変わったときは、商談管理の一覧のまとめを作り直す
+    //   (まとめ以降に変わった文書は画面が1件ずつ読むため、取込の後にまとめておくと開くときの読み込みが少ない)
+    try {
+      if (done.some((x) => x.status === "done" && /customers|products|dedupe|stocks/.test(x.which || ""))) {
+        const snap = await masterSync.buildSnapshots(_snapCtx(), { root: "sales3", ws: "shared" });
+        console.log("[buildSnapshots] after import", JSON.stringify(snap));
+      }
+    } catch (e) {
+      console.error("[buildSnapshots] failed:", e && e.message);
+    }
+  }
+);
+
+// ============================================================
+// 一覧のまとめ(端末に控えを持たない画面が、開くたびに少ない読み込みで一覧を受け取るため)。毎日 5:00(土日も)
+// ============================================================
+const _snapCtx = () => ({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, serverTs: () => admin.firestore.FieldValue.serverTimestamp(), sheets: _saSheetReader() });
+exports.buildListSnapshots = onSchedule(
+  { schedule: "0 5 * * *", timeZone: "Asia/Tokyo", secrets: [GMAIL_SA_KEY], memory: "1GiB", timeoutSeconds: 540 },
+  async () => {
+    const out = await masterSync.buildSnapshots(_snapCtx());
+    await admin.firestore().doc("syncLog/snapshots").set({ at: new Date().toISOString(), lists: out });
+    console.log("[buildListSnapshots]", JSON.stringify(out));
   }
 );
 
@@ -831,7 +895,7 @@ exports.consolidateSales = onCall(
     if (!owner) throw new HttpsError("permission-denied", "オーナーだけが実行できます");
     const dryRun = !!(req.data && req.data.dryRun);
     const order = ["エアモア", "MOBILY", "ニモマケズHD"];
-    const res = await masterSync.consolidateSalesData({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, sheets: _saSheetReader() }, order, dryRun);
+    const res = await masterSync.consolidateSalesData({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, serverTs: () => admin.firestore.FieldValue.serverTimestamp(), sheets: _saSheetReader() }, order, dryRun);
     if (!dryRun) console.log("[consolidateSales]", email, JSON.stringify(res.written || {}));
     return res;
   }
@@ -845,15 +909,21 @@ exports.syncMasterSheetsNow = onCall(
     const { ws, which, cid } = req.data || {};
     // 削除済みの印の文書を今すぐ消す(オーナーの操作)
     if (which === "purge") {
-      const purged = await masterSync.purgeDeleted({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, sheets: _saSheetReader() });
+      const purged = await masterSync.purgeDeleted({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, serverTs: () => admin.firestore.FieldValue.serverTimestamp(), sheets: _saSheetReader() });
       await admin.firestore().doc("syncLog/purge").set({ date: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10), at: new Date().toISOString(), purged, by: req.auth.token.email });
       return { results: [{ ws: "*", which: "purge", status: "done", msg: Object.entries(purged).map(([k, v]) => k + " " + v + "件").join("、") || "消すものはありませんでした" }] };
+    }
+    // 一覧のまとめを今すぐ作り直す
+    if (which === "snapshots") {
+      const lists = await masterSync.buildSnapshots(_snapCtx());
+      await admin.firestore().doc("syncLog/snapshots").set({ at: new Date().toISOString(), lists, by: req.auth.token.email });
+      return { results: [{ ws: "*", which: "snapshots", status: "done", msg: Object.entries(lists).map(([k, v]) => k + " " + v + "件").join("、") }] };
     }
     if (!which || !["customers", "products", "stocks", "sales"].includes(which)) throw new HttpsError("invalid-argument", "取り込む項目が不正です");
     if (which !== "sales" && !ws) throw new HttpsError("invalid-argument", "会社が指定されていません");
     const out = await masterSync.runMasterSync({
       db: admin.firestore(),
-      FieldPath: admin.firestore.FieldPath,
+      FieldPath: admin.firestore.FieldPath, serverTs: () => admin.firestore.FieldValue.serverTimestamp(),
       sheets: _saSheetReader(),
       force: { ws: which === "sales" ? undefined : String(ws), which, cid: cid ? String(cid) : undefined },
     });
