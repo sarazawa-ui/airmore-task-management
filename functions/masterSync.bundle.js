@@ -1205,7 +1205,8 @@ async function runMasterSync(ctx) {
   const places = await masterPlaces(ctx.db);
   const forced = ctx.force?.ws ? places.filter((p) => p.ws === ctx.force.ws) : [];
   const use = ctx.force?.ws ? forced.length ? forced : places.filter((p) => p.ws === SHARED_WS) : places;
-  if (!ctx.force || ctx.force.which !== "sales") for (const p of use) await syncCompany(ctx, p.ws, out, p.listWs);
+  const forCtx = (ws) => ctx.force?.ws && ctx.force.ws !== ws ? { ...ctx, force: { ...ctx.force, ws } } : ctx;
+  if (!ctx.force || ctx.force.which !== "sales") for (const p of use) await syncCompany(forCtx(p.ws), p.ws, out, p.listWs);
   if (!ctx.force || ctx.force.which === "sales") await syncBudgetSales(ctx, out);
   try {
     const done = out.filter((x) => x.status !== "skip");
