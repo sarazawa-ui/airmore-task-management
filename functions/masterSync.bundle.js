@@ -1031,7 +1031,10 @@ async function syncCompany(ctx, ws, out) {
   let deduped = false;
   for (const which of WHICH) {
     const url = String(urls[which] || "").trim();
-    if (!url) continue;
+    if (!url) {
+      if (!ctx.force) out.push({ ws, which, status: "skip", msg: "\u53C2\u7167\u30B7\u30FC\u30C8\u672A\u8A2D\u5B9A", unset: true });
+      continue;
+    }
     const forced = ctx.force && (!ctx.force.ws || ctx.force.ws === ws) && (!ctx.force.which || ctx.force.which === which);
     if (ctx.force && !forced) continue;
     let m = null;
@@ -1317,6 +1320,7 @@ function morningItems(out, now = /* @__PURE__ */ new Date()) {
   const items = [...last.values()].map((o) => {
     const label = itemLabel(o);
     const t = o.sheet?.at ? Date.parse(o.sheet.at) : NaN;
+    if (o.unset) return { key: itemKey(o), label, state: "stale", line: `\u26A0 ${label}: \u53C2\u7167\u30B7\u30FC\u30C8\u304C\u672A\u8A2D\u5B9A\u3067\u3059(\u30DE\u30B9\u30BF\u753B\u9762\u3067\u30B9\u30D7\u30EC\u30C3\u30C9\u30B7\u30FC\u30C8URL\u3092\u8A2D\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044)` };
     if (o.status === "error") return { key: itemKey(o), label, state: "error", line: `\u274C ${label}: \u53D6\u8FBC\u30A8\u30E9\u30FC(${o.msg.slice(0, 120)})` };
     if (updatedToday(o, now)) {
       return { key: itemKey(o), label, state: "ok", line: `\u2705 ${label}: \u5F53\u65E5\u66F4\u65B0\u6E08\u307F(\u30B7\u30FC\u30C8\u6700\u7D42\u66F4\u65B0 ${mdhm(t)}${o.sheet?.by ? "\u3001" + o.sheet.by : ""})` };

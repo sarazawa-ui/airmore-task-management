@@ -992,8 +992,29 @@ function chatReply(ev, text) {
 const BOT_HELP =
   "Hittatsu Bot です。Hittatsu の不具合は、このスペースで「@Hittatsu Bot」を付けて次のように送ってください。\n" +
   "【バグ報告】\n・画面:\n・日時:\n・行った操作:\n・起きたこと:\n・本来の動き:\n・再現するか:\n・使用端末:\n・緊急度:\n" +
-  "スクリーンショットも添付してください。受け付けると受付番号をお返しします。";
+  "スクリーンショットも添付してください。受け付けると受付番号をお返しします。\n" +
+  "対応状況は「@Hittatsu Bot 進捗 12」のように受付番号を付けて送ると確認できます。";
 const isBugReport = (t) => /バグ|不具合|エラー|おかしい|動かない/.test(t);
+// 「進捗 12」「#12 の状況」「受付番号12」などから受付番号を取り出す(進捗の問い合わせでなければ null)
+function progressQuery(t) {
+  if (!/進捗|状況|どうなって|受付番号/.test(t)) return null;
+  const m = /#?\s*([0-9０-９]{1,6})/.exec(t);
+  return m ? Number(m[1].replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0))) : null;
+}
+const _jst = (iso) => new Date(new Date(iso).getTime() + 9 * 3600e3).toISOString().slice(5, 16).replace("-", "/").replace("T", " ");
+// 課題の状態とラベル(Claude が付ける「対応中」「確認待ち」)から、報告者向けの進捗文を作る
+function progressText(n, issue) {
+  if (!issue || !/^【チャット報告】/.test(issue.title || "")) return `受付番号 ${n} の報告は見つかりませんでした。番号をご確認ください。`;
+  const head = `受付番号 ${n}「${issue.title.replace(/^【チャット報告】/, "")}」は、`;
+  const labels = (issue.labels || []).map((l) => (typeof l === "string" ? l : l.name));
+  if (issue.state === "closed") {
+    if (issue.state_reason === "not_planned") return head + "対応を見送りました。詳しくは管理者にお問い合わせください。";
+    return head + `修正が反映済みです(${_jst(issue.closed_at)})。画面再読込で新バージョンになります。`;
+  }
+  if (labels.includes("確認待ち")) return head + "修正ができあがり、管理者の確認待ちです。確認がとれしだい反映します。";
+  if (labels.includes("対応中")) return head + "原因を調べて修正を作っているところです。";
+  return head + `受け付け済みで、まだ対応前です(受付 ${_jst(issue.created_at)})。平日9〜18時に1時間ごとに確認し、順に対応します。`;
+}
 
 function chatThreadUrl(message) {
   const m = /^spaces\/([^/]+)\/threads\/([^/]+)$/.exec((message && message.thread && message.thread.name) || "");
@@ -1043,11 +1064,35 @@ async function createBugIssue(issue) {
   if (!r.ok) throw new Error(`GitHubへの登録に失敗しました(${r.status}) ${(await r.text()).slice(0, 200)}`);
   return (await r.json()).number;
 }
+async function getBugIssue(n) {
+  const r = await fetch(`https://api.github.com/repos/${BUG_REPO}/issues/${n}`, {
+    headers: {
+      Authorization: "Bearer " + String(GITHUB_ISSUE_TOKEN.value() || "").trim(),
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "hittatsu-chat-bot",
+    },
+  });
+  if (r.status === 404 || r.status === 410) return null;
+  if (!r.ok) throw new Error(`GitHubの確認に失敗しました(${r.status})`);
+  const j = await r.json();
+  return j.pull_request ? null : j;
+}
 
 async function handleChatEvent(ev, deps) {
   if (ev.kind === "ADDED_TO_SPACE") return chatReply(ev, BOT_HELP);
   if (ev.kind !== "MESSAGE" || !ev.message) return {};
   const text = String(ev.message.argumentText || ev.message.text || "").replace(/@Hittatsu ?Bot/gi, "").trim();
+  // 長いバグ報告の本文に「状況」と数字が入っていても報告として扱う
+  const asked = /【バグ報告】/.test(text) || (text.length > 40 && isBugReport(text)) ? null : progressQuery(text);
+  if (asked) {
+    try {
+      return chatReply(ev, progressText(asked, await deps.getIssue(asked)));
+    } catch (e) {
+      console.error("[hittatsuChatBot] progress failed:", e && e.message);
+      return chatReply(ev, "申し訳ありません。いま進捗を確認できませんでした。少し時間をおいてもう一度お試しください。");
+    }
+  }
   if (!isBugReport(text) || text.replace(/【バグ報告】/, "").trim().length < 8) return chatReply(ev, BOT_HELP);
   const key = String(ev.message.name || "").replace(/\//g, "_");
   const ref = key ? deps.db.doc("chatBot/reports/items/" + key) : null;
@@ -1070,5 +1115,5 @@ exports.hittatsuChatBot = onRequest({ secrets: [GITHUB_ISSUE_TOKEN], timeoutSeco
     return;
   }
   const ev = parseChatEvent(req.body);
-  res.json(await handleChatEvent(ev, { db: admin.firestore(), createIssue: createBugIssue }));
+  res.json(await handleChatEvent(ev, { db: admin.firestore(), createIssue: createBugIssue, getIssue: getBugIssue }));
 });
