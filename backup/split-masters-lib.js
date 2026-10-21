@@ -7,6 +7,7 @@
 export const LISTS = ["customers", "products"];
 export const FIELDS = ["industries", "chatWebhook", "sheetUrls", "stocks", "sheetModified"];
 const BY = "各社別へ写し";
+export const SHARED_URL_OWNER = "エアモア";
 const FIELD_CHUNK_CHARS = 700_000;
 
 async function readFields(db, ws) {
@@ -101,12 +102,21 @@ export async function splitMasters(db, { write = false, serverTs = () => new Dat
       if (k === "sheetUrls") {
         const a = coFields.sheetUrls || {};
         const s = sharedFields.sheetUrls || {};
+        // 共通のURLは、まとめた後にエアモアの画面で入れ直されたもの → エアモアは共通を、他の会社は会社に残っている元のURLを優先
+        const sharedFirst = co === SHARED_URL_OWNER;
+        const pick = (w) => {
+          const sv = String(s[w] || "").trim();
+          const av = String(a[w] || "").trim();
+          return sharedFirst ? [sv || av, sv ? "共通" : av ? "会社" : "空"] : [av || sv, av ? "会社" : sv ? "共通" : "空"];
+        };
         next = {};
+        const src = [];
         for (const w of ["customers", "products", "stocks"]) {
-          const v = String(s[w] || "").trim() || String(a[w] || "").trim();
+          const [v, from] = pick(w);
           if (v) next[w] = v;
+          src.push(from);
         }
-        f[k] = ["customers", "products", "stocks"].map((w) => (next[w] ? (String(s[w] || "").trim() ? "共通" : "会社") : "空")).join("/");
+        f[k] = src.join("/");
       } else {
         next = nonEmpty(sharedFields[k]) ? sharedFields[k] : coFields[k];
         f[k] = nonEmpty(sharedFields[k]) ? "共通" : nonEmpty(coFields[k]) ? "会社" : "空";
