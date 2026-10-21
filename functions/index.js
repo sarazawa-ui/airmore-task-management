@@ -81,12 +81,31 @@ async function sendMail(fromEmail, to, subject, text) {
 
 // クライアント（タスク管理アプリ）から呼ぶ汎用メール送信（完了通知・リマインド等）。
 //   認証必須。宛先は最大20件。from（送信元）未指定時は呼び出しユーザー本人。
+//   ★ なりすまし防止(2026-10-21): 呼べるのは許可ドメインのユーザーだけ。送信元は必ず呼び出した本人にする
+//     (画面が別の人を from に指定しても本人として送る。以前は from をそのまま使っていたため、
+//     ログインさえすれば社外の人でも任意の社員の名義でメールを送れた)。1人あたりの送信数にも上限を設ける。
+const MAIL_LIMIT_PER_HOUR = 60;
+async function takeMailQuota(email, count) {
+  const ref = admin.firestore().doc("mailQuota/" + email);
+  const hour = new Date().toISOString().slice(0, 13);
+  return admin.firestore().runTransaction(async (tx) => {
+    const d = (await tx.get(ref)).data() || {};
+    const used = d.hour === hour ? d.count || 0 : 0;
+    if (used + count > MAIL_LIMIT_PER_HOUR) return false;
+    tx.set(ref, { hour, count: used + count, at: new Date().toISOString() });
+    return true;
+  });
+}
+
 exports.sendAppEmail = onCall({ secrets: [GMAIL_SA_KEY] }, async (req) => {
   if (!req.auth) throw new HttpsError("unauthenticated", "ログインが必要です");
+  const caller = String(req.auth.token.email || "").trim().toLowerCase();
+  if (!req.auth.token.email_verified || !(await isAllowedEmail(caller))) throw new HttpsError("permission-denied", "許可されていないアカウントです");
   const { from, to, subject, text } = req.data || {};
-  const fromEmail = String(from || req.auth.token.email || "").trim();
+  if (from && String(from).trim().toLowerCase() !== caller) console.log("[sendAppEmail] from を本人に置き換え:", caller, "(指定:", String(from), ")");
+  const fromEmail = caller;
   const list = (Array.isArray(to) ? to : [to]).filter(Boolean);
-  if (!fromEmail || !list.length || !subject) throw new HttpsError("invalid-argument", "from/to/subject は必須です");
+  if (!fromEmail || !list.length || !subject) throw new HttpsError("invalid-argument", "to/subject は必須です");
   if (list.length > 20) throw new HttpsError("invalid-argument", "宛先が多すぎます（最大20件）");
   // 旧クライアント（キャッシュ未更新の端末）が送る「10分前リマインド」をサーバーで遮断する。
   //   リマインドはサーバーの sendReminders（内部 sendMail を直接呼ぶ）が唯一の送信元とし、
@@ -96,6 +115,7 @@ exports.sendAppEmail = onCall({ secrets: [GMAIL_SA_KEY] }, async (req) => {
     console.log("[sendAppEmail] reminder via client blocked:", subject);
     return { ok: true, from: fromEmail, skipped: "client-reminder-blocked" };
   }
+  if (!(await takeMailQuota(fromEmail, list.length))) throw new HttpsError("resource-exhausted", `送信数の上限(1時間に${MAIL_LIMIT_PER_HOUR}通)に達しました`);
   try {
     await sendMail(fromEmail, list, String(subject), String(text || ""));
     return { ok: true, from: fromEmail };
@@ -884,15 +904,22 @@ exports.buildListSnapshots = onSchedule(
   }
 );
 
+// オーナー(最上位権限)か。Firestoreルールの _isOwner と同じ判定
+async function isOwnerEmail(email) {
+  const e = String(email || "").toLowerCase();
+  if (!e) return false;
+  if (e === "sarazawa@n-airmore.com") return true;
+  const roles = (await admin.firestore().doc("globalBudget/userRoles").get()).data() || {};
+  return (roles.map || {})[e] === "owner";
+}
+
 // 商談管理のデータを1つにまとめる(オーナーのみ)。dryRun=true は件数の報告だけ
 exports.consolidateSales = onCall(
   { secrets: [GMAIL_SA_KEY], memory: "1GiB", timeoutSeconds: 540 },
   async (req) => {
     if (!req.auth) throw new HttpsError("unauthenticated", "ログインが必要です");
     const email = String(req.auth.token.email || "").toLowerCase();
-    const roles = (await admin.firestore().doc("globalBudget/userRoles").get()).data() || {};
-    const owner = email === "sarazawa@n-airmore.com" || (roles.map || {})[email] === "owner";
-    if (!owner) throw new HttpsError("permission-denied", "オーナーだけが実行できます");
+    if (!(await isOwnerEmail(email))) throw new HttpsError("permission-denied", "オーナーだけが実行できます");
     const dryRun = !!(req.data && req.data.dryRun);
     const order = ["エアモア", "MOBILY", "ニモマケズHD"];
     const res = await masterSync.consolidateSalesData({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, serverTs: () => admin.firestore.FieldValue.serverTimestamp(), sheets: _saSheetReader() }, order, dryRun);
@@ -907,8 +934,9 @@ exports.syncMasterSheetsNow = onCall(
     if (!req.auth) throw new HttpsError("unauthenticated", "ログインが必要です");
     if (!(await isAllowedEmail(req.auth.token.email))) throw new HttpsError("permission-denied", "許可されていないアカウントです");
     const { ws, which, cid } = req.data || {};
-    // 削除済みの印の文書を今すぐ消す(オーナーの操作)
+    // 削除済みの印の文書を今すぐ消す(オーナーの操作。2026-10-21 までオーナーの確認が抜けていた)
     if (which === "purge") {
+      if (!(await isOwnerEmail(req.auth.token.email))) throw new HttpsError("permission-denied", "オーナーだけが実行できます");
       const purged = await masterSync.purgeDeleted({ db: admin.firestore(), FieldPath: admin.firestore.FieldPath, serverTs: () => admin.firestore.FieldValue.serverTimestamp(), sheets: _saSheetReader() });
       await admin.firestore().doc("syncLog/purge").set({ date: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10), at: new Date().toISOString(), purged, by: req.auth.token.email });
       return { results: [{ ws: "*", which: "purge", status: "done", msg: Object.entries(purged).map(([k, v]) => k + " " + v + "件").join("、") || "消すものはありませんでした" }] };
