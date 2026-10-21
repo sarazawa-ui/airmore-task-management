@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1792541685281";</script>
+<script>window.__HITTATSU_BUILD__ = "1792572337592";</script>
 <script>
 // プロジェクト管理を単体で開いたとき(以前の招待メール・タスク通知のリンク、ブックマークなど)は、
 // 現行の Hittatsu の画面(左メニュー付き)のプロジェクト管理へ移す。現行の画面の中(iframe)では何もしない
@@ -44,7 +44,7 @@
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-messaging-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-storage-compat.js"></script>
 <!-- 文字単位の同時編集の共通の仕組み(src/collab → npm run build:collab) -->
-<script src="vendor/hittatsu-collab.js?v=1792541685281"></script>
+<script src="vendor/hittatsu-collab.js?v=1792572337592"></script>
 <style>
 :root{
   --primary:#1c5cab;
@@ -1792,6 +1792,55 @@ service cloud.firestore {
 <script>
 // ============ STATE ============
 const LS_KEY = "airmore_task_v1";
+// ★ 端末に控えを持たない(2026-10-14〜)。タスク・プロジェクト・ボード・メンバーなどは毎回サーバーから受け取る。
+//   端末に残すのは「開いていたワークスペース」「画面の設定(S.ui)」「取り込んだ予定(S.events = Googleカレンダー・ICSの写し。
+//   Hittatsuのサーバーには送らない)」だけ(hittatsu_pm_local。統合アプリの週間カレンダーと共通)。
+//   以前は状態 S の全体(airmore_task_v1)を端末に写していたため、古い写しを元に古い内容を書き戻す事故の元になっていた。
+//   前の版の写しは、最初の1回だけ上の3つを引き継いで消す。クラウドを使わない試用のときだけ、従来どおり全体を端末に置く。
+const PM_LOCAL_KEY = "hittatsu_pm_local";
+function _pmCloudOn(){
+  try{
+    const v = localStorage.getItem('hittatsu_cloud');
+    if(v === 'on') return true;
+    if(v === 'off') return false;
+    return !['localhost', '127.0.0.1'].includes(location.hostname);
+  }catch(e){ return false; }
+}
+function _psPick(o){
+  if(!o || typeof o !== 'object') return null;
+  const out = {};
+  if(o.workspaceId) out.workspaceId = o.workspaceId;
+  if(o.ui && typeof o.ui === 'object') out.ui = o.ui;
+  if(Array.isArray(o.events)) out.events = o.events;
+  return out;
+}
+function _psGet(){
+  if(!_pmCloudOn()) return localStorage.getItem(LS_KEY);
+  try{
+    const old = localStorage.getItem(LS_KEY);
+    if(old){
+      // 前の版の写し → 3つだけ引き継いで消す
+      const keep = _psPick(JSON.parse(old)) || {};
+      const cur = JSON.parse(localStorage.getItem(PM_LOCAL_KEY) || 'null') || {};
+      localStorage.setItem(PM_LOCAL_KEY, JSON.stringify(Object.assign({}, keep, cur)));
+      localStorage.removeItem(LS_KEY);
+    }
+    const v = JSON.parse(localStorage.getItem(PM_LOCAL_KEY) || 'null') || {};
+    if(!v.workspaceId){ const ws = localStorage.getItem('hittatsu_current_ws'); if(ws) v.workspaceId = ws; }
+    return Object.keys(v).length ? JSON.stringify(v) : null;
+  }catch(e){ return null; }
+}
+function _psSet(json){
+  if(!_pmCloudOn()){ localStorage.setItem(LS_KEY, json); return; }
+  try{
+    const keep = _psPick(typeof json === 'string' ? JSON.parse(json) : json);
+    if(keep) localStorage.setItem(PM_LOCAL_KEY, JSON.stringify(keep));
+  }catch(e){}
+}
+function _psRemove(){
+  if(!_pmCloudOn()){ localStorage.removeItem(LS_KEY); return; }
+  try{ localStorage.removeItem(PM_LOCAL_KEY); }catch(e){}
+}
 const LS_COMPANY_KEY = "airmore_company_v1";
 // 会社情報（companyName / companyLogo / companyMemo）はワークスペース共通のため
 // 各ユーザーのローカルストレージにのみ保持し、Firestoreには同期しない
@@ -1896,13 +1945,15 @@ function _localUiSet(k, v){ try{ if(v === undefined || v === null) localStorage.
 let S = load();
 
 function load(){
+  // クラウド利用中は見本のプロジェクト・タスクを出さない(本物はサーバーから届く)
+  const base = () => { const b = JSON.parse(JSON.stringify(DEFAULT_STATE)); if(_pmCloudOn()){ b.goals = []; b.tasks = []; } return b; };
   try{
-    const raw = localStorage.getItem(LS_KEY);
-    if(raw){ return Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), JSON.parse(raw)); }
+    const raw = _psGet();
+    if(raw){ return Object.assign(base(), JSON.parse(raw)); }
   }catch(e){console.warn(e)}
-  return JSON.parse(JSON.stringify(DEFAULT_STATE));
+  return base();
 }
-function save(){ localStorage.setItem(LS_KEY, JSON.stringify(S)); }
+function save(){ _psSet(JSON.stringify(S)); }
 function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1400); }
 
 // ============ NAV ============
@@ -5735,7 +5786,7 @@ function importData(e){
   r.readAsText(f);
   e.target.value="";
 }
-function resetAll(){ localStorage.removeItem(LS_KEY); S = load(); renderAll(); toast("初期化しました"); }
+function resetAll(){ _psRemove(); S = load(); renderAll(); toast("初期化しました"); }
 
 // ============ CALENDAR ============
 if(!S.events) S.events = [];
@@ -8726,7 +8777,7 @@ function applySnapshotData(data, wsId){
     // 必ずフラグを下ろす：例外で固着すると以降の snapshot が全部止まるため
     _isRemoteUpdate = false;
   }
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+  try{ _psSet(JSON.stringify(S)); }catch(e){}
   ensureDefaults();
   loadCompanyProfile(); // 会社情報はローカル優先で再適用
   if(_currentUser){ renderAll(); }
@@ -9115,7 +9166,7 @@ function subscribeWeeklyReports(wsId){
     });
     if(mutated){
       logSync('snapshot.weeklyReports', {changes: qs.docChanges().length});
-      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ _psSet(JSON.stringify(S)); }catch(e){}
       // ★ withFocusPreserved 経由：入力中のテキストボックスを保護
       withFocusPreserved(() => { if(typeof renderReview === 'function') renderReview(); });
     }
@@ -9205,7 +9256,7 @@ function subscribeHistory(wsId){
       S.history.sort((a,b) => (b.ts||'').localeCompare(a.ts||''));
       if(S.history.length > 500) S.history = S.history.slice(0, 500);
       logSync('snapshot.history', {added: newEntries.length});
-      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ _psSet(JSON.stringify(S)); }catch(e){}
       withFocusPreserved(() => { if(typeof renderHistory === 'function') renderHistory(); });
     }
   }, err => {
@@ -9259,7 +9310,7 @@ function subscribeShared(wsId){
     });
     if(mutated){
       logSync('snapshot.shared', {changes: qs.docChanges().length});
-      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ _psSet(JSON.stringify(S)); }catch(e){}
       withFocusPreserved(() => {
         if(typeof renderDashboard === 'function') renderDashboard();
         if(typeof renderReview === 'function') renderReview();
@@ -9556,7 +9607,7 @@ const MT3 = (() => {
       if(!qs.metadata.fromCache) _subcollectionInitialLoaded.meetings = true;
       if(changed){
         rebuild();
-        try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+        try{ _psSet(JSON.stringify(S)); }catch(e){}
         renderSoon();
       }
       if(firstServer && !qs.metadata.fromCache){
@@ -10002,7 +10053,7 @@ function _subscribeMeetingsLegacyUnused(wsId){
     });
     if(mutated){
       logSync('snapshot.meetings', {changes: qs.docChanges().length, deferredRender: !!editingId});
-      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ _psSet(JSON.stringify(S)); }catch(e){}
       // ★ 誰かが会議メモを編集中（フォーカス中）の場合は、アクティブなエディタDOMを
       //   作り直すと入力途中の未保存テキストが消えるため、再描画を編集終了まで保留する。
       //   （モデル S.meetings へは反映済み。編集終了の blur で flush する）
@@ -10086,7 +10137,7 @@ async function syncMeetingsToSubcoll(wsId){
     }
     deletes.forEach(id => _lastSyncedMeetings.delete(id));
     if(needRender){
-      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ _psSet(JSON.stringify(S)); }catch(e){}
       withFocusPreserved(() => { if(typeof renderMeetings === 'function') renderMeetings(); });
     }
     logSync('write.meetings', {writes: writes.length, deletes: deletes.length});
@@ -10164,7 +10215,7 @@ const PM3 = (() => {
   function renderSoon(){
     clearTimeout(renderTimer);
     renderTimer = setTimeout(() => {
-      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ _psSet(JSON.stringify(S)); }catch(e){}
       try{ withFocusPreserved(() => renderAll()); }catch(e){ console.warn('[pm3] render', e); }
     }, 60);
   }
@@ -10325,7 +10376,7 @@ function subscribeWorkspaceCollections(wsId){
     // を引き起こしたため廃止した。代わりに上の鮮度判定（_modAt vs tombstone.at）で安全に処理する。
     if(mutated && _currentUser){
       try{
-        localStorage.setItem(LS_KEY, JSON.stringify(S));
+        _psSet(JSON.stringify(S));
       }catch(e){}
       // ★ renderAll() 自体が IME 合成中なら自動保留、フォーカスは保存／復元される（Phase 1）。
       //   なので無条件に呼べる。
@@ -10364,7 +10415,7 @@ function subscribeWorkspaceCollections(wsId){
     if(dropped > 0){
       if(kind === 'tasks') S.tasks = keep; else S.goals = keep;
       logSync('subscribe.initialReconcile', {kind, dropped});
-      try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+      try{ _psSet(JSON.stringify(S)); }catch(e){}
       try{ renderAll(); }catch(e){}
     }
   };
@@ -10872,7 +10923,7 @@ function leaveWorkspace(){
   delete S.ownerEmail;
   delete S.memberEmails;
   if(typeof _origSave === 'function') _origSave();
-  else localStorage.setItem(LS_KEY, JSON.stringify(S));
+  else _psSet(JSON.stringify(S));
   updateSyncStatus('offline');
   toast("ワークスペースから離脱しました");
   renderFirebaseSettings();
@@ -11082,7 +11133,7 @@ async function switchWorkspace(wsId){
     delete S.members;
     delete S._tombstones;
     S.workspaceId = wsId;
-    localStorage.setItem(LS_KEY, JSON.stringify(S));
+    _psSet(JSON.stringify(S));
   }catch(e){ console.warn('switchWorkspace: persist failed', e); }
   // 予算管理側で参照される共有キーも更新
   try{ localStorage.setItem('hittatsu_current_ws', wsId); }catch(e){}
@@ -11128,7 +11179,7 @@ async function createNewWorkspace(){
   const ok = await joinOrCreateWorkspace(null); // create
   if(!ok){ refreshWorkspaceSwitcher(); return; }
   if(typeof _origSave === 'function') _origSave();
-  else localStorage.setItem(LS_KEY, JSON.stringify(S));
+  else _psSet(JSON.stringify(S));
   subscribeWorkspace();
   renderAll();
   refreshWorkspaceSwitcher();
@@ -11849,7 +11900,7 @@ function _closeWsChoice(){
 // 作成/参加したWSを、再読み込みなしで開く(描画 → 購読 → 切替メニュー → メンバー登録)
 async function _afterWorkspaceChosen(){
   if(!S.workspaceId) return;
-  try{ if(typeof _origSave === 'function') _origSave(); else localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+  try{ if(typeof _origSave === 'function') _origSave(); else _psSet(JSON.stringify(S)); }catch(e){}
   try{ localStorage.setItem('hittatsu_current_ws', S.workspaceId); }catch(e){}
   _myWorkspacesFetchedAt = 0;
   renderAll(); // ゲートもここで外れる(描画してから本文を出す)
@@ -12616,7 +12667,7 @@ function saveProfile(){
   } else {
     // ローカルモード：S全体も保存
     if(typeof _origSave === 'function') _origSave();
-    else localStorage.setItem(LS_KEY, JSON.stringify(S));
+    else _psSet(JSON.stringify(S));
   }
   // 保存できたのでドラフトをクリア（次回モーダル展開時は S から再ロード）
   _clearProfileDraft();
@@ -12818,7 +12869,7 @@ async function deleteWorkspace(){
     delete S.wsName;
     ensureDefaults();
     if(typeof _origSave === 'function') _origSave();
-    else localStorage.setItem(LS_KEY, JSON.stringify(S));
+    else _psSet(JSON.stringify(S));
     updateSyncStatus('offline');
     applyProfileToHeader();
     renderAll();
@@ -12924,7 +12975,7 @@ function _inviteCandidates(){
   // Hittatsuのユーザー名簿(同じ端末に保存されている全ログインユーザー)+ 他ワークスペースのメンバー
   const map = new Map();
   try{
-    const dir = JSON.parse(localStorage.getItem('hittatsu_user_dir') || '{}');
+    const dir = JSON.parse((function(){ try{ const mm = window.top && window.top.__hittatsuMirror; if(mm && mm.get) return mm.get('hittatsu_user_dir'); }catch(e){} return localStorage.getItem('hittatsu_user_dir'); })() || '{}'); // 名簿は統合アプリが受け取って画面の中に置いている
     Object.values(dir || {}).forEach(u => { const e = String(u && u.email || '').toLowerCase(); if(e) map.set(e, { email: e, name: u.name || e.split('@')[0] }); });
   }catch(e){}
   (S.members || []).forEach(m => { if(m && m.email){ const e = m.email.toLowerCase(); if(!map.has(e)) map.set(e, { email: e, name: m.name || e }); } });
@@ -13141,7 +13192,7 @@ function logHistory(type, desc){
     appendHistoryToSubcoll(S.workspaceId, entry).catch(()=>{});
   }
   // localStorage 書込みのみ（FS への history 書込みは subcoll 側が担当）
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(S)); }catch(e){}
+  try{ _psSet(JSON.stringify(S)); }catch(e){}
 }
 function renderHistory(){
   const tb = document.querySelector('#historyTable tbody');

@@ -20,6 +20,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // server/masterSync.ts
 var masterSync_exports = {};
 __export(masterSync_exports, {
+  MASTER_LISTS: () => MASTER_LISTS,
   SHARED_WS: () => SHARED_WS,
   buildSnapshots: () => buildSnapshots,
   consolidateSalesData: () => consolidateSalesData,
@@ -27,6 +28,7 @@ __export(masterSync_exports, {
   isMorningRun: () => isMorningRun,
   jstDay: () => jstDay,
   lastScheduledJst: () => lastScheduledJst,
+  masterPlaces: () => masterPlaces,
   morningFollowUps: () => morningFollowUps,
   morningItems: () => morningItems,
   morningText: () => morningText,
@@ -839,6 +841,16 @@ async function salesRoots(db) {
   }
   return out;
 }
+var MASTER_LISTS = ["customers", "products"];
+async function masterPlaces(db) {
+  const roots = await salesRoots(db);
+  if (!roots.includes(SHARED_WS)) return roots.map((ws) => ({ ws, listWs: ws }));
+  const s = await db.doc(`sales3/${SHARED_WS}`).get();
+  const d = s.exists && s.data() || {};
+  if (!d.mastersSplitAt) return [{ ws: SHARED_WS, listWs: SHARED_WS }];
+  const companies = Array.isArray(d.mastersSplitTo) && d.mastersSplitTo.length ? d.mastersSplitTo : d.from || [];
+  return companies.map((ws) => ({ ws, listWs: SHARED_WS }));
+}
 async function consolidateSalesData(ctx, order, dryRun) {
   const { db } = ctx;
   const sharedDoc = await db.doc(`sales3/${SHARED_WS}`).get();
@@ -1020,7 +1032,8 @@ async function dedupeCompany(ctx, ws, dryRun = false) {
   }
   return res;
 }
-async function syncCompany(ctx, ws, out) {
+async function syncCompany(ctx, ws, out, listWs = ws) {
+  const wsOf = (name) => MASTER_LISTS.includes(name) ? ws : listWs;
   const { db } = ctx;
   const now = ctx.now || /* @__PURE__ */ new Date();
   const fields = await readFields(db, ws);
@@ -1049,7 +1062,7 @@ async function syncCompany(ctx, ws, out) {
         continue;
       }
       let msg = "";
-      if (which !== "stocks" && !deduped) {
+      if (which !== "stocks" && !deduped && listWs === ws) {
         deduped = true;
         const dd = await dedupeCompany(ctx, ws);
         if (dd.customers || dd.products) out.push({ ws, which: "dedupe", status: "done", msg: `\u91CD\u8907\u3092\u307E\u3068\u3081\u307E\u3057\u305F(\u5F97\u610F\u5148 ${dd.customers}\u4EF6\u30FB\u5546\u54C1 ${dd.products}\u4EF6)` });
@@ -1069,7 +1082,7 @@ async function syncCompany(ctx, ws, out) {
         const { values } = await ctx.sheets.values(url);
         const lists = {};
         const need = which === "customers" ? ["customers", "members", "deals", "quotes"] : ["products"];
-        for (const n of need) lists[n] = await readList(db, ws, n);
+        for (const n of need) lists[n] = await readList(db, wsOf(n), n);
         const d = {
           customers: lists.customers?.items || [],
           products: lists.products?.items || [],
@@ -1081,7 +1094,7 @@ async function syncCompany(ctx, ws, out) {
         const r = which === "customers" ? importCustomerRows(d, values || [], newId) : importProductRows(d, values || [], newId);
         if (!r.added && !r.updated && /見つかりません|データが空/.test(r.msg)) throw new Error(r.msg);
         await writeList(ctx, ws, which, d[which], r.next[which]);
-        if (which === "customers") await writeList(ctx, ws, "quotes", d.quotes, r.next.quotes);
+        if (which === "customers") await writeList(ctx, wsOf("quotes"), "quotes", d.quotes, r.next.quotes);
         msg = r.msg;
       }
       mods[which] = { modifiedTime: m?.modifiedTime || null, by: m?.by || void 0, syncedAt: now.toISOString(), auto: true };
@@ -1167,8 +1180,13 @@ async function purgeDeleted(ctx, now = /* @__PURE__ */ new Date()) {
   const out = {};
   const roots = await salesRoots(db);
   const lists = [["customers", 2], ["products", 2], ["deals", 30], ["activities", 30], ["quotes", 30], ["trips", 30], ["rideAlongs", 30], ["repairs", 30], ["expos", 30], ["leads", 30], ["members", 30]];
-  for (const ws of roots) {
-    for (const [name, days] of lists) {
+  const places = await masterPlaces(db);
+  const targets = roots.flatMap((ws) => lists.map(([n, days]) => [ws, n, days]));
+  for (const p of places) if (p.ws !== p.listWs) {
+    for (const [n, days] of lists) if (MASTER_LISTS.includes(n)) targets.push([p.ws, n, days]);
+  }
+  {
+    for (const [ws, name, days] of targets) {
       const cutoff = new Date(now.getTime() - days * 864e5).toISOString();
       const qs = await db.collection(`sales3/${ws}/${name}`).where("_deleted", "==", true).get();
       const refs = qs.docs.filter((d) => String(d.data()._delAt || "") < cutoff).map((d) => d.ref);
@@ -1184,9 +1202,10 @@ async function purgeDeleted(ctx, now = /* @__PURE__ */ new Date()) {
 }
 async function runMasterSync(ctx) {
   const out = [];
-  const roots = await salesRoots(ctx.db);
-  const wss = ctx.force?.ws ? [roots.includes(SHARED_WS) ? SHARED_WS : ctx.force.ws] : roots;
-  if (!ctx.force || ctx.force.which !== "sales") for (const ws of wss) await syncCompany(ctx, ws, out);
+  const places = await masterPlaces(ctx.db);
+  const forced = ctx.force?.ws ? places.filter((p) => p.ws === ctx.force.ws) : [];
+  const use = ctx.force?.ws ? forced.length ? forced : places.filter((p) => p.ws === SHARED_WS) : places;
+  if (!ctx.force || ctx.force.which !== "sales") for (const p of use) await syncCompany(ctx, p.ws, out, p.listWs);
   if (!ctx.force || ctx.force.which === "sales") await syncBudgetSales(ctx, out);
   try {
     const done = out.filter((x) => x.status !== "skip");
@@ -1266,12 +1285,15 @@ async function buildSnapshots(ctx, only) {
       const ids = refs.map((r) => r.id);
       const use = root === "sales3" && ids.includes(SHARED_WS) ? [SHARED_WS] : ids;
       for (const id of use) targets.push({ root, ws: id });
+      if (root === "sales3" && ids.includes(SHARED_WS)) {
+        for (const p of await masterPlaces(db)) if (p.ws !== p.listWs) targets.push({ root, ws: p.ws, lists: MASTER_LISTS });
+      }
     }
   }
   for (const t of targets) {
     const cols = await db.doc(`${t.root}/${t.ws}`).listCollections();
     for (const c of cols) {
-      if (c.id === "_snap") continue;
+      if (c.id === "_snap" || t.lists && !t.lists.includes(c.id)) continue;
       const n = (await c.count().get()).data().count;
       const key = `${t.root}/${t.ws}/${c.id}`;
       if (n < SNAP_MIN_DOCS) {
@@ -1353,6 +1375,7 @@ function morningFollowUps(out, pending, now = /* @__PURE__ */ new Date()) {
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
+  MASTER_LISTS,
   SHARED_WS,
   buildSnapshots,
   consolidateSalesData,
@@ -1360,6 +1383,7 @@ function morningFollowUps(out, pending, now = /* @__PURE__ */ new Date()) {
   isMorningRun,
   jstDay,
   lastScheduledJst,
+  masterPlaces,
   morningFollowUps,
   morningItems,
   morningText,
