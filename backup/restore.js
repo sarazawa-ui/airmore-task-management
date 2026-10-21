@@ -44,7 +44,9 @@ const paths = Object.keys(backup.docs);
 const now = new Set(Object.keys(current.docs));
 const added = paths.filter((p) => !now.has(p));
 const changed = paths.filter((p) => now.has(p) && JSON.stringify(current.docs[p]) !== JSON.stringify(backup.docs[p]));
-const extra = Object.keys(current.docs).filter((p) => !(p in backup.docs));
+// 版1のバックアップは「親の文書が無い場所の下」を含んでいないため、そこは比べない(--wipe でも消さない)
+const underOrphan = (p) => !(backup.version >= 2) && (current.orphanParents || []).some((o) => p.startsWith(o + "/"));
+const extra = Object.keys(current.docs).filter((p) => !(p in backup.docs) && !underOrphan(p));
 
 console.log("\n===== 復元の内容 =====");
 console.log(`  現在のドキュメント : ${current.docCount} 件`);

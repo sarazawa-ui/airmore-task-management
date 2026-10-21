@@ -92,13 +92,23 @@ function decode(v, db) {
 // 新しいコレクションを追加してもこのコードを直す必要はない。
 // 文書ごとに listCollections() を呼ぶ必要があり件数分の通信になるため、
 // 同時実行数を制限しつつ並列化して時間を短縮する（逐次だと数千件で20分規模になる）。
-async function dumpCollection(col, out, skip) {
+// 親の文書が無く、その下の一覧(サブコレクション)にだけデータがある場所(例: salesWs/shared/mFields)は
+// get() では見つからないため、listDocuments() で「中身の無い親」も拾ってたどる(2026-10-21 まで抜けていた)。
+// その親のパスは orphans に記録する(復元の --wipe が、古いバックアップを元に誤って消さないように)。
+async function dumpCollection(col, out, skip, orphans) {
   if (skip && skip(col.id)) return;
   const snap = await col.get();
+  const have = new Set(snap.docs.map((d) => d.ref.path));
+  const missing = (await col.listDocuments()).filter((r) => !have.has(r.path));
   await pool(snap.docs, 12, async (doc) => {
     out[doc.ref.path] = encode(doc.data());
     const subs = await doc.ref.listCollections();
-    for (const sub of subs) await dumpCollection(sub, out, skip);
+    for (const sub of subs) await dumpCollection(sub, out, skip, orphans);
+  });
+  await pool(missing, 12, async (ref) => {
+    const subs = await ref.listCollections();
+    if (subs.length && orphans) orphans.add(ref.path);
+    for (const sub of subs) await dumpCollection(sub, out, skip, orphans);
   });
 }
 
@@ -108,15 +118,18 @@ async function dumpCollection(col, out, skip) {
 // 誤って削除しないようにする。
 export async function exportAll(db, log = () => {}, { skipCollections = [] } = {}) {
   const docs = {};
+  const orphans = new Set();
   const skip = skipCollections.length ? (id) => skipCollections.includes(id) : null;
   const cols = await db.listCollections();
   for (const col of cols) {
     const before = Object.keys(docs).length;
-    await dumpCollection(col, docs, skip);
+    await dumpCollection(col, docs, skip, orphans);
     log(`  ${col.id}: ${Object.keys(docs).length - before} 件`);
   }
   return {
-    version: 1,
+    // 2: 親の文書が無い場所の下も含める(orphanParents)
+    version: 2,
+    orphanParents: [...orphans].sort(),
     project: serviceAccount().project_id,
     // 実行時刻は呼び出し側から渡さず、ここで確定させる（1回の実行で1つの時刻）
     takenAt: new Date().toISOString(),
@@ -148,9 +161,13 @@ export async function importAll(db, backup, { wipe = false } = {}) {
     const skipped = new Set(backup.skippedCollections || []);
     const inSkipped = (p) => p.split("/").some((seg, i) => i % 2 === 0 && skipped.has(seg));
     const current = {};
+    const orphans = new Set();
     const cols = await db.listCollections();
-    for (const col of cols) await dumpCollection(col, current);
-    const extra = Object.keys(current).filter((p) => !(p in backup.docs) && !inSkipped(p));
+    for (const col of cols) await dumpCollection(col, current, null, orphans);
+    // 版1のバックアップは「親の文書が無い場所の下」を含んでいないため、そこは消さない
+    const old = !(backup.version >= 2);
+    const underOrphan = (p) => [...orphans].some((o) => p.startsWith(o + "/"));
+    const extra = Object.keys(current).filter((p) => !(p in backup.docs) && !inSkipped(p) && !(old && underOrphan(p)));
     for (let i = 0; i < extra.length; i += 400) {
       const batch = db.batch();
       for (const p of extra.slice(i, i + 400)) {
