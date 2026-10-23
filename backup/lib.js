@@ -11,6 +11,24 @@ import { Readable } from "node:stream";
 
 export const BACKUP_PREFIX = "hittatsu-backup-";
 
+// Firestore への問い合わせを同時に何件まで送るか(全体での上限)。
+// 書き出しは文書ごとに「下の一覧があるか」を問い合わせるため件数分(20万件超)の通信になる。
+// 12件ずつでは30分前後かかるようになったため、全体の同時件数で抑えつつ数を増やす(2026-10-23)。
+const MAX_INFLIGHT = 64;
+let inflight = 0;
+const waiting = [];
+async function rpc(fn) {
+  if (inflight < MAX_INFLIGHT) inflight++;
+  else await new Promise((r) => waiting.push(r)); // 空いた枠をそのまま引き継ぐ
+  try {
+    return await fn();
+  } finally {
+    const next = waiting.shift();
+    if (next) next();
+    else inflight--;
+  }
+}
+
 // 複数の非同期処理を、同時実行数を制限しつつ全部走らせる（読み出しの高速化用）
 async function pool(items, limit, fn) {
   const out = new Array(items.length);
@@ -91,22 +109,22 @@ function decode(v, db) {
 // ルートから全コレクションをたどる。サブコレクションも再帰的に含めるため、
 // 新しいコレクションを追加してもこのコードを直す必要はない。
 // 文書ごとに listCollections() を呼ぶ必要があり件数分の通信になるため、
-// 同時実行数を制限しつつ並列化して時間を短縮する（逐次だと数千件で20分規模になる）。
+// 全体の同時件数(MAX_INFLIGHT)を制限しつつ並列化して時間を短縮する（逐次だと数千件で20分規模になる）。
 // 親の文書が無く、その下の一覧(サブコレクション)にだけデータがある場所(例: salesWs/shared/mFields)は
 // get() では見つからないため、listDocuments() で「中身の無い親」も拾ってたどる(2026-10-21 まで抜けていた)。
 // その親のパスは orphans に記録する(復元の --wipe が、古いバックアップを元に誤って消さないように)。
 async function dumpCollection(col, out, skip, orphans) {
   if (skip && skip(col.id)) return;
-  const snap = await col.get();
+  const snap = await rpc(() => col.get());
   const have = new Set(snap.docs.map((d) => d.ref.path));
-  const missing = (await col.listDocuments()).filter((r) => !have.has(r.path));
-  await pool(snap.docs, 12, async (doc) => {
+  const missing = (await rpc(() => col.listDocuments())).filter((r) => !have.has(r.path));
+  await pool(snap.docs, MAX_INFLIGHT, async (doc) => {
     out[doc.ref.path] = encode(doc.data());
-    const subs = await doc.ref.listCollections();
+    const subs = await rpc(() => doc.ref.listCollections());
     for (const sub of subs) await dumpCollection(sub, out, skip, orphans);
   });
-  await pool(missing, 12, async (ref) => {
-    const subs = await ref.listCollections();
+  await pool(missing, MAX_INFLIGHT, async (ref) => {
+    const subs = await rpc(() => ref.listCollections());
     if (subs.length && orphans) orphans.add(ref.path);
     for (const sub of subs) await dumpCollection(sub, out, skip, orphans);
   });
