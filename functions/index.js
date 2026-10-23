@@ -1034,11 +1034,14 @@ const BOT_HELP = [
   "・緊急度:",
   "",
   "スクリーンショットも添付してください。受け付けると受付番号をお返しします。",
+  "緊急度に「業務が止まっている」と書いた報告は、緊急としてすぐに対応します。",
   "",
   "■ 対応状況の確認",
   "「@Hittatsu Bot 進捗 12」のように、受付番号を付けて送ってください。",
 ].join("\n");
 const isBugReport = (t) => /バグ|不具合|エラー|おかしい|動かない/.test(t);
+// 緊急の報告: テンプレートの緊急度で「業務が止まっている」を選んだもの。題名に【緊急】を付け、Claude がすぐ修正して反映する
+const isUrgent = (t) => /業務が止まって/.test(t);
 // 「進捗 12」「#12 の状況」「受付番号12」などから受付番号を取り出す(進捗の問い合わせでなければ null)
 function progressQuery(t) {
   if (!/進捗|状況|どうなって|受付番号/.test(t)) return null;
@@ -1057,6 +1060,7 @@ function progressText(n, issue) {
   }
   if (labels.includes("確認待ち")) return head + "修正ができあがり、管理者の確認待ちです。確認がとれしだい反映します。";
   if (labels.includes("対応中")) return head + "原因を調べて修正を作っているところです。";
+  if (/^【チャット報告】【緊急】/.test(issue.title)) return head + `緊急として受け付け済みで、まもなく対応を始めます(受付 ${_jst(issue.created_at)})。`;
   return head + `受け付け済みで、まだ対応前です(受付 ${_jst(issue.created_at)})。平日9〜18時に1時間ごとに確認し、順に対応します。`;
 }
 
@@ -1075,8 +1079,9 @@ function bugIssue(ev, text) {
   const first = (what ? what.replace(/^起きたこと\s*[:：]\s*/, "") : lines[0]) || "(本文なし)";
   const files = (msg.attachment || []).map((a) => a.contentName || a.name).filter(Boolean);
   const url = chatThreadUrl(msg);
+  const urgent = isUrgent(text);
   return {
-    title: "【チャット報告】" + first.slice(0, 60),
+    title: "【チャット報告】" + (urgent ? "【緊急】" : "") + first.slice(0, 60),
     body: [
       `報告者: ${who}`,
       `日時: ${jst}(日本時間)`,
@@ -1089,7 +1094,9 @@ function bugIssue(ev, text) {
       "```",
       "",
       "---",
-      "Googleチャット「Hittatsuお知らせ」スペースの Hittatsu Bot が自動で登録しました。本番への反映は Yuta さんの OK のあとです。",
+      urgent
+        ? "Googleチャット「Hittatsuお知らせ」スペースの Hittatsu Bot が自動で登録しました。緊急(業務が止まっている)のため、CI合格で本番に反映します(データ変更を伴う修正は Yuta さんの OK のあと)。"
+        : "Googleチャット「Hittatsuお知らせ」スペースの Hittatsu Bot が自動で登録しました。本番への反映は Yuta さんの OK のあとです。",
     ].join("\n"),
   };
 }
@@ -1146,6 +1153,7 @@ async function handleChatEvent(ev, deps) {
     const issue = bugIssue(ev, text);
     const n = await deps.createIssue(issue);
     if (ref) await ref.set({ issue: n, at: new Date().toISOString(), title: issue.title });
+    if (isUrgent(text)) return chatReply(ev, `緊急として受け付けました(受付番号 ${n})。すぐに修正に取りかかり、できしだい反映します。反映したらこのスペースでお知らせします。`);
     return chatReply(ev, `受け付けました(受付番号 ${n})。内容を確認して修正を用意し、管理者の確認のあと反映します。反映したらこのスペースでお知らせします。`);
   } catch (e) {
     console.error("[hittatsuChatBot] report failed:", e && e.message);
