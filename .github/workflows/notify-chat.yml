@@ -23,10 +23,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      # チャットのバグ報告(題名に「チャット報告 #番号」)を直した反映なら、報告した人をメンションする
+      - name: 報告した人を調べる
+        id: who
+        if: ${{ contains(github.event.workflow_run.head_commit.message, 'チャット報告') }}
+        working-directory: backup
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          SUBJECT: ${{ github.event.workflow_run.head_commit.message }}
+        run: |
+          npm install --no-audit --no-fund > /dev/null 2>&1 || true
+          MENTION=$(node chat-reporters.mjs "$(printf '%s\n' "$SUBJECT" | head -n 1)" || true)
+          echo "mention=$MENTION" >> "$GITHUB_OUTPUT"
       - name: スペースへ知らせる
         env:
           GOOGLE_CHAT_WEBHOOK: ${{ secrets.GOOGLE_CHAT_WEBHOOK }}
           SUBJECT: ${{ github.event.workflow_run.head_commit.message }}
+          MENTION: ${{ steps.who.outputs.mention }}
         run: |
           # 変更の題名(1行目)から末尾の「(#12)」のような PR 番号を外す
           TITLE=$(printf '%s\n' "$SUBJECT" | head -n 1 | sed -E 's/ *\(#[0-9]+\)$//')
@@ -40,5 +53,9 @@ jobs:
             TEXT="【☑Hittatsu】自動確認の仕組みを更新しました($WHEN)
           $TITLE
           アプリの画面は変わりません。"
+          fi
+          if [ -n "$MENTION" ]; then
+            TEXT="$TEXT
+          $MENTION ご報告いただいた不具合を直しました。ありがとうございました。"
           fi
           node .github/e2e/notify.mjs "$TEXT"

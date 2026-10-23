@@ -1152,7 +1152,9 @@ async function handleChatEvent(ev, deps) {
   try {
     const issue = bugIssue(ev, text);
     const n = await deps.createIssue(issue);
-    if (ref) await ref.set({ issue: n, at: new Date().toISOString(), title: issue.title });
+    // 反映したときの「アプリを更新しました」で報告者にメンションできるよう、報告者の Chat ID(users/数字)も残す
+    const sender = String((ev.message.sender && ev.message.sender.name) || (ev.user && ev.user.name) || "");
+    if (ref) await ref.set({ issue: n, at: new Date().toISOString(), title: issue.title, ...(/^users\/\d+$/.test(sender) ? { sender } : {}) });
     if (isUrgent(text)) return chatReply(ev, `緊急として受け付けました(受付番号 ${n})。すぐに修正に取りかかり、できしだい反映します。反映したらこのスペースでお知らせします。`);
     return chatReply(ev, `受け付けました(受付番号 ${n})。内容を確認して修正を用意し、管理者の確認のあと反映します。反映したらこのスペースでお知らせします。`);
   } catch (e) {
