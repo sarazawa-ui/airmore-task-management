@@ -1068,7 +1068,110 @@ function chatThreadUrl(message) {
   const m = /^spaces\/([^/]+)\/threads\/([^/]+)$/.exec((message && message.thread && message.thread.name) || "");
   return m ? `https://chat.google.com/room/${m[1]}/${m[2]}` : "";
 }
-function bugIssue(ev, text) {
+// 報告に添付された画像などを Chat から受け取り、非公開の Hittatsu リポジトリの chat-attachments ブランチに置く
+//   (課題に画像を直接付ける API は無いため。課題の本文から開ける・修正するときに Claude が読める)
+//   Chat からの受け取りはアプリとしての認証(chat.bot)、置くのは GITHUB_ISSUE_TOKEN(Contents の書き込みが必要)。
+//   どちらかが使えないときは、これまでどおり「スレッドで確認」と書くだけにする
+const ATTACH_BRANCH = "chat-attachments";
+const ATTACH_MAX_BYTES = 8 * 1024 * 1024;
+const ATTACH_MAX_COUNT = 4;
+let _chatAuth = null;
+async function chatAppToken() {
+  if (!_chatAuth) _chatAuth = new google.auth.GoogleAuth({ scopes: ["https://www.googleapis.com/auth/chat.bot"] });
+  const c = await _chatAuth.getClient();
+  const t = await c.getAccessToken();
+  return (t && t.token) || t;
+}
+async function downloadChatAttachment(a) {
+  const rn = a && a.attachmentDataRef && a.attachmentDataRef.resourceName;
+  if (!rn) return null; // Google ドライブのファイルなどは取り込まない
+  const token = await chatAppToken();
+  const r = await fetch(`https://chat.googleapis.com/v1/media/${String(rn).split("/").map(encodeURIComponent).join("/")}?alt=media`, {
+    headers: { Authorization: "Bearer " + token },
+  });
+  if (!r.ok) throw new Error(`Chat から添付を受け取れませんでした(${r.status})`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  return buf.length > ATTACH_MAX_BYTES ? null : buf;
+}
+function _ghHeaders() {
+  return {
+    Authorization: "Bearer " + String(GITHUB_ISSUE_TOKEN.value() || "").trim(),
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "hittatsu-chat-bot",
+    "Content-Type": "application/json",
+  };
+}
+/** 添付を置くブランチが無ければ main から作る(初回だけ) */
+async function ensureAttachBranch() {
+  const h = _ghHeaders();
+  const has = await fetch(`https://api.github.com/repos/${BUG_REPO}/git/ref/heads/${ATTACH_BRANCH}`, { headers: h });
+  if (has.ok) return;
+  const main = await fetch(`https://api.github.com/repos/${BUG_REPO}/git/ref/heads/main`, { headers: h });
+  if (!main.ok) throw new Error(`GitHubのブランチを確認できませんでした(${main.status})`);
+  const sha = (await main.json()).object.sha;
+  const r = await fetch(`https://api.github.com/repos/${BUG_REPO}/git/refs`, { method: "POST", headers: h, body: JSON.stringify({ ref: `refs/heads/${ATTACH_BRANCH}`, sha }) });
+  if (!r.ok && r.status !== 422) throw new Error(`GitHubに添付用のブランチを作れませんでした(${r.status})`);
+}
+async function putAttachmentToGitHub(path, buf, message) {
+  let r = await putContent(path, buf, message);
+  if (r.status === 404 || r.status === 422) {
+    await ensureAttachBranch();
+    r = await putContent(path, buf, message);
+  }
+  if (!r.ok) throw new Error(`GitHubに添付を置けませんでした(${r.status})`);
+  return `https://github.com/${BUG_REPO}/blob/${ATTACH_BRANCH}/${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+function putContent(path, buf, message) {
+  return fetch(`https://api.github.com/repos/${BUG_REPO}/contents/${path.split("/").map(encodeURIComponent).join("/")}`, {
+    method: "PUT",
+    headers: _ghHeaders(),
+    body: JSON.stringify({ message, content: buf.toString("base64"), branch: ATTACH_BRANCH }),
+  });
+}
+function attachmentName(a, i) {
+  const raw = String((a && (a.contentName || a.name)) || `file${i + 1}`).split("/").pop();
+  const ext = (/\.[A-Za-z0-9]{1,8}$/.exec(raw) || [""])[0];
+  const base = raw.slice(0, raw.length - ext.length).replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "file";
+  return `${i + 1}-${base}${ext.toLowerCase()}`;
+}
+/** 添付を置いて、{ name, url, image } の一覧を返す(置けなかったものは url なし) */
+async function saveChatAttachments(msg, deps) {
+  const list = (msg.attachment || []).slice(0, ATTACH_MAX_COUNT);
+  if (!list.length) return [];
+  const at = msg.createTime ? new Date(msg.createTime) : new Date();
+  const stamp = new Date(at.getTime() + 9 * 3600e3).toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
+  const id = String(msg.name || "").split("/").pop().replace(/[^A-Za-z0-9_-]/g, "").slice(0, 24) || "msg";
+  const started = Date.now();
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    const name = (a && (a.contentName || a.name)) || `添付${i + 1}`;
+    const image = /^image\//.test(String((a && a.contentType) || ""));
+    // 応答の期限(30秒)に間に合うよう、15秒を過ぎたら残りはスレッドでの確認にする
+    if (Date.now() - started > 15000) { out.push({ name, image }); continue; }
+    try {
+      const buf = await deps.downloadAttachment(a);
+      if (!buf) { out.push({ name, image }); continue; }
+      const url = await deps.putAttachment(`chat-reports/${stamp}-${id}/${attachmentName(a, i)}`, buf, `チャット報告の添付: ${name}`);
+      out.push({ name, image, url });
+    } catch (e) {
+      console.warn("[hittatsuChatBot] attachment skipped:", e && e.message);
+      out.push({ name, image });
+    }
+  }
+  return out;
+}
+function attachmentLines(saved) {
+  if (!saved.length) return ["添付: なし"];
+  const ok = saved.filter((f) => f.url);
+  const rest = saved.filter((f) => !f.url).map((f) => f.name);
+  const lines = [`添付: ${saved.map((f) => f.name).join("、")}${rest.length ? `(${rest.join("、")}はスレッドで確認)` : ""}`];
+  for (const f of ok) lines.push("", f.image ? `![${f.name}](${f.url}?raw=true)` : `[${f.name}](${f.url})`);
+  return lines;
+}
+
+function bugIssue(ev, text, saved) {
   const msg = ev.message || {};
   const who = (msg.sender && msg.sender.displayName) || (ev.user && ev.user.displayName) || "不明";
   const at = msg.createTime ? new Date(msg.createTime) : new Date();
@@ -1077,7 +1180,7 @@ function bugIssue(ev, text) {
   // 題名は「起きたこと」の行を優先し、なければ最初の行
   const what = lines.find((s) => /^起きたこと\s*[:：]\s*\S/.test(s));
   const first = (what ? what.replace(/^起きたこと\s*[:：]\s*/, "") : lines[0]) || "(本文なし)";
-  const files = (msg.attachment || []).map((a) => a.contentName || a.name).filter(Boolean);
+  const files = saved || (msg.attachment || []).map((a) => ({ name: a.contentName || a.name })).filter((f) => f.name);
   const url = chatThreadUrl(msg);
   const urgent = isUrgent(text);
   return {
@@ -1086,7 +1189,7 @@ function bugIssue(ev, text) {
       `報告者: ${who}`,
       `日時: ${jst}(日本時間)`,
       ...(url ? [`スレッド: ${url}`] : []),
-      files.length ? `添付: ${files.join("、")}(画像はスレッドで確認)` : "添付: なし",
+      ...(saved ? attachmentLines(saved) : [files.length ? `添付: ${files.map((f) => f.name).join("、")}(画像はスレッドで確認)` : "添付: なし"]),
       "",
       "### 報告内容",
       "```",
@@ -1150,7 +1253,8 @@ async function handleChatEvent(ev, deps) {
   const seen = ref ? (await ref.get()).data() : null;
   if (seen && seen.issue) return chatReply(ev, `受け付けました(受付番号 ${seen.issue})。`);
   try {
-    const issue = bugIssue(ev, text);
+    const saved = deps.saveAttachments ? await deps.saveAttachments(ev.message) : null;
+    const issue = bugIssue(ev, text, saved);
     const n = await deps.createIssue(issue);
     // 反映したときの「アプリを更新しました」で報告者にメンションできるよう、報告者の Chat ID(users/数字)も残す
     const sender = String((ev.message.sender && ev.message.sender.name) || (ev.user && ev.user.name) || "");
@@ -1169,5 +1273,10 @@ exports.hittatsuChatBot = onRequest({ secrets: [GITHUB_ISSUE_TOKEN], timeoutSeco
     return;
   }
   const ev = parseChatEvent(req.body);
-  res.json(await handleChatEvent(ev, { db: admin.firestore(), createIssue: createBugIssue, getIssue: getBugIssue }));
+  res.json(await handleChatEvent(ev, {
+    db: admin.firestore(),
+    createIssue: createBugIssue,
+    getIssue: getBugIssue,
+    saveAttachments: (msg) => saveChatAttachments(msg, { downloadAttachment: downloadChatAttachment, putAttachment: putAttachmentToGitHub }),
+  }));
 });
