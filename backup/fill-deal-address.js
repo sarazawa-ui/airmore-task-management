@@ -1,13 +1,16 @@
-// 案件の住所を、ユーザー名から得意先マスタを引いて入れる(一回きりの作業)。内容は fill-deal-address-lib.js
-//   node fill-deal-address.js                                   … 確認だけ(何も書かない)
-//   node fill-deal-address.js --confirm 住所を入れる --hash <確認時の番号> [--exclude id,id]
-//                                                               … 住所を入れる(先にバックアップを取ること)
-// 環境変数: GCP_SA_KEY / REPORT_PUBKEY(名前・住所の一覧を暗号化する公開鍵。無ければ一覧は出さない)
-// ログは公開されるため件数だけを出す。一覧は暗号化して report.enc に書き、ログにも出す。
+// 案件の住所を、ユーザー名から引いた住所で入れる(一回きりの作業)。内容は fill-deal-address-lib.js
+//   node fill-deal-address.js                         … 確認だけ(何も書かない)。得意先マスタとの照合結果を出す
+//   node fill-deal-address.js --confirm 住所を入れる --hash <書く予定の番号>
+//                                                     … fill-deal-address.plan.enc の案件に住所を入れる(先にバックアップを取ること)
+// 書く予定(案件ID・住所・確認時のユーザー名)は、得意先マスタと Googleマップの場所検索の結果から作り、
+// Yuta さんが確認した一覧。名前・住所を含むため、サービスアカウントの公開鍵で暗号化して置く(秘密鍵を持つこの作業だけが読める)。
+// 環境変数: GCP_SA_KEY / REPORT_PUBKEY(確認の一覧を暗号化する公開鍵。無ければ一覧は出さない)
+// ログは公開されるため件数だけを出す。
 import admin from "firebase-admin";
-import { writeFileSync } from "node:fs";
+import crypto from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { initFirestore } from "./lib.js";
-import { BY, CLIENT_WRITE_VERSION, buildPlan, contentWithoutAddress, fingerprint, fvWithoutAddress, planHash, sealReport } from "./fill-deal-address-lib.js";
+import { BY, CLIENT_WRITE_VERSION, buildPlan, contentWithoutAddress, fingerprint, fvWithoutAddress, openReport, planHash, sealReport } from "./fill-deal-address-lib.js";
 
 const arg = (k) => {
   const i = process.argv.indexOf(k);
@@ -15,7 +18,6 @@ const arg = (k) => {
 };
 const write = arg("--confirm") === "住所を入れる";
 const wantHash = arg("--hash");
-const exclude = new Set(arg("--exclude").split(/[,\s]+/).filter(Boolean));
 
 const db = initFirestore();
 const shared = (await db.doc("sales3/shared").get()).data() || {};
@@ -29,7 +31,7 @@ for (const co of companies) customers[co] = await readList(`sales3/${co}/custome
 if (!shared.mastersSplitAt) customers.shared = await readList("sales3/shared/customers");
 console.log(`案件 ${deals.length}件 / 得意先 ${Object.values(customers).reduce((n, a) => n + a.length, 0)}件(全社の合計)`);
 
-const { counts, rows, plan, planHash: hash } = buildPlan(deals, customers);
+const { counts, rows, planHash: hash } = buildPlan(deals, customers);
 console.log(
   [
     `削除されていない案件: ${counts.all}件`,
@@ -39,7 +41,7 @@ console.log(
     `    候補の住所が複数(入れない): ${counts.multi}件`,
     `    得意先は見つかるが住所が空(入れない): ${counts.noaddr}件`,
     `    得意先マスタに見つからない(入れない): ${counts.none}件`,
-    `確認の番号: ${hash}`,
+    `照合結果の番号: ${hash}`,
   ].join("\n"),
 );
 
@@ -54,16 +56,26 @@ if (pub) {
   console.log("----- REPORT END -----");
 }
 
+// 書く予定の暗号化に使う公開鍵(サービスアカウントの鍵から作る。公開してよい)
+const sa = JSON.parse(process.env.GCP_SA_KEY);
+console.log("書く予定の暗号化に使う公開鍵:");
+console.log(crypto.createPublicKey(sa.private_key).export({ type: "spki", format: "pem" }).trim());
+
+const PLAN_FILE = "fill-deal-address.plan.enc";
 if (!write) {
+  if (existsSync(PLAN_FILE)) {
+    const p = openReport(readFileSync(PLAN_FILE, "utf8").trim(), sa.private_key);
+    console.log(`書く予定: ${p.length}件(番号 ${planHash(p)})`);
+  }
   console.log("(確認だけ。何も書いていません)");
   process.exit(0);
 }
-if (!wantHash || wantHash !== hash) {
-  console.error(`中止: 確認の番号が違います(確認時 ${wantHash || "未指定"} / 今 ${hash})。確認したときからデータが変わっています。確認からやり直してください。`);
+const todo = openReport(readFileSync(PLAN_FILE, "utf8").trim(), sa.private_key);
+if (!wantHash || wantHash !== planHash(todo)) {
+  console.error(`中止: 書く予定の番号が違います(指定 ${wantHash || "なし"} / 書く予定 ${planHash(todo)})`);
   process.exit(1);
 }
-const todo = plan.filter((p) => !exclude.has(p.id));
-console.log(`住所を入れます: ${todo.length}件(除外 ${plan.length - todo.length}件)`);
+console.log(`住所を入れます: ${todo.length}件`);
 
 const before = new Map();
 const result = { written: 0, skipped: 0 };

@@ -144,3 +144,12 @@ export function sealReport(obj, publicKeyPem) {
   const wrapped = crypto.publicEncrypt({ key: publicKeyPem, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, key);
   return [wrapped, iv, tag, body].map((b) => b.toString("base64")).join(".");
 }
+
+/** sealReport の逆(秘密鍵で開く) */
+export function openReport(sealed, privateKeyPem) {
+  const [wrapped, iv, tag, body] = sealed.split(".").map((x) => Buffer.from(x, "base64"));
+  const key = crypto.privateDecrypt({ key: privateKeyPem, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, wrapped);
+  const d = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  d.setAuthTag(tag);
+  return JSON.parse(zlib.gunzipSync(Buffer.concat([d.update(body), d.final()])).toString("utf8"));
+}
