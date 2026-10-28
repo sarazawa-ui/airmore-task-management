@@ -1,0 +1,88 @@
+name: 案件の住所の補完
+
+# 案件のユーザー名から得意先マスタを引き、住所が空の案件にだけ住所を入れる(一回きりの作業)。
+# 既定は「確認だけ(書き込まない)」。PR の段階でも確認だけを行う。
+# 実際に入れるには confirm に「住所を入れる」、hash に確認時の番号を入れて手動で実行する(先に全データをバックアップする)。
+# 記録は公開されるため件数だけを出す。名前・住所の一覧は下の公開鍵で暗号化して出す(作業した Claude だけが読める)。
+on:
+  pull_request:
+    paths:
+      - "backup/fill-deal-address*.js"
+      - ".github/workflows/fill-deal-address.yml"
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "実際に入れる場合のみ「住所を入れる」と入力(空欄なら確認だけ)"
+        required: false
+        default: ""
+      hash:
+        description: "確認時に出た「確認の番号」"
+        required: false
+        default: ""
+      exclude:
+        description: "入れない案件のID(カンマ区切り)"
+        required: false
+        default: ""
+
+concurrency:
+  group: hittatsu-fill-deal-address
+  cancel-in-progress: false
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 依存パッケージをインストール
+        working-directory: backup
+        run: npm install --no-audit --no-fund
+
+      - name: 書く前に全データをバックアップ
+        if: github.event_name == 'workflow_dispatch' && inputs.confirm == '住所を入れる'
+        working-directory: backup
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          KEEP_DAYS: "90"
+        run: node backup.js
+
+      - name: 確認(または住所を入れる)
+        working-directory: backup
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          IN_CONFIRM: ${{ inputs.confirm }}
+          IN_HASH: ${{ inputs.hash }}
+          IN_EXCLUDE: ${{ inputs.exclude }}
+          REPORT_PUBKEY: |
+            -----BEGIN PUBLIC KEY-----
+            MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAl6PfFYDYpjghZWQJMNDn
+            sm3DNPeKzVIQlKM85djqPpIY4kYMRxMHQgDjQmfzsAzrbEdGeOpocVkM22H9VG8I
+            Mi8OubtK8aWrUmBlmjUI9QF+6wpKfWHeTn/fR7JEkzwPXBYpK9lmL5R315U3OkSo
+            4+wPVTBqHgpFAoiPcqKHFlytWnMzrngL/i53h8yrAOiqgtrF3hJucFvxqL+SNxXl
+            qJ14BAyS2XlFsZ2zgc4oRPcATRuJCJXTJrR85ufMCzCOA4S4MzI6wYmH1fPoFNrm
+            ZS/lKibQd3VGDsRCSvlI+cwyirFPVR7e2zN4aRkmrUmdW6idmYk4yz0kq6iM2Dpw
+            Y1iwfZRPJYRwV/dkzAFMMNPxZSrXxR9o6r7GJzK3hjkvO5GeRoOrh1lXy0CpBOqr
+            Bkv2bKC/y0fEOZCqMUSDvdtg79jmhu3dmGXg6FlV872sMOAmQMfdj0Vb3yre/vPu
+            yOQREyDc19EnVi1dmhpwrhRA5e1ZXvYd5OxOf8+O2RbBAgMBAAE=
+            -----END PUBLIC KEY-----
+        run: |
+          if [ "$IN_CONFIRM" = "住所を入れる" ]; then
+            node fill-deal-address.js --confirm "$IN_CONFIRM" --hash "$IN_HASH" --exclude "$IN_EXCLUDE"
+          else
+            node fill-deal-address.js
+          fi
+
+      - name: 暗号化した一覧を保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fill-deal-address-report
+          path: backup/report.enc
+          if-no-files-found: ignore
+          retention-days: 3
