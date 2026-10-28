@@ -6,6 +6,7 @@
 //   ・書く前に1件ずつ「住所がまだ空・ユーザー名が確認時と同じ」をトランザクションで確かめる
 //   公開リポジトリの記録(ログ)には件数だけを出す。名前・住所の一覧は暗号化して出す(fill-deal-address.js)。
 import crypto from "node:crypto";
+import zlib from "node:zlib";
 
 export const BY = "住所の補完";
 export const CLIENT_WRITE_VERSION = 4; // 画面側(budget/firebase.real.js)と同じ値
@@ -133,12 +134,12 @@ export function fvWithoutAddress(d) {
   return JSON.stringify(sortKeysDeep(fv));
 }
 
-/** 報告(名前・住所を含む)を公開鍵で暗号化する: RSA-OAEP(SHA-256) で包んだ AES-256-GCM */
+/** 報告(名前・住所を含む)を gzip して公開鍵で暗号化する: RSA-OAEP(SHA-256) で包んだ AES-256-GCM */
 export function sealReport(obj, publicKeyPem) {
   const key = crypto.randomBytes(32);
   const iv = crypto.randomBytes(12);
   const c = crypto.createCipheriv("aes-256-gcm", key, iv);
-  const body = Buffer.concat([c.update(Buffer.from(JSON.stringify(obj), "utf8")), c.final()]);
+  const body = Buffer.concat([c.update(zlib.gzipSync(Buffer.from(JSON.stringify(obj), "utf8"))), c.final()]);
   const tag = c.getAuthTag();
   const wrapped = crypto.publicEncrypt({ key: publicKeyPem, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, key);
   return [wrapped, iv, tag, body].map((b) => b.toString("base64")).join(".");

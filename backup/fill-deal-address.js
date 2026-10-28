@@ -45,7 +45,9 @@ console.log(
 
 const pub = process.env.REPORT_PUBKEY;
 if (pub) {
-  const sealed = sealReport({ at: new Date().toISOString(), counts, hash, rows }, pub);
+  // 一覧は小さく(ログで読めるように): 案件ID・件名・ユーザー名・結果と、候補の得意先(最大3件)
+  const brief = rows.map((r) => [r.id, r.title, r.endUser, r.kind, r.address || "", (r.hits || []).slice(0, 3).map((c) => [c.co, c.code, c.name, c.site, c.address])]);
+  const sealed = sealReport({ at: new Date().toISOString(), counts, hash, rows: brief }, pub);
   writeFileSync("report.enc", sealed);
   console.log("----- REPORT BEGIN -----");
   for (let i = 0; i < sealed.length; i += 3000) console.log(sealed.slice(i, i + 3000));
