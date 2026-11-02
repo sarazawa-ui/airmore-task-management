@@ -1,0 +1,57 @@
+name: 過去の時点の案件データを控える
+
+# 巻き戻り事故(2026-11-02)の調査・復元用。読むだけで、データは何も書き換えない。
+# Firestore の「過去の時点の読み取り」で案件などを読み、Google ドライブに控える。記録には件数だけを出す。
+on:
+  pull_request:
+    paths:
+      - "backup/snapshot-past.js"
+      - ".github/workflows/snapshot-past.yml"
+  workflow_dispatch:
+    inputs:
+      at:
+        description: "読む時点(UTC ISO、カンマ区切り。空なら既定)"
+        required: false
+        default: ""
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 依存パッケージをインストール
+        working-directory: backup
+        run: npm install --no-audit --no-fund
+      - name: 過去の時点を読む
+        working-directory: backup
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          AT_LIST: ${{ inputs.at }}
+          REPORT_PUBKEY: |
+            -----BEGIN PUBLIC KEY-----
+            MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAneA7UjJI3/CFCMnHYdaT
+            LLuZMwDHygYAnGaPHshnqdex2NDl7Dl/4uX12dOsJzkSVtnFZHhy51mYZjFwU8hZ
+            F3hwPWadnj6COFL+UpAL76pl4l/c9G2/8vaiPwMQd9Yu/2VebhToublaOfHZ/ZvQ
+            B3ctBI4eS8CROhTJLKHU9YfHql3VaRkWwMrssrQiEW6UsrkVeDx7gKYnnvyOB83M
+            k2ZAxvb9ZZHr8jrh9XGoSr3bFWZs14ow3nc/U09fTTBzezreNxMifqNyZX+0JFPi
+            M6fdgUfEJ4BeWo2kG8y+/MSqrfMW8EZKaIaTQNAVjVoQnoPuaZyshpnEFmueFyzS
+            e8UnlsKKw5K4NYiE3Bus9w4/TShnyP1PnE4oMWRR8BsN0JBQiUp7sZJVyjFzaK1H
+            sd76BAQa6MrCcLp5E8yYZO2W64ETthhJ0OJiwrj8ki7RENUrRmesePMMuxbeSQXs
+            rpU0RohWL57DK6UKeJwK7xHwB5P8wrPAScKvEfmzAej3AgMBAAE=
+            -----END PUBLIC KEY-----
+        run: node snapshot-past.js
+      - name: 暗号化した中身を保存
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-past
+          path: |
+            backup/report.enc
+            backup/full.enc
+          if-no-files-found: ignore
+          retention-days: 7
