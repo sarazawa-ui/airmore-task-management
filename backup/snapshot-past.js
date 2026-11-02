@@ -64,6 +64,42 @@ const meta = {};
   for (const [k, v] of Object.entries(meta.old)) console.log(`古い置き場所(会社${Object.keys(meta.old).indexOf(k) + 1}): 案件 ${v.deals}件 / 最終書き込み ${v.lastWrite} / 今日の書き込み ${v.writtenToday}件`);
 }
 
+// 一覧のまとめ(_snap)の確認: 画面は開くときにまとめを読み、その時刻以降に変わった文書だけを受け取る
+{
+  const zlib = await import("node:zlib");
+  const toMs = (v) => (v == null ? 0 : typeof v === "number" ? v : v.toMillis ? v.toMillis() : v.$ts ? Date.parse(v.$ts) : Date.parse(v) || 0);
+  const live = new Map((await db.collection(`${BASE}/deals`).get()).docs.map((d) => [d.id, d.data()]));
+  const places = ["shared", ...Object.keys(meta.old)];
+  meta.snaps = {};
+  for (const [pi, ws] of places.entries()) {
+    const m = await db.doc(`sales3/${ws}/_snap/deals`).get();
+    if (!m.exists) { console.log(`まとめ(置き場所${pi}): なし`); continue; }
+    const md = m.data();
+    const rows = [];
+    for (let k = 0; k < (md.chunks || 0); k++) {
+      const p = (await db.doc(`sales3/${ws}/_snap/deals#${k}`).get()).data();
+      if (!p || p.rev !== md.rev) { rows.length = 0; break; }
+      rows.push(...JSON.parse(zlib.gunzipSync(Buffer.from(p.gz)).toString("utf8")));
+    }
+    let same = 0, older = 0, newer = 0, missing = 0;
+    for (const r of rows) {
+      const L = live.get(r.id);
+      if (!L) { missing++; continue; }
+      const a = toMs(r.data && r.data._at), b = toMs(L._at);
+      if (a === b) same++; else if (a < b) older++; else newer++;
+    }
+    const at = md.at && md.at.toDate ? md.at.toDate().toISOString() : String(md.at);
+    const built = md.builtAt && md.builtAt.toDate ? md.builtAt.toDate().toISOString() : String(md.builtAt);
+    meta.snaps[ws] = { at, built, count: md.count, rows: rows.length, same, older, newer, missing };
+    console.log(`まとめ(置き場所${pi}): 時刻 ${at} 作成 ${built} 件数 ${md.count} 読めた ${rows.length} / 今の案件と比べて 同じ ${same}・古い ${older}・新しい ${newer}・今は無い ${missing}`);
+  }
+  for (const id of ["snapshots", "masterSheets", "purge"]) {
+    const d = (await db.doc(`syncLog/${id}`).get()).data() || {};
+    console.log(`記録 syncLog/${id}: ${d.at || (d.ranAt && d.ranAt.toDate && d.ranAt.toDate().toISOString()) || "?"}`);
+  }
+}
+if (process.env.SKIP_PAST === "1") { console.log("(読むだけ。データは何も書き換えていません)"); process.exit(0); }
+
 const drive = process.env.GDRIVE_FOLDER_ID ? driveClient() : null;
 const stamp = (t) => new Date(t + 9 * 3600e3).toISOString().slice(0, 16).replace(/[-:T]/g, "").replace(/^(\d{8})/, "$1-");
 const results = [];

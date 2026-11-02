@@ -32,6 +32,7 @@ jobs:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
           AT_LIST: ${{ inputs.at }}
+          SKIP_PAST: "1"
           REPORT_PUBKEY: |
             -----BEGIN PUBLIC KEY-----
             MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAneA7UjJI3/CFCMnHYdaT
