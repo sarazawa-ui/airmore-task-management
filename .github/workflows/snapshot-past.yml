@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - "backup/snapshot-past.js"
+      - "backup/diag-deal-scope.js"
       - ".github/workflows/snapshot-past.yml"
   workflow_dispatch:
     inputs:
@@ -45,7 +46,7 @@ jobs:
             sd76BAQa6MrCcLp5E8yYZO2W64ETthhJ0OJiwrj8ki7RENUrRmesePMMuxbeSQXs
             rpU0RohWL57DK6UKeJwK7xHwB5P8wrPAScKvEfmzAej3AgMBAAE=
             -----END PUBLIC KEY-----
-        run: node snapshot-past.js
+        run: node diag-deal-scope.js
       - name: 暗号化した中身を保存
         if: always()
         uses: actions/upload-artifact@v4
