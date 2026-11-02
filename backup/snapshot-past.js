@@ -45,6 +45,25 @@ async function readAt(t) {
   return out;
 }
 
+// 置き場所の確認: sales3/shared の印と、各社の古い置き場所(まとめる前)の案件
+const meta = {};
+{
+  const sh = (await db.doc(BASE).get()).data() || {};
+  meta.shared = { migratedAt: encode(sh.migratedAt) || null, mastersSplitAt: encode(sh.mastersSplitAt) || null, from: sh.from || null, keys: Object.keys(sh) };
+  const toMs = (v) => (v == null ? 0 : typeof v === "number" ? v : v.toMillis ? v.toMillis() : Date.parse(v) || 0);
+  meta.old = {};
+  for (const ref of await db.collection("sales3").listDocuments()) {
+    if (ref.id === "shared") continue;
+    const snap = await ref.collection("deals").get();
+    let max = 0, cnt = 0, recent = 0;
+    for (const d of snap.docs) { const x = d.data(); if (x._deleted) continue; cnt++; const t = toMs(x._at); if (t > max) max = t; if (t > Date.parse("2026-11-01T15:00:00Z")) recent++; }
+    meta.old[ref.id] = { deals: cnt, lastWrite: max ? new Date(max).toISOString() : null, writtenToday: recent };
+  }
+  const nShared = (await db.collection(`${BASE}/deals`).get()).docs.filter((d) => !d.data()._deleted).length;
+  console.log(`まとめた置き場所: 印 migratedAt ${meta.shared.migratedAt ? "あり" : "なし"} / 削除されていない案件 ${nShared}件`);
+  for (const [k, v] of Object.entries(meta.old)) console.log(`古い置き場所(会社${Object.keys(meta.old).indexOf(k) + 1}): 案件 ${v.deals}件 / 最終書き込み ${v.lastWrite} / 今日の書き込み ${v.writtenToday}件`);
+}
+
 const drive = process.env.GDRIVE_FOLDER_ID ? driveClient() : null;
 const stamp = (t) => new Date(t + 9 * 3600e3).toISOString().slice(0, 16).replace(/[-:T]/g, "").replace(/^(\d{8})/, "$1-");
 const results = [];
@@ -71,7 +90,7 @@ const pub = process.env.REPORT_PUBKEY;
 if (pub) {
   // 時点ごとの案件の要約(件名・ステージ・更新時刻・更新者)と、全データ
   const brief = (d) => Object.fromEntries(Object.entries(d.deals || {}).map(([id, x]) => [id, [x.title || x.name || "", x.stage || "", x._at || null, x._by || "", x.deletedAt || x._deleted || x.deleted || null]]));
-  const sealed = sealReport({ at: new Date(now).toISOString(), points: results.map((r) => ({ label: r.label, counts: r.counts, hash: r.hash, saved: r.saved, deals: brief(r.data) })) }, pub);
+  const sealed = sealReport({ at: new Date(now).toISOString(), meta, points: results.map((r) => ({ label: r.label, counts: r.counts, hash: r.hash, saved: r.saved, deals: brief(r.data) })) }, pub);
   writeFileSync("report.enc", sealed);
   const full = sealReport({ points: results.filter((r, i) => i === 0 || r.hash !== results[i - 1].hash || r.t === null).map((r) => ({ label: r.label, data: r.data })) }, pub);
   writeFileSync("full.enc", full);
