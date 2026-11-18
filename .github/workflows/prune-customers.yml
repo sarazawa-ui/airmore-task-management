@@ -1,0 +1,76 @@
+name: 得意先マスタの会社別の整理
+
+# 各社の得意先マスタから、その会社の参照シートに無い他社の得意先に「削除済み」の印を付ける(一回きりの作業)。
+# 案件などが使っている得意先・コードが空の得意先・10/21より後に追加された得意先は残す(prune-customers-lib.js)。
+# 既定は「確認だけ(書き込まない)」。PR の段階でも確認だけを行う。
+# 実際に整理するには confirm に「他社の得意先を整理」、hash に確認の番号を入れて手動で実行する(先に全データをバックアップする)。
+# 記録は公開されるため件数だけ。消す予定の一覧は下の公開鍵で暗号化して出す(作業した Claude だけが読める)。
+on:
+  pull_request:
+    paths:
+      - "backup/prune-customers*.js"
+      - ".github/workflows/prune-customers.yml"
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "実際に整理する場合のみ「他社の得意先を整理」と入力(空欄なら確認だけ)"
+        required: false
+        default: ""
+      hash:
+        description: "確認の番号(確認だけの実行で出る「確認の番号: …」)"
+        required: false
+        default: ""
+      nosheet:
+        description: "参照シートが未設定の会社も整理する場合は prune(空欄なら触らない)"
+        required: false
+        default: ""
+
+concurrency:
+  group: hittatsu-prune-customers
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: 依存パッケージをインストール
+        working-directory: backup
+        run: npm install --no-audit --no-fund
+      - name: 書く前に全データをバックアップ
+        if: github.event_name == 'workflow_dispatch' && inputs.confirm == '他社の得意先を整理'
+        working-directory: backup
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          KEEP_DAYS: "90"
+        run: node backup.js
+      - name: 確認(または整理)
+        working-directory: backup
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          IN_CONFIRM: ${{ inputs.confirm }}
+          IN_HASH: ${{ inputs.hash }}
+          NOSHEET: ${{ inputs.nosheet }}
+          REPORT_PUBKEY: |
+            -----BEGIN PUBLIC KEY-----
+            MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA9odWUtc2dCItFWlzv4bH
+            i/gLNffeBhW4gJCeKBFTDgTLdmXMkHZBIV5OLTeVCyLDg51clptdRvBdREP44bhx
+            gaRFmYui/Fn/7vFU8yxzzx/Hcl97OqeEFslbb38i9U5H8agGedJZ1J0ZhH9OjeVP
+            zbeQ8I0sOwi4kgW/NL4H1RJqU9RgvK3eb+ignsh9z6mCQwUvbkqxwVVDMlIrPkyH
+            UoPoMGabvIbQU7uHcO1p1FisOxBqKgWCgue854RKjC/zImfla4ML+3he9X2BdE5/
+            ChZOH/eYF/OyLSFVmM94Gd5wopGS6ZMuYTlcWtzUAv/9VrXaB6gK2fC2ck+mYalJ
+            CEnyDgBuDpQPoSzMyNflCBmDOlARYuwz8LGPsJtEQgA+JkMRMyfefk/aiPITPH2z
+            4rF9bwuAsJZD8acr7Sq+7zj2OV2oc10sPMCAfVkDUYbHiWvo+aH3dLbjibgNjuv7
+            kZ23Ct6Q5ipbC6R/Z83dCAFvYjc3SePl1rIeJe6JUEljAgMBAAE=
+            -----END PUBLIC KEY-----
+        run: |
+          if [ "$IN_CONFIRM" = "他社の得意先を整理" ]; then
+            node prune-customers.js --confirm "$IN_CONFIRM" --hash "$IN_HASH"
+          else
+            node prune-customers.js
+          fi
