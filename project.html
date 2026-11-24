@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1795482711512";</script>
+<script>window.__HITTATSU_BUILD__ = "1795484401805";</script>
 <script>
 // プロジェクト管理を単体で開いたとき(以前の招待メール・タスク通知のリンク、ブックマークなど)は、
 // 現行の Hittatsu の画面(左メニュー付き)のプロジェクト管理へ移す。現行の画面の中(iframe)では何もしない
@@ -44,7 +44,7 @@
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-messaging-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-storage-compat.js"></script>
 <!-- 文字単位の同時編集の共通の仕組み(src/collab → npm run build:collab) -->
-<script src="vendor/hittatsu-collab.js?v=1795482711512"></script>
+<script src="vendor/hittatsu-collab.js?v=1795484401805"></script>
 <style>
 :root{
   --primary:#1c5cab;
@@ -4475,13 +4475,14 @@ function renderTree(g){
     </tr></thead><tbody>`;
     ordered.forEach(({task:t, depth, hasChildren, orphan})=>{
       const done = t.status==='完了';
+      const closed = isClosedTask(t);
       const indent = depth*16;
       const badge = depth===0
         ? (hasChildren ? '<span class="pc-badge parent" title="親タスク">親</span>' : '')
         : '<span class="pc-tree" aria-hidden="true">└</span><span class="pc-badge child" title="サブタスク">子</span>';
       const orphanTag = orphan ? '<span class="pc-badge orphan" title="親タスクが削除されています">親なし</span>' : '';
-      const dueCls = done ? '' : taskDueClass(t);
-      html += `<tr data-tid="${escapeHtml(t.id)}" class="link-row link-row-d${depth}${dueCls?' '+dueCls:''}" style="${done?'opacity:.55;':''}">
+      const dueCls = closed ? '' : taskDueClass(t);
+      html += `<tr data-tid="${escapeHtml(t.id)}" class="link-row link-row-d${depth}${dueCls?' '+dueCls:''}" style="${closed?'opacity:.55;':''}">
         <td class="center"><input type="checkbox" data-tf="done" ${done?'checked':''}></td>
         <td class="input">
           <div class="pc-row" style="padding-left:${indent}px">
@@ -4887,6 +4888,9 @@ const TASK_COLS = [
 // ===== タスク自身の期日（due）から色クラスを決定（統一ルール） =====
 // 期限切れ(<0日)→赤  期限3日内(0〜3日)→オレンジ  1週内(4〜7日)→薄黄  それ以外→なし
 // 完了/中止のタスクは無色（取り消し線・グレーが別途適用される）
+// 「完了」と「中止」は同じグレーアウト表示にする(取り消し線・薄いグレー)
+function isClosedTask(t){ return !!t && (t.status === '完了' || t.status === '中止'); }
+
 function taskDueClass(t){
   if(!t || !t.due) return '';
   if(t.status === '完了' || t.status === '中止') return '';
@@ -4965,7 +4969,7 @@ function cellFor(col, t){
     case 'due': {
       let cls = 'input';
       if(t.due && diffDays(t.due,todayStr())<0 && t.status!=='完了' && t.status!=='中止') cls += ' alert-red';
-      else if(t.due && diffDays(t.due,todayStr())<=3 && diffDays(t.due,todayStr())>=0 && t.status!=='完了') cls += ' alert-orange';
+      else if(t.due && diffDays(t.due,todayStr())<=3 && diffDays(t.due,todayStr())>=0 && !isClosedTask(t)) cls += ' alert-orange';
       return `<td class="${cls}"><input type="date" value="${t.due||''}" data-f="due"></td>`;
     }
     case 'slot':
@@ -5037,7 +5041,7 @@ function renderTasks(){
     const tr = document.createElement('tr');
     const gdCls = goalDeadlineClass(t);
     if(gdCls) tr.classList.add(gdCls);
-    if(t.status==="完了") tr.classList.add('done');
+    if(isClosedTask(t)) tr.classList.add('done');
     let html = '';
     TASK_COLS.forEach(c=>{
       if(!S.ui.taskCols[c.key]) return;
@@ -5365,7 +5369,7 @@ function renderReview(){
     });
     sorted.forEach(t=>{
       const goalLabel = t.goal ? t.goal+(((S.goals.find(g=>g.id===t.goal)||{}).name||'').slice(0,8)) : '-';
-      const cls = t.status==='完了'?'done':'';
+      const cls = isClosedTask(t)?'done':'';
       html += `<tr class="${cls}">
         <td>${t.status==='完了'?'✅':t.status==='中止'?'➖':'▫'}</td>
         <td>${escapeHtml(t.act||t.mid||'(無題)')}</td>
@@ -6103,7 +6107,7 @@ function placeTimedBlock(tbl, dayKey, start, end, block, startH, endH, HOUR_PX){
 function makeTaskBlock(t, allDay){
   const div = document.createElement('div');
   let cls = 'cal-block task';
-  if(t.status==='完了') cls += ' done';
+  if(isClosedTask(t)) cls += ' done';
   else {
     const dc = taskDueClass(t);
     if(dc) cls += ' ' + dc;
@@ -6745,7 +6749,7 @@ function renderSideTasks(){
   list.forEach(t=>{
     const el = document.createElement('div');
     let cls = 'side-task';
-    if(t.status==='完了') cls += ' done';
+    if(isClosedTask(t)) cls += ' done';
     else {
       const dc = taskDueClass(t);
       if(dc) cls += ' ' + dc;
