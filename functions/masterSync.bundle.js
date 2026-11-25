@@ -22,12 +22,16 @@ var masterSync_exports = {};
 __export(masterSync_exports, {
   MASTER_LISTS: () => MASTER_LISTS,
   SHARED_WS: () => SHARED_WS,
+  STOCK_HOURS_JST: () => STOCK_HOURS_JST,
+  afternoonStockText: () => afternoonStockText,
   buildSnapshots: () => buildSnapshots,
   consolidateSalesData: () => consolidateSalesData,
   dedupeCompany: () => dedupeCompany,
+  isAfternoonStockRun: () => isAfternoonStockRun,
   isMorningRun: () => isMorningRun,
   jstDay: () => jstDay,
   lastScheduledJst: () => lastScheduledJst,
+  lastStockScheduledJst: () => lastStockScheduledJst,
   masterPlaces: () => masterPlaces,
   morningFollowUps: () => morningFollowUps,
   morningItems: () => morningItems,
@@ -417,12 +421,16 @@ function deepEq(a, b) {
   }
   return false;
 }
+function asRows(v, ...others) {
+  if (Array.isArray(v) && v.length === 0 && others.some((o) => isObj(o) && o.__arr === 1)) return { __arr: 1, e: {} };
+  return v;
+}
 function diff(b, n, path = [], out = [], inRows = false) {
   const keys = /* @__PURE__ */ new Set([...Object.keys(b || {}), ...Object.keys(n || {})]);
   for (const k of keys) {
     if (path.length === 0 && META_KEYS.has(k)) continue;
     const bv = b ? b[k] : void 0;
-    const nv = n ? n[k] : void 0;
+    const nv = asRows(n ? n[k] : void 0, bv);
     if (deepEq(bv, nv)) continue;
     const p = [...path, k];
     if (nv == null) {
@@ -902,6 +910,23 @@ function lastScheduledJst(now = /* @__PURE__ */ new Date()) {
   while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
   return d.getTime() - J;
 }
+var STOCK_HOURS_JST = [8, 14];
+function lastStockScheduledJst(now = /* @__PURE__ */ new Date()) {
+  const J = 9 * 60 * 60 * 1e3;
+  const j = new Date(now.getTime() + J);
+  const wd = j.getUTCDay();
+  if (wd >= 1 && wd <= 5) {
+    for (const h of [...STOCK_HOURS_JST].sort((a, b) => b - a)) {
+      const t = Date.UTC(j.getUTCFullYear(), j.getUTCMonth(), j.getUTCDate(), h, 0, 0);
+      if (j.getTime() >= t) return t - J;
+    }
+  }
+  const d = new Date(Date.UTC(j.getUTCFullYear(), j.getUTCMonth(), j.getUTCDate(), Math.max(...STOCK_HOURS_JST), 0, 0));
+  do
+    d.setUTCDate(d.getUTCDate() - 1);
+  while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  return d.getTime() - J;
+}
 var seq = 0;
 var newId = () => Math.random().toString(36).slice(2, 10) + (Date.now() + seq++).toString(36);
 var FIELD_CHUNK_CHARS = 25e4;
@@ -1053,7 +1078,8 @@ async function syncCompany(ctx, ws, out, listWs = ws) {
       m = await ctx.sheets.modified(url).catch(() => null);
       const synced = prev?.syncedAt ? Date.parse(prev.syncedAt) : 0;
       const changed = !!(m?.modifiedTime && m.modifiedTime !== prev?.modifiedTime);
-      const daily = synced < lastScheduledJst(now) && now.getTime() >= lastScheduledJst(now);
+      const slot = which === "stocks" ? lastStockScheduledJst(now) : lastScheduledJst(now);
+      const daily = synced < slot && now.getTime() >= slot;
       if (!forced && !changed && !daily) {
         out.push({ ws, which, status: "skip", msg: "\u5909\u66F4\u306A\u3057", sheet: sheetOf(m) });
         continue;
@@ -1370,16 +1396,41 @@ function morningFollowUps(out, pending, now = /* @__PURE__ */ new Date()) {
   if (texts.length && !Object.keys(remaining).length) texts[texts.length - 1] += "\u3053\u308C\u3067\u5168\u9805\u76EE\u304C\u5F53\u65E5\u306E\u60C5\u5831\u306B\u306A\u308A\u307E\u3057\u305F\u3002";
   return { texts, remaining };
 }
+function isAfternoonStockRun(now = /* @__PURE__ */ new Date()) {
+  const d = jstOf(now.getTime());
+  const wd = d.getUTCDay();
+  return wd >= 1 && wd <= 5 && d.getUTCHours() === 14 && d.getUTCMinutes() < 30;
+}
+function afternoonStockText(out, now = /* @__PURE__ */ new Date(), appUrl = "") {
+  const last = /* @__PURE__ */ new Map();
+  for (const o of out) if (o.which === "stocks") last.set(itemKey(o), o);
+  if (!last.size) return null;
+  const d = jstOf(now.getTime());
+  const head = `\u3010\u2611Hittatsu\u301114\u6642\u306E\u5728\u5EAB\u66F4\u65B0 ${d.getUTCMonth() + 1}/${d.getUTCDate()}(${WEEK[d.getUTCDay()]}) ${hm(now.getTime())}`;
+  const lines = [...last.values()].sort((a, b) => itemLabel(a).localeCompare(itemLabel(b), "ja")).map((o) => {
+    const label = itemLabel(o);
+    const t = o.sheet?.at ? Date.parse(o.sheet.at) : NaN;
+    const when = Number.isFinite(t) ? `\u30B7\u30FC\u30C8\u6700\u7D42\u66F4\u65B0 ${mdhm(t)}${o.sheet?.by ? "\u3001" + o.sheet.by : ""}` : "\u30B7\u30FC\u30C8\u306E\u6700\u7D42\u66F4\u65B0\u65E5\u6642\u3092\u8AAD\u3081\u307E\u305B\u3093\u3067\u3057\u305F";
+    if (o.status === "error") return `\u274C ${label}: \u53D6\u8FBC\u30A8\u30E9\u30FC(${o.msg.slice(0, 120)})`;
+    if (o.status === "done") return `\u2705 ${label}: \u6700\u65B0\u306E\u5728\u5EAB\u3092\u53D6\u308A\u8FBC\u307F\u307E\u3057\u305F(${o.msg}\uFF0F${when})`;
+    return `\u26A0 ${label}: \u53D6\u308A\u8FBC\u3093\u3067\u3044\u307E\u305B\u3093(${o.msg}\uFF0F${when})`;
+  });
+  return [head, ...lines, ...appUrl ? [`Hittatsu\u3092\u958B\u304F: ${appUrl}`] : []].join("\n");
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   MASTER_LISTS,
   SHARED_WS,
+  STOCK_HOURS_JST,
+  afternoonStockText,
   buildSnapshots,
   consolidateSalesData,
   dedupeCompany,
+  isAfternoonStockRun,
   isMorningRun,
   jstDay,
   lastScheduledJst,
+  lastStockScheduledJst,
   masterPlaces,
   morningFollowUps,
   morningItems,

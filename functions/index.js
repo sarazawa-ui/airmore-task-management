@@ -820,6 +820,7 @@ function _explain(results) {
 // 朝の更新確認: Hittatsuお知らせスペース(Googleチャット)へ知らせる
 //   送り先の URL は secrets の CHAT_WEBHOOK(firebase functions:secrets:set CHAT_WEBHOOK)。社員の画面からは読めない。
 //   平日8:00の取込のあとに1通。朝に未更新・エラーだった項目は、その日のうちに取り込めたら同じスレッドで追いかける。
+//   平日14:00は在庫だけを読み直し(シートの変更の有無にかかわらず)、その結果を同じスレッドに1通(チャット報告 #92)。
 //   その日の記録は syncLog/morningCheck({date, pending: {項目: 名前}})。
 // ============================================================
 const CHAT_WEBHOOK = defineSecret("CHAT_WEBHOOK");
@@ -844,8 +845,24 @@ async function chatMorningCheck(out) {
     await postChat(masterSync.morningText(items, now, APP_BASE_URL), thread);
     return;
   }
-  if (last.date === today && Object.keys(last.pending || {}).length) {
-    const f = masterSync.morningFollowUps(out, last.pending, now);
+  // 14:00 の在庫の読み直しの結果を、朝と同じスレッドに1通(チャット報告 #92)
+  let pendingNow = last.pending || {};
+  if (masterSync.isAfternoonStockRun(now)) {
+    const aRef = admin.firestore().doc("syncLog/afternoonStock");
+    const a = (await aRef.get()).data() || {};
+    const text = a.date !== today ? masterSync.afternoonStockText(out, now, APP_BASE_URL) : null;
+    if (text) {
+      await aRef.set({ date: today, at: now.toISOString() });
+      // 在庫は 14時の知らせで伝えるので、朝の追いかけからは外す
+      if (last.date === today) {
+        pendingNow = Object.fromEntries(Object.entries(pendingNow).filter(([k]) => !k.endsWith("|stocks")));
+        await ref.update({ pending: pendingNow });
+      }
+      await postChat(text, thread);
+    }
+  }
+  if (last.date === today && Object.keys(pendingNow).length) {
+    const f = masterSync.morningFollowUps(out, pendingNow, now);
     if (!f.texts.length) return;
     await ref.update({ pending: f.remaining });
     for (const t of f.texts) await postChat(t, thread);
