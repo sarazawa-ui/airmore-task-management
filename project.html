@@ -15,7 +15,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <!-- ビルド番号(デプロイ時に scripts/stamp-version.mjs が実値へ置換)。
      version.json と照合して新バージョンを自動検知・自動リロードする -->
-<script>window.__HITTATSU_BUILD__ = "1795613391876";</script>
+<script>window.__HITTATSU_BUILD__ = "1795658899174";</script>
 <script>
 // プロジェクト管理を単体で開いたとき(以前の招待メール・タスク通知のリンク、ブックマークなど)は、
 // 現行の Hittatsu の画面(左メニュー付き)のプロジェクト管理へ移す。現行の画面の中(iframe)では何もしない
@@ -44,7 +44,7 @@
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-messaging-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-storage-compat.js"></script>
 <!-- 文字単位の同時編集の共通の仕組み(src/collab → npm run build:collab) -->
-<script src="vendor/hittatsu-collab.js?v=1795613391876"></script>
+<script src="vendor/hittatsu-collab.js?v=1795658899174"></script>
 <style>
 :root{
   --primary:#1c5cab;
@@ -3499,7 +3499,7 @@ function renderMeetings(){
     searchInp.addEventListener('input', applySearch);
     // Enter / 候補1件のとき即開く
     searchInp.addEventListener('keydown', (e) => {
-      if(e.key !== 'Enter') return;
+      if(e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return; // 日本語の変換確定のEnterでは開かない
       const kw = (searchInp.value||'').trim().toLowerCase();
       const matches = sorted.filter(m => {
         if(!kw) return true;
@@ -13112,6 +13112,7 @@ function setupInviteBox(){
   inp.addEventListener('input', () => { hl = 0; draw(); });
   inp.addEventListener('keydown', (e) => {
     if(list.style.display !== 'block') return;
+    if(e.isComposing || e.keyCode === 229) return; // 日本語の変換中は候補を選ばない
     if(e.key === 'ArrowDown'){ e.preventDefault(); hl = Math.min(hl + 1, hits.length - 1); draw(); }
     else if(e.key === 'ArrowUp'){ e.preventDefault(); hl = Math.max(hl - 1, 0); draw(); }
     else if(e.key === 'Enter'){ e.preventDefault(); if(hits[hl]) _pickInvite(hits[hl]); }
